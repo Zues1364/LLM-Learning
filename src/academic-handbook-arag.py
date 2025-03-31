@@ -20,7 +20,7 @@ nltk.download('punkt')
 from nltk.tokenize import sent_tokenize
 
 # --- Cấu hình API key ---
-GEMINI_API_KEY = "AIzaSyDZHuPDlDang5rItvWKORmogW5AiDF5ga4"
+GEMINI_API_KEY = ""
 SERPER_API_KEY = "b91e335ef3ef0b0f01dceef77c1c057d0d538bed"
 
 # --- Web Search Tool ---

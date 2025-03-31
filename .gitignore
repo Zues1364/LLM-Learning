@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg
+*.egg-info/
+dist/
+build/
+.env
+*.ipynb_checkpoints
+
+# VSCode / PyCharm
+.vscode/
+.idea/
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# System
+.DS_Store
+Thumbs.db
+
+# Cache
+*.log
+.cache/
+
+# Data
+*.pdf
+*.zip
+*.csv
+data/
