@@ -17,29 +17,33 @@ from utils import FAISSVectorStore, web_search
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-from mcp_tools import tool_retrieve, tool_web_search, tool_memory_get, tool_memory_add  
+from mcp_tools import tool_retrieve, tool_web_search, tool_memory_get, tool_memory_add, tool_compare_pdfs  
 
 
 
 
-# Planner Agent (tool-calling, trả JSON)
+# Planner Agent (tool-calling, tra JSON)
+
 def get_mcp_planner_agent(allow_web_search: bool = False) -> Agent:
     """
-    Agent dùng tool MCP để lấy context/history. Trả về JSON:
-    {"source": "vector_store|web_search|error", "context": "...", "memory": "..."}
+    Agent dang tool MCP de lay context/history. Tra ve JSON:
+    {"source": "vector_store|vector_store_compare|web_search|error", "context": "...", "memory": "...", "chunk_index": int|null}
     """
-    tools = [tool_retrieve, tool_memory_get]
-    web_msg = "Bạn không được dùng web_search_tool."
+    tools = [tool_retrieve, tool_compare_pdfs, tool_memory_get]
+    web_msg = "Ban khong duoc dung web_search_tool."
     if allow_web_search:
-        tools.insert(1, tool_web_search)
-        web_msg = "Nếu retrieve không đủ, bạn có thể dùng web_search_tool."
+        tools.insert(2, tool_web_search)
+        web_msg = "Neu retrieve khong du, ban co the dung web_search_tool."
 
     instructions = (
-        "Bạn là planner. Luôn gọi memory_get để lấy lịch sử. "
-        "Ưu tiên tool retrieve để lấy thông tin từ PDF. "
+        "Ban la planner. Dau vao luon co [SESSION:<id>] va co the co [FILES:f1,f2,...]. "
+        "Luon truyen session_id tu [SESSION] vao memory_get de lay lich su (ke ca khi rong). "
+        "Neu nguoi dung hoi so sanh/khac nhau/giua nhieu file va [FILES] co >=2 id, goi tool compare_pdfs(query, file_ids, top_k=5) va dat source=vector_store_compare. "
+        "Neu hoi ve mot file hoac [FILES] chi co 1 id, goi tool retrieve(question, top_k=5, file_ids=[...]). "
         f"{web_msg} "
-        "Trả về duy nhất một JSON thuần (không mã hoá code block) với khóa source, context, memory. "
-        "Nếu lỗi tool, đặt source=error và context là thông báo lỗi."
+        "Luon truyen tham so file_ids khi goi retrieve/compare (lay tu [FILES], de rong neu khong co de fallback web). "
+        "Tra ve duy nhat JSON (khong code block) voi khoa source, context, memory, chunk_index (co the null). "
+        "Neu loi tool, dat source=error va context la thong bao loi."
     )
     return Agent(
         name="MCP Planner Agent",
@@ -244,21 +248,20 @@ def get_rag_agent() -> Agent:
             name="Gemini RAG Agent",
             model=Gemini(id="gemini-2.5-flash"),
             instructions=(
-                "Bạn là một đại lý thông minh chuyên cung cấp câu trả lời chính xác chủ yếu dựa trên tài liệu.\n"
-                "Nếu thông tin đến từ tài liệu PDF, trích dẫn chi tiết và chính xác, kèm theo số trang nếu có.\n"
-                "Nếu thông tin đến từ web, hãy ghi rõ nguồn là 'Web Search'.\n"
-                "Khi có lịch sử trò chuyện trong bối cảnh (dưới dạng 'Lịch sử trò chuyện'), sử dụng thông tin từ lịch sử để trả lời các câu hỏi liên quan đến các câu hỏi trước đó hoặc các meta-câu hỏi về phiên làm việc (như 'câu hỏi đầu tiên' hoặc 'tôi vừa hỏi gì').\n"
-                "Nếu câu hỏi hỏi về việc liệu đây có phải câu hỏi đầu tiên trong phiên, kiểm tra lịch sử trò chuyện; nếu lịch sử rỗng, xác nhận đó là câu hỏi đầu tiên.\n"
-                "Trả lời bằng tiếng Việt, rõ ràng, dễ hiểu và đúng ngữ pháp."
+                "Ban la tro ly RAG, tra loi chinh xac dua tren tai lieu.\n"
+                "Neu thong tin den tu PDF, tra loi chi tiet va neu ro ten file/Chunk neu co metadata file_name.\n"
+                "Neu thong tin den tu web, ghi ro nguon la 'Web Search'.\n"
+                "Neu co lich su trao doi trong context, dung de boi canh nhung khong bia thong tin moi.\n"
+                "Neu context khong du, noi ro rang thay vi doan.\n"
+                "Tra loi tieng Viet, ngan gon, ro rang."
             ),
             markdown=True,
         )
-        logger.info("[get_rag_agent] Đã tạo RAG Agent thành công.")
+        logger.info("[get_rag_agent] Da tao RAG Agent thanh cong.")
         return agent
     except Exception as e:
-        logger.error(f"[get_rag_agent] Lỗi khi tạo RAG Agent: {e}")
+        logger.error(f"[get_rag_agent] Loi khi tao RAG Agent: {e}")
         raise
-
 
 # Ollama Agent
 def get_ollama_agent(model_name: str = "llama3") -> Agent:

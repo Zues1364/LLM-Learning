@@ -1,4 +1,4 @@
-﻿import json
+import json
 import logging
 import os
 import re
@@ -6,21 +6,21 @@ import shutil
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 from uuid import uuid4
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from agents import get_rag_agent
+
 # Add project root to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from agents import AnswerGeneratorAgent, get_mcp_planner_agent  # noqa: E402
-from main import FAISSVectorStore, VietnameseEmbedder  # noqa: E402
-from mcp_client.client import MCPClient  # noqa: E402
-from persistent_memory import PersistentMemory  # noqa: E402
-from utils import process_pdf  # noqa: E402
+from agents import AnswerGeneratorAgent, get_mcp_planner_agent, get_rag_agent
+from env_loader import load_env
+from mcp_client.client import MCPClient
+from persistent_memory import PersistentMemory
+from utils import FAISSVectorStore, VietnameseEmbedder, process_pdf
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -44,18 +44,49 @@ os.makedirs(PDF_DIR, exist_ok=True)
 # Globals
 memory = PersistentMemory(db_path=str(BASE_DIR / "data" / "memory.db"), max_history=25)
 embedder: Optional[VietnameseEmbedder] = None
-vector_stores: Dict[str, FAISSVectorStore] = {}
+vector_store: Optional[FAISSVectorStore] = None  # shared store for all PDFs
+loaded_file_ids: Set[str] = set()
 file_meta: Dict[str, str] = {}  # file_id -> original filename
 last_file_id: Optional[str] = None
 rag_agent = None
 mcp_client = MCPClient()
+
+# Load env and map GEMINI_API_KEY to GOOGLE_API_KEY for Gemini SDK compatibility
+load_env()
+if os.getenv("GEMINI_API_KEY") and not os.getenv("GOOGLE_API_KEY"):
+    os.environ["GOOGLE_API_KEY"] = os.getenv("GEMINI_API_KEY")
+
 answer_agent = AnswerGeneratorAgent(get_rag_agent())
+
+
+def _ensure_file_loaded(file_id: str):
+    """Load PDF chunks into the shared vector store if not already loaded."""
+    global embedder, vector_store
+    if file_id in loaded_file_ids:
+        return
+
+    pdf_path = PDF_DIR / file_id
+    if not pdf_path.exists():
+        raise HTTPException(status_code=404, detail=f"File_id khong ton tai: {file_id}")
+
+    if embedder is None:
+        embedder = VietnameseEmbedder()
+
+    docs = process_pdf(str(pdf_path))
+    if vector_store is None:
+        vector_store = FAISSVectorStore(docs, embedder)
+    else:
+        vector_store.add_documents(docs)
+
+    loaded_file_ids.add(file_id)
+    file_meta.setdefault(file_id, pdf_path.name)
 
 
 class QueryRequest(BaseModel):
     query: str
     allow_web_search: bool = False
     session_id: str = "user_session_1"
+    file_ids: List[str] | None = None
 
 
 class HistoryItem(BaseModel):
@@ -76,11 +107,11 @@ class SessionRequest(BaseModel):
 @app.post("/upload_pdf")
 async def upload_pdf(file: UploadFile = File(...)):
     """
-    Upload một file PDF, lưu với file_id riêng và tạo FAISS vector store cho file đó.
+    Upload a single PDF, assign a unique file_id, and add chunks into the shared FAISS store.
     """
-    global embedder, last_file_id
+    global embedder, last_file_id, vector_store
     if not file.filename.endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="File phải là PDF")
+        raise HTTPException(status_code=400, detail="File phai la PDF")
 
     try:
         original_name = Path(file.filename).name or "uploaded.pdf"
@@ -93,35 +124,39 @@ async def upload_pdf(file: UploadFile = File(...)):
             shutil.copyfileobj(file.file, buffer)
 
         documents = process_pdf(str(dest_path))
-        logger.info("Đã xử lý PDF %s, tạo %s chunks", file_id, len(documents))
+        logger.info("Da xu ly PDF %s, tao %s chunks", file_id, len(documents))
 
         if embedder is None:
             embedder = VietnameseEmbedder()
-        store = FAISSVectorStore(documents, embedder)
-        vector_stores[file_id] = store
+        if vector_store is None:
+            vector_store = FAISSVectorStore(documents, embedder)
+        else:
+            vector_store.add_documents(documents)
+
         file_meta[file_id] = original_name
+        loaded_file_ids.add(file_id)
         last_file_id = file_id
 
-        return {"message": "PDF đã được xử lý thành công", "file_id": file_id, "file_name": original_name}
+        return {"message": "PDF da duoc xu ly thanh cong", "file_id": file_id, "file_name": original_name}
     except Exception as e:
-        logger.error("Lỗi khi xử lý PDF: %s", e)
+        logger.error("Loi khi xu ly PDF: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/files")
 async def list_files():
-    """Liệt kê file PDF đã upload (trong phiên chạy hiện tại)."""
-    return [{"file_id": fid, "file_name": file_meta.get(fid, fid)} for fid in vector_stores.keys()]
+    """List uploaded PDFs in current runtime."""
+    return [{"file_id": fid, "file_name": file_meta.get(fid, fid)} for fid in loaded_file_ids]
 
 
 @app.post("/upload_pdfs")
 async def upload_multiple_pdfs(files: List[UploadFile] = File(...)):
     """
-    Upload nhiều PDF cùng lúc, xử lý song song và trả danh sách file_id.
+    Upload multiple PDFs concurrently and add all chunks into the shared FAISS store.
     """
-    global embedder, last_file_id
+    global embedder, last_file_id, vector_store
     if not files:
-        raise HTTPException(status_code=400, detail="Chưa chọn file PDF")
+        raise HTTPException(status_code=400, detail="Chua chon file PDF")
 
     if embedder is None:
         embedder = VietnameseEmbedder()
@@ -138,16 +173,19 @@ async def upload_multiple_pdfs(files: List[UploadFile] = File(...)):
         with open(dest_path, "wb") as buffer:
             shutil.copyfileobj(upload_file.file, buffer)
         docs = process_pdf(str(dest_path))
-        store_local = FAISSVectorStore(docs, embedder)
-        return file_id_local, original_name, store_local
+        return file_id_local, original_name, docs
 
     with ThreadPoolExecutor(max_workers=min(len(files), 4)) as executor:
         future_map = {executor.submit(handle_one, f): f.filename for f in files if f.filename.endswith(".pdf")}
         for fut in as_completed(future_map):
             try:
-                fid, fname, store = fut.result()
-                vector_stores[fid] = store
+                fid, fname, docs = fut.result()
+                if vector_store is None:
+                    vector_store = FAISSVectorStore(docs, embedder)
+                else:
+                    vector_store.add_documents(docs)
                 file_meta[fid] = fname
+                loaded_file_ids.add(fid)
                 last_file_id = fid
                 results.append({"file_id": fid, "file_name": fname})
             except Exception as exc:
@@ -162,24 +200,25 @@ async def upload_multiple_pdfs(files: List[UploadFile] = File(...)):
 @app.post("/compare_pdfs")
 async def compare_pdfs(request: CompareRequest):
     """
-    So sánh/tra cứu câu hỏi trên hai PDF đã upload.
+    Compare/query across two PDFs that have been uploaded (shared FAISS store).
     """
     if len(request.file_ids) < 2:
-        raise HTTPException(status_code=400, detail="Cần cung cấp ít nhất 2 file_id để so sánh.")
+        raise HTTPException(status_code=400, detail="Can cung cap it nhat 2 file_id de so sanh.")
 
-    missing = [fid for fid in request.file_ids if fid not in vector_stores]
-    if missing:
-        raise HTTPException(status_code=400, detail=f"File_id không tồn tại: {', '.join(missing)}")
+    for fid in request.file_ids:
+        _ensure_file_loaded(fid)
+
+    if vector_store is None:
+        raise HTTPException(status_code=400, detail="Chua co PDF nao duoc tai len.")
 
     selected_ids = request.file_ids[:2]
     contexts = []
     for fid in selected_ids:
-        store = vector_stores[fid]
-        docs = store.retrieve(request.query, top_k=3)
+        docs = vector_store.retrieve(request.query, top_k=3, file_ids=[fid])
         if not docs:
-            contexts.append(f"[{file_meta.get(fid, fid)}] Không tìm thấy nội dung phù hợp.")
+            contexts.append(f"[{file_meta.get(fid, fid)}] Khong tim thay noi dung phu hop.")
             continue
-        chunk_text = "\n\n".join([f"[Chunk {doc.metadata.get('index')}] {doc.page_content}" for doc in docs])
+        chunk_text = "\n\n".join([f"[{doc.metadata.get('file_name', fid)} - Chunk {doc.metadata.get('index')}] {doc.page_content}" for doc in docs])
         contexts.append(f"[{file_meta.get(fid, fid)}]\n{chunk_text}")
 
     combined_context = "\n\n-----\n\n".join(contexts)
@@ -196,10 +235,12 @@ async def ask_question(request: QueryRequest):
     """
     query = request.query
     session_id = request.session_id or "user_session_1"
+    selected_files = request.file_ids or ([last_file_id] if last_file_id else [])
 
     try:
+        files_hint = f"[FILES:{','.join(selected_files)}]" if selected_files else "[FILES:none]"
         planner_agent = get_mcp_planner_agent(allow_web_search=request.allow_web_search)
-        planner_output = planner_agent.run(f"[SESSION:{session_id}] {query}").content
+        planner_output = planner_agent.run(f"[SESSION:{session_id}] {files_hint} {query}").content
 
         try:
             match = re.search(r"{.*}", planner_output, re.DOTALL)
@@ -208,14 +249,15 @@ async def ask_question(request: QueryRequest):
             source = obj.get("source", "")
             context = obj.get("context", "")
             memory_context = obj.get("memory", "")
+            chunk_index = obj.get("chunk_index")
         except Exception:
-            logger.warning("Planner output không parse được JSON: %s", planner_output)
-            friendly = "Không đọc được kế hoạch, bạn có thể hỏi lại hoặc bật tìm kiếm web."
+            logger.warning("Planner output khong parse duoc JSON: %s", planner_output)
+            friendly = "Khong doc duoc ke hoach, ban co the hoi lai hoac bat tim kiem web."
             return {"answer": friendly}
 
         if source == "error":
-            logger.warning("Planner trả về error: %s", context)
-            friendly = context or "Không lấy được kế hoạch. Thử lại hoặc bật tìm kiếm web."
+            logger.warning("Planner tra ve error: %s", context)
+            friendly = context or "Khong lay duoc ke hoach. Thu lai hoac bat tim kiem web."
             return {"answer": friendly}
 
         answer = answer_agent.run(query, context, source, memory_context)
@@ -227,15 +269,15 @@ async def ask_question(request: QueryRequest):
                     "session_id": session_id,
                     "query": query,
                     "answer": answer,
-                    "chunk_index": None,
+                    "chunk_index": chunk_index,
                 },
             )
         except Exception as e:
-            logger.warning("Lưu lịch sử lỗi (bỏ qua): %s", e)
+            logger.warning("Luu lich su loi (bo qua): %s", e)
 
         return {"answer": answer}
     except Exception as e:
-        logger.error("Lỗi khi xử lý câu hỏi: %s", e)
+        logger.error("Loi khi xu ly cau hoi: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -260,22 +302,22 @@ async def get_history(session_id: str = "user_session_1", page: int = 1, per_pag
                 response_val = line[query_end + len("\nResponse: "):]
                 history_items.append(HistoryItem(query=query_val, response=response_val, timestamp=timestamp))
             except Exception as e:
-                logger.warning("Lỗi khi parse lịch sử: %s (line=%s)", e, line)
+                logger.warning("Loi khi parse lich su: %s (line=%s)", e, line)
                 continue
         return history_items
     except Exception as e:
-        logger.error("Lỗi khi lấy lịch sử: %s", e)
+        logger.error("Loi khi lay lich su: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.delete("/session")
 async def delete_session(req: SessionRequest):
     """
-    Xóa toàn bộ lịch sử hội thoại của một session_id.
+    Xoa toan bo lich su hoi thoai cua mot session_id.
     """
     try:
         memory.clear_session(req.session_id)
-        return {"message": f"Đã xóa lịch sử session {req.session_id}"}
+        return {"message": f"Da xoa lich su session {req.session_id}"}
     except Exception as e:
-        logger.error("Lỗi khi xóa session: %s", e)
+        logger.error("Loi khi xoa session: %s", e)
         raise HTTPException(status_code=500, detail=str(e))

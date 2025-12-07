@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import DOMPurify from "dompurify";
 import "./style.css";
 
@@ -44,11 +44,11 @@ async function uploadPdfs(files) {
   return res.json();
 }
 
-async function askQuestion(query, allowWebSearch, sessionId) {
+async function askQuestionWithFiles(query, allowWebSearch, sessionId, fileIds) {
   const res = await fetch(`${API_BASE}/ask`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, allow_web_search: allowWebSearch, session_id: sessionId }),
+    body: JSON.stringify({ query, allow_web_search: allowWebSearch, session_id: sessionId, file_ids: fileIds || [] }),
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
@@ -56,6 +56,12 @@ async function askQuestion(query, allowWebSearch, sessionId) {
 
 async function fetchHistory(sessionId) {
   const res = await fetch(`${API_BASE}/history?session_id=${encodeURIComponent(sessionId || "")}`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function fetchFiles() {
+  const res = await fetch(`${API_BASE}/files`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -97,11 +103,33 @@ export default function App() {
   const [allowWeb, setAllowWeb] = useState(false);
   const [historyList, setHistoryList] = useState([]);
   const [uploadedFile, setUploadedFile] = useState(null);
+  const [files, setFiles] = useState([]);
+  const [selectedFileIds, setSelectedFileIds] = useState([]);
 
   const fileInputRef = useRef(null);
   const chatEndRef = useRef(null);
+  const filesRef = useRef([]);
 
   const currentMessages = messagesBySession[currentSession] || [];
+  const selectedNames = files.filter((f) => selectedFileIds.includes(f.file_id)).map((f) => f.file_name);
+
+  const refreshFiles = useCallback(async () => {
+    try {
+      const data = await fetchFiles();
+      const prevFileIds = new Set(filesRef.current.map((f) => f.file_id));
+      filesRef.current = data;
+      setFiles(data);
+      setSelectedFileIds((prev) => {
+        const prevSet = new Set(prev || []);
+        const next = data
+          .filter((f) => prevSet.has(f.file_id) || !prevFileIds.has(f.file_id))
+          .map((f) => f.file_id);
+        return next.length ? next : prev;
+      });
+    } catch (err) {
+      console.error("Fetch files failed", err);
+    }
+  }, []);
 
   const updateMessages = (sessionId, updater) => {
     setMessagesBySession((prev) => {
@@ -127,6 +155,10 @@ export default function App() {
   }, [currentSession]);
 
   useEffect(() => {
+    refreshFiles();
+  }, [refreshFiles]);
+
+  useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [currentMessages, loading]);
 
@@ -148,6 +180,18 @@ export default function App() {
     if (!messagesBySession[sessionId]) {
       setMessagesBySession((prev) => ({ ...prev, [sessionId]: [] }));
     }
+  };
+
+  const handleToggleFile = (fileId) => {
+    setSelectedFileIds((prev) => {
+      const set = new Set(prev || []);
+      if (set.has(fileId)) {
+        set.delete(fileId);
+      } else {
+        set.add(fileId);
+      }
+      return Array.from(set);
+    });
   };
 
   const handleDeleteSession = async (sessionId) => {
@@ -193,6 +237,7 @@ export default function App() {
         setUploadedFile(names || `${selected.length} files`);
         updateMessages(sessionId, (prev) => [...prev, { type: "system", text: `Đã tải lên: ${names || selected.length + " files"}` }]);
       }
+      await refreshFiles();
     } catch (err) {
       updateMessages(sessionId, (prev) => [...prev, { type: "system", text: `Lỗi upload: ${err.message}` }]);
     } finally {
@@ -212,7 +257,7 @@ export default function App() {
     setLoading(true);
 
     try {
-      const { answer } = await askQuestion(query, allowWeb, sessionId);
+      const { answer } = await askQuestionWithFiles(query, allowWeb, sessionId, selectedFileIds);
       updateMessages(sessionId, (prev) => [...prev, { type: "bot", text: answer }]);
       const updatedHist = await fetchHistory(sessionId);
       setHistoryList(updatedHist);
@@ -318,6 +363,23 @@ export default function App() {
             </div>
           ))}
 
+          <div className="nav-title">PDF đã tải</div>
+          {files.map((f) => {
+            const checked = selectedFileIds.includes(f.file_id);
+            return (
+              <label
+                key={f.file_id}
+                className="history-item"
+                style={{ gap: 8, alignItems: "center", cursor: "pointer" }}
+                onClick={() => handleToggleFile(f.file_id)}
+              >
+                <input type="checkbox" checked={checked} readOnly />
+                <span style={{ flex: 1 }}>{f.file_name}</span>
+              </label>
+            );
+          })}
+          {files.length === 0 && <div style={{ padding: "0 15px", fontSize: "13px", color: "#64748b" }}>Chưa có PDF</div>}
+
           <div className="nav-title">Lịch sử phiên này</div>
           {historyList
             .slice()
@@ -399,10 +461,17 @@ export default function App() {
 
         <div className="input-region">
           <div className="input-container">
-            {uploadedFile && (
+            {(selectedNames.length || uploadedFile) && (
               <div className="file-preview">
-                <i className="fas fa-file-pdf"></i> {uploadedFile}
-                <i className="fas fa-times" style={{ cursor: "pointer", marginLeft: 5 }} onClick={() => setUploadedFile(null)}></i>
+                <i className="fas fa-file-pdf"></i> {selectedNames.length ? selectedNames.join(", ") : uploadedFile}
+                <i
+                  className="fas fa-times"
+                  style={{ cursor: "pointer", marginLeft: 5 }}
+                  onClick={() => {
+                    setUploadedFile(null);
+                    setSelectedFileIds([]);
+                  }}
+                ></i>
               </div>
             )}
 

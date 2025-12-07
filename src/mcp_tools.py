@@ -9,13 +9,17 @@ def _get_client(client: MCPClient | None) -> MCPClient:
     return client or MCPClient()
 
 
-def tool_retrieve(question: str, top_k: int = 5, client: MCPClient | None = None) -> str:
+def tool_retrieve(question: str, top_k: int = 5, file_ids: List[str] | None = None,
+                  client: MCPClient | None = None) -> str:
     """
     Retrieve relevant chunks from the PDF store. Use when the question is about the uploaded PDF.
     Returns a concatenated text context.
     """
     mcp = _get_client(client)
-    chunks: List[str] = mcp.invoke("retrieve_chunks", {"question": question, "top_k": top_k})
+    chunks: List[str] = mcp.invoke(
+        "retrieve_chunks",
+        {"question": question, "top_k": top_k, "file_ids": file_ids or []},
+    )
     return "\n\n".join(chunks)
 
 
@@ -52,3 +56,15 @@ def tool_memory_add(session_id: str, query: str, answer: str, chunk_index: int |
             "chunk_index": chunk_index,
         },
     )
+
+
+def tool_compare_pdfs(query: str, file_ids: List[str], top_k: int = 5, client: MCPClient | None = None) -> str:
+    """
+    Compare/query across multiple PDFs. Returns combined context per file.
+    """
+    mcp = _get_client(client)
+    result: List[str] = mcp.invoke(
+        "compare_pdfs",
+        {"query": query, "file_ids": file_ids, "top_k": top_k},
+    )
+    return "\n\n".join(result)
