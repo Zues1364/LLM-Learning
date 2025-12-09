@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+﻿import { useEffect, useRef, useState, useCallback } from "react";
 import DOMPurify from "dompurify";
 import "./style.css";
 
@@ -86,7 +86,7 @@ export default function App() {
   const [sessions, setSessions] = useState(() =>
     Array.isArray(storedSessions) && storedSessions.length
       ? storedSessions
-      : [{ id: initialSessionId, title: "Phiên 1" }]
+      : [{ id: initialSessionId, title: "Phien 1" }]
   );
   const [currentSession, setCurrentSession] = useState(() => {
     if (storedCurrentSession && typeof storedCurrentSession === "string") return storedCurrentSession;
@@ -116,15 +116,12 @@ export default function App() {
   const refreshFiles = useCallback(async () => {
     try {
       const data = await fetchFiles();
-      const prevFileIds = new Set(filesRef.current.map((f) => f.file_id));
       filesRef.current = data;
       setFiles(data);
       setSelectedFileIds((prev) => {
         const prevSet = new Set(prev || []);
-        const next = data
-          .filter((f) => prevSet.has(f.file_id) || !prevFileIds.has(f.file_id))
-          .map((f) => f.file_id);
-        return next.length ? next : prev;
+        const next = data.filter((f) => prevSet.has(f.file_id)).map((f) => f.file_id);
+        return next;
       });
     } catch (err) {
       console.error("Fetch files failed", err);
@@ -170,6 +167,7 @@ export default function App() {
     setMessagesBySession((prev) => ({ ...prev, [newId]: [] }));
     setHistoryList([]);
     setUploadedFile(null);
+    setSelectedFileIds([]);
     setInputStr("");
   };
 
@@ -177,6 +175,7 @@ export default function App() {
     setCurrentSession(sessionId);
     setInputStr("");
     setUploadedFile(null);
+    setSelectedFileIds([]);
     if (!messagesBySession[sessionId]) {
       setMessagesBySession((prev) => ({ ...prev, [sessionId]: [] }));
     }
@@ -219,6 +218,14 @@ export default function App() {
     }
   };
 
+  const handleRenameSession = (sessionId) => {
+    const target = sessions.find((s) => s.id === sessionId);
+    if (!target) return;
+    const nextTitle = window.prompt("Nhập tên phiên", target.title)?.trim();
+    if (!nextTitle) return;
+    setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, title: nextTitle } : s)));
+  };
+
   const handleFileSelect = async (e) => {
     const selected = e.target.files ? Array.from(e.target.files) : [];
     if (!selected.length) return;
@@ -228,13 +235,16 @@ export default function App() {
       setUploading(true);
       if (selected.length === 1) {
         const file = selected[0];
-        await uploadPdf(file);
+        const resp = await uploadPdf(file);
+        setSelectedFileIds([resp.file_id]);
         setUploadedFile(file.name);
         updateMessages(sessionId, (prev) => [...prev, { type: "system", text: `Đã tải lên và xử lý: ${file.name}` }]);
       } else {
         const resp = await uploadPdfs(selected);
         const names = resp.uploaded?.map((f) => f.file_name).join(", ");
+        const newIds = resp.uploaded?.map((f) => f.file_id).filter(Boolean) || [];
         setUploadedFile(names || `${selected.length} files`);
+        setSelectedFileIds(newIds);
         updateMessages(sessionId, (prev) => [...prev, { type: "system", text: `Đã tải lên: ${names || selected.length + " files"}` }]);
       }
       await refreshFiles();
@@ -351,7 +361,18 @@ export default function App() {
               <span style={{ flex: 1 }}>{s.title}</span>
               <button
                 className="icon-btn"
-                title="Xóa phiên"
+                title="Doi ten phien"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleRenameSession(s.id);
+                }}
+                style={{ padding: 6, fontSize: 14 }}
+              >
+                <i className="fas fa-pen"></i>
+              </button>
+              <button
+                className="icon-btn"
+                title="Xoa phien"
                 onClick={(e) => {
                   e.stopPropagation();
                   handleDeleteSession(s.id);
@@ -362,23 +383,6 @@ export default function App() {
               </button>
             </div>
           ))}
-
-          <div className="nav-title">PDF đã tải</div>
-          {files.map((f) => {
-            const checked = selectedFileIds.includes(f.file_id);
-            return (
-              <label
-                key={f.file_id}
-                className="history-item"
-                style={{ gap: 8, alignItems: "center", cursor: "pointer" }}
-                onClick={() => handleToggleFile(f.file_id)}
-              >
-                <input type="checkbox" checked={checked} readOnly />
-                <span style={{ flex: 1 }}>{f.file_name}</span>
-              </label>
-            );
-          })}
-          {files.length === 0 && <div style={{ padding: "0 15px", fontSize: "13px", color: "#64748b" }}>Chưa có PDF</div>}
 
           <div className="nav-title">Lịch sử phiên này</div>
           {historyList
@@ -484,13 +488,12 @@ export default function App() {
                 style={{ display: "none" }}
                 onChange={handleFileSelect}
               />
-              <button className="icon-btn" title="Tải lên PDF" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+              <button className="icon-btn" title="Tai len PDF" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
                 {uploading ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-paperclip"></i>}
               </button>
-
               <button
                 className={`icon-btn ${allowWeb ? "active" : ""}`}
-                title={allowWeb ? "Tắt tìm kiếm Web" : "Bật tìm kiếm Web"}
+                title={allowWeb ? "Tat tim kiem Web" : "Bat tim kiem Web"}
                 onClick={() => setAllowWeb(!allowWeb)}
               >
                 <i className="fas fa-globe"></i>
@@ -519,3 +522,5 @@ export default function App() {
     </div>
   );
 }
+
+

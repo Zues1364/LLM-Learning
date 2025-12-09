@@ -48,6 +48,9 @@ def invoke(req: InvokeRequest):
         result = fn(**req.args)
         logger.info(f"Tool {req.tool} invoked successfully with args: {req.args}")
         return {"result": result}
+    except HTTPException:
+        # Preserve HTTP-specific errors (e.g., 404) instead of wrapping them as 500
+        raise
     except Exception as e:
         logger.error(f"Error invoking tool {req.tool}: {str(e)}")
         raise HTTPException(500, str(e))
@@ -76,15 +79,37 @@ _store: Optional[FAISSVectorStore] = None  # shared store across PDFs
 _loaded_files: Set[str] = set()
 
 
-def _ensure_file_loaded(file_id: str):
-    """Lazy load a PDF into the shared FAISS store."""
-    global _embedder, _store
-    if file_id in _loaded_files:
-        return
+def _resolve_pdf_path(file_id: str) -> Path:
+    """
+    Resolve an incoming file_id to an actual PDF path.
+    Accepts:
+      - full filename stored under data/pdfs
+      - the short hash/id suffix (e.g., f99fbe39 or f99fbe39.pdf)
+      - any substring that uniquely matches a PDF filename
+    """
+    candidate = PDF_DIR / file_id
+    if candidate.exists():
+        return candidate
 
-    pdf_path = PDF_DIR / file_id
-    if not pdf_path.exists():
+    needle = file_id
+    if needle.lower().endswith(".pdf"):
+        needle = needle[:-4]
+
+    matches = [p for p in PDF_DIR.glob(f"*{needle}*.pdf")]
+    if not matches:
         raise HTTPException(404, f"File_id khong ton tai: {file_id}")
+    if len(matches) > 1:
+        raise HTTPException(400, f"Tim thay {len(matches)} file khop {file_id}, hay chi ro file_id day du.")
+    return matches[0]
+
+
+def _ensure_file_loaded(file_id: str) -> str:
+    """Lazy load a PDF into the shared FAISS store. Returns the resolved file_id."""
+    global _embedder, _store
+    pdf_path = _resolve_pdf_path(file_id)
+    resolved_id = pdf_path.name
+    if resolved_id in _loaded_files:
+        return resolved_id
 
     if _embedder is None:
         _embedder = VietnameseEmbedder()
@@ -95,8 +120,9 @@ def _ensure_file_loaded(file_id: str):
     else:
         _store.add_documents(docs)
 
-    _loaded_files.add(file_id)
-    logger.info(f"Loaded {file_id} into shared FAISS store ({len(docs)} chunks)")
+    _loaded_files.add(resolved_id)
+    logger.info(f"Loaded {resolved_id} into shared FAISS store ({len(docs)} chunks)")
+    return resolved_id
 
 
 @mcp_tool("retrieve_chunks")
@@ -110,14 +136,15 @@ def retrieve_chunks(question: str, top_k: int = 5, file_ids: List[str] | None = 
         logger.warning("retrieve_chunks called without file_ids, returning empty.")
         return []
 
+    resolved_ids: List[str] = []
     for fid in ids:
-        _ensure_file_loaded(fid)
+        resolved_ids.append(_ensure_file_loaded(fid))
 
     if _store is None:
         return []
 
     contexts: List[str] = []
-    for fid in ids:
+    for fid in resolved_ids:
         chunks = _store.retrieve(question, top_k=top_k, file_ids=[fid])
         if not chunks:
             contexts.append(f"[{fid}] Khong tim thay doan phu hop.")
@@ -142,13 +169,14 @@ def compare_pdfs(query: str, file_ids: List[str], top_k: int = 5) -> List[str]:
     if len(ids) < 2:
         raise HTTPException(400, "Can it nhat 2 file_id de so sanh.")
 
+    resolved_ids: List[str] = []
     for fid in ids:
-        _ensure_file_loaded(fid)
+        resolved_ids.append(_ensure_file_loaded(fid))
 
     if _store is None:
         return []
 
-    selected = ids[:2]
+    selected = resolved_ids[:2]
     contexts: List[str] = []
     for fid in selected:
         chunks = _store.retrieve(query, top_k=top_k, file_ids=[fid])

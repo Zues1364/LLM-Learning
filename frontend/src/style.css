@@ -320,7 +320,7 @@ body {
 
 .input-row {
   display: flex;
-  align-items: flex-end; /* Căn đáy để textarea dãn lên trên */
+  align-items: center;
   gap: 10px;
 }
 
@@ -351,8 +351,9 @@ textarea {
   border: none;
   color: var(--text-primary);
   resize: none;
-  padding: 12px 0;
+  padding: 10px 0;
   font-size: 16px;
+  line-height: 1.5;
   max-height: 200px;
   outline: none;
 }

@@ -1,4 +1,4 @@
-import json
+﻿import json
 import logging
 import os
 import re
@@ -39,7 +39,9 @@ app.add_middleware(
 # Paths
 BASE_DIR = Path(__file__).resolve().parent.parent
 PDF_DIR = BASE_DIR / "data" / "pdfs"
+SESSION_CACHE_DIR = BASE_DIR / "data" / "session_cache"
 os.makedirs(PDF_DIR, exist_ok=True)
+os.makedirs(SESSION_CACHE_DIR, exist_ok=True)
 
 # Globals
 memory = PersistentMemory(db_path=str(BASE_DIR / "data" / "memory.db"), max_history=25)
@@ -57,6 +59,38 @@ if os.getenv("GEMINI_API_KEY") and not os.getenv("GOOGLE_API_KEY"):
     os.environ["GOOGLE_API_KEY"] = os.getenv("GEMINI_API_KEY")
 
 answer_agent = AnswerGeneratorAgent(get_rag_agent())
+
+
+def _session_dir(session_id: str) -> Path:
+    return SESSION_CACHE_DIR / session_id
+
+
+def _session_meta_path(session_id: str) -> Path:
+    return _session_dir(session_id) / "meta.json"
+
+
+def _load_session_files(session_id: str) -> List[str]:
+    meta_path = _session_meta_path(session_id)
+    if not meta_path.exists():
+        return []
+    try:
+        data = json.loads(meta_path.read_text(encoding="utf-8"))
+        ids = data.get("file_ids", [])
+        return ids if isinstance(ids, list) else []
+    except Exception:
+        return []
+
+
+def _save_session_files(session_id: str, file_ids: List[str]):
+    if not file_ids:
+        return
+    try:
+        dir_path = _session_dir(session_id)
+        dir_path.mkdir(parents=True, exist_ok=True)
+        meta_path = _session_meta_path(session_id)
+        meta_path.write_text(json.dumps({"file_ids": file_ids}, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        logger.warning("Khong luu duoc session files cho %s: %s", session_id, e)
 
 
 def _ensure_file_loaded(file_id: str):
@@ -214,7 +248,7 @@ async def compare_pdfs(request: CompareRequest):
     selected_ids = request.file_ids[:2]
     contexts = []
     for fid in selected_ids:
-        docs = vector_store.retrieve(request.query, top_k=3, file_ids=[fid])
+        docs = vector_store.retrieve(request.query, top_k=5, file_ids=[fid])
         if not docs:
             contexts.append(f"[{file_meta.get(fid, fid)}] Khong tim thay noi dung phu hop.")
             continue
@@ -235,7 +269,14 @@ async def ask_question(request: QueryRequest):
     """
     query = request.query
     session_id = request.session_id or "user_session_1"
-    selected_files = request.file_ids or ([last_file_id] if last_file_id else [])
+    selected_files = request.file_ids or []
+    if not selected_files:
+        cached_files = _load_session_files(session_id)
+        if cached_files:
+            selected_files = cached_files
+        elif last_file_id:
+            selected_files = [last_file_id]
+    selected_files = list(dict.fromkeys([f for f in selected_files if f]))
 
     try:
         files_hint = f"[FILES:{','.join(selected_files)}]" if selected_files else "[FILES:none]"
@@ -254,6 +295,9 @@ async def ask_question(request: QueryRequest):
             logger.warning("Planner output khong parse duoc JSON: %s", planner_output)
             friendly = "Khong doc duoc ke hoach, ban co the hoi lai hoac bat tim kiem web."
             return {"answer": friendly}
+
+        if selected_files:
+            _save_session_files(session_id, selected_files)
 
         if source == "error":
             logger.warning("Planner tra ve error: %s", context)
@@ -317,6 +361,9 @@ async def delete_session(req: SessionRequest):
     """
     try:
         memory.clear_session(req.session_id)
+        session_dir = _session_dir(req.session_id)
+        if session_dir.exists():
+            shutil.rmtree(session_dir, ignore_errors=True)
         return {"message": f"Da xoa lich su session {req.session_id}"}
     except Exception as e:
         logger.error("Loi khi xoa session: %s", e)
