@@ -49,7 +49,7 @@ embedder: Optional[VietnameseEmbedder] = None
 vector_store: Optional[FAISSVectorStore] = None  # shared store for all PDFs
 loaded_file_ids: Set[str] = set()
 file_meta: Dict[str, str] = {}  # file_id -> original filename
-last_file_id: Optional[str] = None
+last_uploaded_file_ids: List[str] = []
 rag_agent = None
 mcp_client = MCPClient()
 
@@ -143,7 +143,7 @@ async def upload_pdf(file: UploadFile = File(...)):
     """
     Upload a single PDF, assign a unique file_id, and add chunks into the shared FAISS store.
     """
-    global embedder, last_file_id, vector_store
+    global embedder, last_file_id, vector_store, last_uploaded_file_ids
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="File phai la PDF")
 
@@ -169,7 +169,7 @@ async def upload_pdf(file: UploadFile = File(...)):
 
         file_meta[file_id] = original_name
         loaded_file_ids.add(file_id)
-        last_file_id = file_id
+        last_uploaded_file_ids = [file_id]
 
         return {"message": "PDF da duoc xu ly thanh cong", "file_id": file_id, "file_name": original_name}
     except Exception as e:
@@ -188,7 +188,7 @@ async def upload_multiple_pdfs(files: List[UploadFile] = File(...)):
     """
     Upload multiple PDFs concurrently and add all chunks into the shared FAISS store.
     """
-    global embedder, last_file_id, vector_store
+    global embedder, last_file_id, vector_store, last_uploaded_file_ids
     if not files:
         raise HTTPException(status_code=400, detail="Chua chon file PDF")
 
@@ -227,6 +227,8 @@ async def upload_multiple_pdfs(files: List[UploadFile] = File(...)):
 
     if not results and errors:
         raise HTTPException(status_code=500, detail="; ".join(errors))
+    if results:
+        last_uploaded_file_ids = [item["file_id"] for item in results]
 
     return {"uploaded": results, "errors": errors}
 
@@ -274,8 +276,8 @@ async def ask_question(request: QueryRequest):
         cached_files = _load_session_files(session_id)
         if cached_files:
             selected_files = cached_files
-        elif last_file_id:
-            selected_files = [last_file_id]
+        elif last_uploaded_file_ids:
+            selected_files = last_uploaded_file_ids
     selected_files = list(dict.fromkeys([f for f in selected_files if f]))
 
     try:

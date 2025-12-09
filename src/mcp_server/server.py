@@ -9,7 +9,8 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import logging
 
-from utils import web_search, VietnameseEmbedder, FAISSVectorStore, process_pdf
+from env_loader import load_env
+from utils import web_search, VietnameseEmbedder, FAISSVectorStore, process_pdf, generate_summary
 from persistent_memory import PersistentMemory
 
 # Logging
@@ -74,8 +75,12 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 PDF_DIR = BASE_DIR / "data" / "pdfs"
 MEMORY_DB = BASE_DIR / "data" / "memory.db"
 
+load_env()
+if os.getenv("GEMINI_API_KEY") and not os.getenv("GOOGLE_API_KEY"):
+    os.environ["GOOGLE_API_KEY"] = os.getenv("GEMINI_API_KEY")
+
 _embedder: Optional[VietnameseEmbedder] = None
-_store: Optional[FAISSVectorStore] = None  # shared store across PDFs
+_store: Optional[FAISSVectorStore] = None  
 _loaded_files: Set[str] = set()
 
 
@@ -119,6 +124,12 @@ def _ensure_file_loaded(file_id: str) -> str:
         _store = FAISSVectorStore(docs, _embedder)
     else:
         _store.add_documents(docs)
+
+    if _memory.get_summary(resolved_id) is None:
+        full_text = "\n".join([d.page_content for d in docs])
+        summary = generate_summary(full_text)
+        _memory.save_summary(resolved_id, summary)
+        logger.info(f"Generated and saved summary for {resolved_id}")
 
     _loaded_files.add(resolved_id)
     logger.info(f"Loaded {resolved_id} into shared FAISS store ({len(docs)} chunks)")
@@ -187,6 +198,25 @@ def compare_pdfs(query: str, file_ids: List[str], top_k: int = 5) -> List[str]:
         contexts.append(ctx)
 
     return contexts
+
+
+@mcp_tool("get_file_summaries")
+def get_file_summaries(file_ids: List[str]) -> List[str]:
+    """Lấy bản tóm tắt nội dung chính của danh sách file_ids."""
+    ids_input = file_ids or []
+    if isinstance(ids_input, str):
+        ids_input = [p.strip() for p in ids_input.split(",")]
+    ids = [fid for fid in ids_input if fid]
+    if not ids:
+        raise HTTPException(400, "file_ids khong duoc de trong.")
+
+    summaries: List[str] = []
+    for fid in ids:
+        resolved_id = _ensure_file_loaded(fid)
+        summary = _memory.get_summary(resolved_id)
+        summaries.append(f"--- Summary [{resolved_id}] ---\n{summary if summary else '(Khong co tom tat)'}")
+
+    return summaries
 
 
 _memory = PersistentMemory(db_path=str(MEMORY_DB), max_history=25)

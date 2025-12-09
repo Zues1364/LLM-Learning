@@ -9,6 +9,7 @@ from typing import List
 import logging
 import urllib.parse
 import requests
+import google.generativeai as genai
 from sentence_transformers import SentenceTransformer
 import pickle
 import hashlib
@@ -122,6 +123,34 @@ def process_pdf(file_path: str) -> List[Document]:
 
     logger.info(f"Extracted {len(documents)} chunks from PDF.")
     return documents
+
+
+def generate_summary(text: str) -> str:
+    api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        logger.warning("GOOGLE_API_KEY/GEMINI_API_KEY not set; cannot generate summary.")
+        return "(Khong the tao tom tat: thieu GOOGLE_API_KEY)"
+
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-2.5-flash")
+
+        max_len = 100_000
+        trimmed_text = text[:max_len]
+        if len(text) > max_len:
+            logger.info(f"Input text too long ({len(text)} chars); truncated to {max_len}.")
+
+        prompt = (
+            "Bạn là chuyên gia phân tích. Hãy tóm tắt nội dung tài liệu sau bằng tiếng Việt, "
+            "tập trung vào các ý chính, kết luận và số liệu quan trọng. Độ dài khoảng 300-500 từ."
+        )
+        response = model.generate_content(f"{prompt}\n\n{trimmed_text}")
+        summary = getattr(response, "text", "") or ""
+        cleaned = summary.strip()
+        return cleaned if cleaned else "(Khong co tom tat)"
+    except Exception as e:
+        logger.error(f"Loi khi sinh tom tat: {e}")
+        return "(Khong the tao tom tat)"
 
 
 # Embedding

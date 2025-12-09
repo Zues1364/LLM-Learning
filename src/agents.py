@@ -17,7 +17,7 @@ from utils import FAISSVectorStore, web_search
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-from mcp_tools import tool_retrieve, tool_web_search, tool_memory_get, tool_memory_add, tool_compare_pdfs  
+from mcp_tools import tool_retrieve, tool_web_search, tool_memory_get, tool_memory_add, tool_compare_pdfs, tool_get_file_summaries  
 
 
 
@@ -27,9 +27,9 @@ from mcp_tools import tool_retrieve, tool_web_search, tool_memory_get, tool_memo
 def get_mcp_planner_agent(allow_web_search: bool = False) -> Agent:
     """
     Agent dang tool MCP de lay context/history. Tra ve JSON:
-    {"source": "vector_store|vector_store_compare|web_search|error", "context": "...", "memory": "...", "chunk_index": int|null}
+    {"source": "summary_index|vector_store|vector_store_compare|web_search|error", "context": "...", "memory": "...", "chunk_index": int|null}
     """
-    tools = [tool_retrieve, tool_compare_pdfs, tool_memory_get]
+    tools = [tool_get_file_summaries, tool_retrieve, tool_compare_pdfs, tool_memory_get]
     web_msg = "Ban khong duoc dung web_search_tool."
     if allow_web_search:
         tools.insert(2, tool_web_search)
@@ -38,10 +38,11 @@ def get_mcp_planner_agent(allow_web_search: bool = False) -> Agent:
     instructions = (
         "Ban la planner. Dau vao luon co [SESSION:<id>] va co the co [FILES:f1,f2,...]. "
         "Luon truyen session_id tu [SESSION] vao memory_get de lay lich su (ke ca khi rong). "
-        "Neu nguoi dung hoi so sanh/khac nhau/giua nhieu file va [FILES] co >=2 id, goi tool compare_pdfs(query, file_ids, top_k=5) va dat source=vector_store_compare. "
-        "Neu hoi ve mot file hoac [FILES] chi co 1 id, goi tool retrieve(question, top_k=5, file_ids=[...]). "
+        "Neu cau hoi mang tinh tong quan/khai quat/tom tat/“noi dung chinh la gi” hoac so sanh noi dung chinh giua cac file, va [FILES] co file_id, goi tool get_file_summaries(file_ids) va dat source=summary_index (chunk_index=null). Neu khong co file_id, khong goi get_file_summaries, dat source=error va context=Vui long cung cap file_ids. "
+        "Neu hoi chi tiet ve >=2 file, goi tool compare_pdfs(query, file_ids, top_k=5) va dat source=vector_store_compare (chi thuc hien khi co >=2 file_id). "
+        "Neu hoi chi tiet mot file hoac [FILES] chi co 1 id, goi tool retrieve(question, top_k=5, file_ids=[...]) va dat source=vector_store (chi thuc hien khi co file_id). "
         f"{web_msg} "
-        "Luon truyen tham so file_ids khi goi retrieve/compare (lay tu [FILES], de rong neu khong co de fallback web). "
+        "Luon truyen tham so file_ids khi goi retrieve/compare/get_file_summaries (lay tu [FILES], de rong neu khong co de fallback web). "
         "Tra ve duy nhat JSON (khong code block) voi khoa source, context, memory, chunk_index (co the null). "
         "Neu loi tool, dat source=error va context la thong bao loi."
     )

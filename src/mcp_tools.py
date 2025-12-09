@@ -68,3 +68,14 @@ def tool_compare_pdfs(query: str, file_ids: List[str], top_k: int = 5, client: M
         {"query": query, "file_ids": file_ids, "top_k": top_k},
     )
     return "\n\n".join(result)
+
+
+def tool_get_file_summaries(file_ids: List[str], client: MCPClient | None = None) -> str:
+    """
+    Lấy tóm tắt nội dung chính của các file. Dùng cho câu hỏi tổng quan hoặc so sánh bao quát.
+    """
+    if not file_ids:
+        return "(Khong co file_id de tom tat.)"
+    mcp = _get_client(client)
+    results: List[str] = mcp.invoke("get_file_summaries", {"file_ids": file_ids})
+    return "\n\n".join(results)
