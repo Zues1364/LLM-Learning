@@ -194,10 +194,6 @@ async def upload_multiple_pdfs(files: List[UploadFile] = File(...)):
 
 @app.post("/ask")
 async def ask_question(request: QueryRequest):
-    """
-    Nhận câu hỏi, dùng planner (MCP tools) để lấy context, sau đó Gemini trả lời.
-    Mọi lỗi planner/thiếu dữ liệu sẽ trả lời thân thiện thay vì 500.
-    """
     query = request.query
     session_id = request.session_id or "user_session_1"
     selected_files = request.file_ids or []
@@ -287,9 +283,6 @@ async def get_history(session_id: str = "user_session_1", page: int = 1, per_pag
 
 @app.delete("/session")
 async def delete_session(req: SessionRequest):
-    """
-    Xoa toan bo lich su hoi thoai cua mot session_id.
-    """
     try:
         memory.clear_session(req.session_id)
         session_dir = _session_dir(req.session_id)
