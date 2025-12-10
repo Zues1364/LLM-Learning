@@ -6,7 +6,7 @@ import shutil
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Set
 from uuid import uuid4
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -20,7 +20,7 @@ from agents import AnswerGeneratorAgent, get_mcp_planner_agent, get_rag_agent
 from env_loader import load_env
 from mcp_client.client import MCPClient
 from persistent_memory import PersistentMemory
-from utils import FAISSVectorStore, VietnameseEmbedder, process_pdf
+from utils import process_pdf
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -45,8 +45,6 @@ os.makedirs(SESSION_CACHE_DIR, exist_ok=True)
 
 # Globals
 memory = PersistentMemory(db_path=str(BASE_DIR / "data" / "memory.db"), max_history=25)
-embedder: Optional[VietnameseEmbedder] = None
-vector_store: Optional[FAISSVectorStore] = None  # shared store for all PDFs
 loaded_file_ids: Set[str] = set()
 file_meta: Dict[str, str] = {}  # file_id -> original filename
 last_uploaded_file_ids: List[str] = []
@@ -92,30 +90,6 @@ def _save_session_files(session_id: str, file_ids: List[str]):
     except Exception as e:
         logger.warning("Khong luu duoc session files cho %s: %s", session_id, e)
 
-
-def _ensure_file_loaded(file_id: str):
-    """Load PDF chunks into the shared vector store if not already loaded."""
-    global embedder, vector_store
-    if file_id in loaded_file_ids:
-        return
-
-    pdf_path = PDF_DIR / file_id
-    if not pdf_path.exists():
-        raise HTTPException(status_code=404, detail=f"File_id khong ton tai: {file_id}")
-
-    if embedder is None:
-        embedder = VietnameseEmbedder()
-
-    docs = process_pdf(str(pdf_path))
-    if vector_store is None:
-        vector_store = FAISSVectorStore(docs, embedder)
-    else:
-        vector_store.add_documents(docs)
-
-    loaded_file_ids.add(file_id)
-    file_meta.setdefault(file_id, pdf_path.name)
-
-
 class QueryRequest(BaseModel):
     query: str
     allow_web_search: bool = False
@@ -141,9 +115,9 @@ class SessionRequest(BaseModel):
 @app.post("/upload_pdf")
 async def upload_pdf(file: UploadFile = File(...)):
     """
-    Upload a single PDF, assign a unique file_id, and add chunks into the shared FAISS store.
+    Upload a single PDF, assign a unique file_id, and preprocess/cache chunks on disk.
     """
-    global embedder, last_file_id, vector_store, last_uploaded_file_ids
+    global last_file_id, last_uploaded_file_ids
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="File phai la PDF")
 
@@ -159,13 +133,6 @@ async def upload_pdf(file: UploadFile = File(...)):
 
         documents = process_pdf(str(dest_path))
         logger.info("Da xu ly PDF %s, tao %s chunks", file_id, len(documents))
-
-        if embedder is None:
-            embedder = VietnameseEmbedder()
-        if vector_store is None:
-            vector_store = FAISSVectorStore(documents, embedder)
-        else:
-            vector_store.add_documents(documents)
 
         file_meta[file_id] = original_name
         loaded_file_ids.add(file_id)
@@ -186,14 +153,11 @@ async def list_files():
 @app.post("/upload_pdfs")
 async def upload_multiple_pdfs(files: List[UploadFile] = File(...)):
     """
-    Upload multiple PDFs concurrently and add all chunks into the shared FAISS store.
+    Upload multiple PDFs concurrently and preprocess/cache chunks on disk.
     """
-    global embedder, last_file_id, vector_store, last_uploaded_file_ids
+    global last_file_id, last_uploaded_file_ids
     if not files:
         raise HTTPException(status_code=400, detail="Chua chon file PDF")
-
-    if embedder is None:
-        embedder = VietnameseEmbedder()
 
     results = []
     errors = []
@@ -214,10 +178,6 @@ async def upload_multiple_pdfs(files: List[UploadFile] = File(...)):
         for fut in as_completed(future_map):
             try:
                 fid, fname, docs = fut.result()
-                if vector_store is None:
-                    vector_store = FAISSVectorStore(docs, embedder)
-                else:
-                    vector_store.add_documents(docs)
                 file_meta[fid] = fname
                 loaded_file_ids.add(fid)
                 last_file_id = fid
@@ -231,37 +191,6 @@ async def upload_multiple_pdfs(files: List[UploadFile] = File(...)):
         last_uploaded_file_ids = [item["file_id"] for item in results]
 
     return {"uploaded": results, "errors": errors}
-
-
-@app.post("/compare_pdfs")
-async def compare_pdfs(request: CompareRequest):
-    """
-    Compare/query across two PDFs that have been uploaded (shared FAISS store).
-    """
-    if len(request.file_ids) < 2:
-        raise HTTPException(status_code=400, detail="Can cung cap it nhat 2 file_id de so sanh.")
-
-    for fid in request.file_ids:
-        _ensure_file_loaded(fid)
-
-    if vector_store is None:
-        raise HTTPException(status_code=400, detail="Chua co PDF nao duoc tai len.")
-
-    selected_ids = request.file_ids[:2]
-    contexts = []
-    for fid in selected_ids:
-        docs = vector_store.retrieve(request.query, top_k=5, file_ids=[fid])
-        if not docs:
-            contexts.append(f"[{file_meta.get(fid, fid)}] Khong tim thay noi dung phu hop.")
-            continue
-        chunk_text = "\n\n".join([f"[{doc.metadata.get('file_name', fid)} - Chunk {doc.metadata.get('index')}] {doc.page_content}" for doc in docs])
-        contexts.append(f"[{file_meta.get(fid, fid)}]\n{chunk_text}")
-
-    combined_context = "\n\n-----\n\n".join(contexts)
-    answer = answer_agent.run(request.query, combined_context, "vector_store_compare", "")
-
-    return {"answer": answer, "file_ids": selected_ids}
-
 
 @app.post("/ask")
 async def ask_question(request: QueryRequest):
