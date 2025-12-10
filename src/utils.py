@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 import numpy as np
@@ -28,6 +29,10 @@ CACHE_DIR = BASE_DIR / "data" / "cache"
 
 # Prepare cache dir
 os.makedirs(CACHE_DIR, exist_ok=True)
+
+# Embedding cache naming
+EMB_SUFFIX = "_embeddings.npy"
+EMB_META_SUFFIX = "_embeddings_meta.json"
 
 
 # Helper: md5 hash of file
@@ -125,6 +130,53 @@ def process_pdf(file_path: str) -> List[Document]:
     return documents
 
 
+def load_embeddings_with_cache(file_path: str, embedder: Embeddings, documents: List[Document]) -> np.ndarray:
+    """
+    Return normalized embeddings for the given documents, caching to disk by PDF hash + embedder model.
+    """
+    pdf_name = os.path.basename(file_path)
+    emb_cache = CACHE_DIR / f"{pdf_name}{EMB_SUFFIX}"
+    emb_meta = CACHE_DIR / f"{pdf_name}{EMB_META_SUFFIX}"
+    pdf_hash = get_file_hash(file_path)
+    embedder_name = getattr(embedder, "model_name", embedder.__class__.__name__)
+
+    if emb_cache.exists() and emb_meta.exists():
+        try:
+            meta = json.loads(emb_meta.read_text(encoding="utf-8"))
+            if meta.get("pdf_hash") == pdf_hash and meta.get("embedder") == embedder_name:
+                emb_np = np.load(emb_cache)
+                if emb_np.ndim == 1:
+                    emb_np = np.expand_dims(emb_np, axis=0)
+                logger.info(f"Loading cached embeddings for {pdf_name}")
+                return emb_np
+            else:
+                logger.info("Embedding cache invalid (hash/model changed), recomputing...")
+        except Exception as e:
+            logger.warning(f"Loi khi doc cache embedding: {e}, recompute...")
+
+    texts = [doc.page_content for doc in documents]
+    embeddings = embedder.embed_documents(texts)
+    emb_np = np.array(embeddings, dtype="float32")
+    if emb_np.ndim == 1:
+        emb_np = np.expand_dims(emb_np, axis=0)
+
+    norms = np.linalg.norm(emb_np, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    emb_np = emb_np / norms
+
+    try:
+        np.save(emb_cache, emb_np)
+        emb_meta.write_text(
+            json.dumps({"pdf_hash": pdf_hash, "embedder": embedder_name}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        logger.info(f"Saved embedding cache for {pdf_name} ({emb_np.shape[0]} vectors).")
+    except Exception as e:
+        logger.warning(f"Khong luu duoc cache embedding cho {pdf_name}: {e}")
+
+    return emb_np
+
+
 def generate_summary(text: str) -> str:
     api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
     if not api_key:
@@ -157,6 +209,7 @@ def generate_summary(text: str) -> str:
 class VietnameseEmbedder(Embeddings):
     def __init__(self, model_name="AITeamVN/Vietnamese_Embedding"):
         logger.info(f"Loading Vietnamese Embedding model: {model_name}")
+        self.model_name = model_name
         self.model = SentenceTransformer(model_name)
         logger.info("Model loaded.")
 
@@ -216,6 +269,33 @@ class FAISSVectorStore:
         else:
             if emb_np.shape[1] != self.embeddings_np.shape[1]:
                 raise ValueError("Embedding dimension mismatch when adding documents.")
+            self.embeddings_np = np.vstack([self.embeddings_np, emb_np])
+            self.documents.extend(documents)
+
+        logger.info(f"[DEBUG] Total documents now: {len(self.documents)}")
+        self._rebuild_index()
+
+    def add_documents_with_embeddings(self, documents: List[Document], embeddings: np.ndarray):
+        """
+        Add documents with precomputed (already normalized) embeddings.
+        """
+        if not documents:
+            return
+
+        emb_np = np.array(embeddings, dtype="float32")
+        if emb_np.ndim == 1:
+            emb_np = np.expand_dims(emb_np, axis=0)
+
+        norms = np.linalg.norm(emb_np, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        emb_np = emb_np / norms
+
+        if self.embeddings_np is None or self.embeddings_np.size == 0:
+            self.embeddings_np = emb_np
+            self.documents = list(documents)
+        else:
+            if emb_np.shape[1] != self.embeddings_np.shape[1]:
+                raise ValueError("Embedding dimension mismatch when adding documents with embeddings.")
             self.embeddings_np = np.vstack([self.embeddings_np, emb_np])
             self.documents.extend(documents)
 

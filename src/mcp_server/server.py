@@ -10,7 +10,7 @@ from pydantic import BaseModel
 import logging
 
 from env_loader import load_env
-from utils import web_search, VietnameseEmbedder, FAISSVectorStore, process_pdf, generate_summary
+from utils import web_search, VietnameseEmbedder, FAISSVectorStore, process_pdf, generate_summary, load_embeddings_with_cache
 from persistent_memory import PersistentMemory
 
 # Logging
@@ -120,10 +120,10 @@ def _ensure_file_loaded(file_id: str) -> str:
         _embedder = VietnameseEmbedder()
 
     docs = process_pdf(str(pdf_path))
+    embeddings = load_embeddings_with_cache(str(pdf_path), _embedder, docs)
     if _store is None:
-        _store = FAISSVectorStore(docs, _embedder)
-    else:
-        _store.add_documents(docs)
+        _store = FAISSVectorStore([], _embedder)
+    _store.add_documents_with_embeddings(docs, embeddings)
 
     if _memory.get_summary(resolved_id) is None:
         full_text = "\n".join([d.page_content for d in docs])
