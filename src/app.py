@@ -20,7 +20,6 @@ from agents import AnswerGeneratorAgent, get_mcp_planner_agent, get_rag_agent
 from env_loader import load_env
 from mcp_client.client import MCPClient
 from persistent_memory import PersistentMemory
-from utils import process_pdf
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -115,7 +114,7 @@ class SessionRequest(BaseModel):
 @app.post("/upload_pdf")
 async def upload_pdf(file: UploadFile = File(...)):
     """
-    Upload a single PDF, assign a unique file_id, and preprocess/cache chunks on disk.
+    Upload a single PDF, assign a unique file_id. PDF will be processed lazily on first query.
     """
     global last_file_id, last_uploaded_file_ids
     if not file.filename.endswith(".pdf"):
@@ -130,9 +129,7 @@ async def upload_pdf(file: UploadFile = File(...)):
 
         with open(dest_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-
-        documents = process_pdf(str(dest_path))
-        logger.info("Da xu ly PDF %s, tao %s chunks", file_id, len(documents))
+        logger.info("Da luu PDF %s, se xu ly khi truy van dau tien", file_id)
 
         file_meta[file_id] = original_name
         loaded_file_ids.add(file_id)
@@ -153,7 +150,7 @@ async def list_files():
 @app.post("/upload_pdfs")
 async def upload_multiple_pdfs(files: List[UploadFile] = File(...)):
     """
-    Upload multiple PDFs concurrently and preprocess/cache chunks on disk.
+    Upload multiple PDFs concurrently. PDFs are processed lazily on first query.
     """
     global last_file_id, last_uploaded_file_ids
     if not files:
@@ -170,14 +167,14 @@ async def upload_multiple_pdfs(files: List[UploadFile] = File(...)):
         dest_path = PDF_DIR / file_id_local
         with open(dest_path, "wb") as buffer:
             shutil.copyfileobj(upload_file.file, buffer)
-        docs = process_pdf(str(dest_path))
-        return file_id_local, original_name, docs
+        logger.info("Da luu PDF %s, se xu ly khi truy van dau tien", file_id_local)
+        return file_id_local, original_name
 
     with ThreadPoolExecutor(max_workers=min(len(files), 4)) as executor:
         future_map = {executor.submit(handle_one, f): f.filename for f in files if f.filename.endswith(".pdf")}
         for fut in as_completed(future_map):
             try:
-                fid, fname, docs = fut.result()
+                fid, fname = fut.result()
                 file_meta[fid] = fname
                 loaded_file_ids.add(fid)
                 last_file_id = fid

@@ -1,4 +1,5 @@
 import os
+import json
 from typing import Any, Dict, List
 
 from mcp_client.client import MCPClient
@@ -79,3 +80,38 @@ def tool_get_file_summaries(file_ids: List[str], client: MCPClient | None = None
     mcp = _get_client(client)
     results: List[str] = mcp.invoke("get_file_summaries", {"file_ids": file_ids})
     return "\n\n".join(results)
+
+
+def tool_analyze_transcript(file_id: str, client: MCPClient | None = None) -> str:
+    """
+    Trich xuat bang diem sinh vien thanh JSON cau truc.
+    """
+    mcp = _get_client(client)
+    result: Any = mcp.invoke("analyze_transcript", {"file_id": file_id})
+    if isinstance(result, (dict, list)):
+        return json.dumps(result, ensure_ascii=False)
+    return str(result)
+
+
+def tool_math_eval(expression: str, client: MCPClient | None = None) -> str:
+    """
+    May tinh an toan danh gia bieu thuc.
+    """
+    mcp = _get_client(client)
+    result: Any = mcp.invoke("math_eval", {"expression": expression})
+    return str(result)
+
+
+def tool_consult_advisor(query: str, file_ids: List[str], client: MCPClient | None = None) -> str:
+    """
+    Goi Academic Advisor Agent qua MCP server.
+    """
+    mcp = _get_client(client)
+    result: Any = mcp.invoke(
+        "consult_advisor",
+        {
+            "query": query,
+            "file_ids": file_ids or [],
+        },
+    )
+    return str(result)

@@ -105,6 +105,8 @@ export default function App() {
   const [uploadedFile, setUploadedFile] = useState(null);
   const [files, setFiles] = useState([]);
   const [selectedFileIds, setSelectedFileIds] = useState([]);
+  const [processingPdf, setProcessingPdf] = useState(false);
+  const [processingLabel, setProcessingLabel] = useState("");
 
   const fileInputRef = useRef(null);
   const chatEndRef = useRef(null);
@@ -112,6 +114,10 @@ export default function App() {
 
   const currentMessages = messagesBySession[currentSession] || [];
   const selectedNames = files.filter((f) => selectedFileIds.includes(f.file_id)).map((f) => f.file_name);
+  const visibleFiles = selectedFileIds.length
+    ? files.filter((f) => selectedFileIds.includes(f.file_id))
+    : [];
+  const handleSelectAllFiles = () => setSelectedFileIds(files.map((f) => f.file_id));
 
   const refreshFiles = useCallback(async () => {
     try {
@@ -161,13 +167,15 @@ export default function App() {
 
   const handleNewChat = () => {
     const newId = createSessionId();
-    const newTitle = `Phiên ${sessions.length + 1}`;
+    const newTitle = `Phien ${sessions.length + 1}`;
     setSessions((prev) => [...prev, { id: newId, title: newTitle }]);
     setCurrentSession(newId);
     setMessagesBySession((prev) => ({ ...prev, [newId]: [] }));
     setHistoryList([]);
     setUploadedFile(null);
     setSelectedFileIds([]);
+    setProcessingPdf(false);
+    setProcessingLabel("");
     setInputStr("");
   };
 
@@ -176,6 +184,8 @@ export default function App() {
     setInputStr("");
     setUploadedFile(null);
     setSelectedFileIds([]);
+    setProcessingPdf(false);
+    setProcessingLabel("");
     if (!messagesBySession[sessionId]) {
       setMessagesBySession((prev) => ({ ...prev, [sessionId]: [] }));
     }
@@ -211,7 +221,7 @@ export default function App() {
       const remaining = sessions.filter((s) => s.id !== sessionId);
       const fallbackId = remaining[0]?.id || createSessionId();
       if (!remaining[0]) {
-        setSessions([{ id: fallbackId, title: "Phiên 1" }]);
+        setSessions([{ id: fallbackId, title: "Phien 1" }]);
       }
       setCurrentSession(fallbackId);
       setHistoryList([]);
@@ -221,7 +231,7 @@ export default function App() {
   const handleRenameSession = (sessionId) => {
     const target = sessions.find((s) => s.id === sessionId);
     if (!target) return;
-    const nextTitle = window.prompt("Nhập tên phiên", target.title)?.trim();
+    const nextTitle = window.prompt("Nhap ten phien", target.title)?.trim();
     if (!nextTitle) return;
     setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, title: nextTitle } : s)));
   };
@@ -236,32 +246,44 @@ export default function App() {
       if (selected.length === 1) {
         const file = selected[0];
         const resp = await uploadPdf(file);
-        setSelectedFileIds([resp.file_id]);
+        setSelectedFileIds((prev) => {
+          const set = new Set(prev || []);
+          set.add(resp.file_id);
+          return Array.from(set);
+        });
         setUploadedFile(file.name);
-        updateMessages(sessionId, (prev) => [...prev, { type: "system", text: `Đã tải lên và xử lý: ${file.name}` }]);
       } else {
         const resp = await uploadPdfs(selected);
         const names = resp.uploaded?.map((f) => f.file_name).join(", ");
         const newIds = resp.uploaded?.map((f) => f.file_id).filter(Boolean) || [];
         setUploadedFile(names || `${selected.length} files`);
-        setSelectedFileIds(newIds);
-        updateMessages(sessionId, (prev) => [...prev, { type: "system", text: `Đã tải lên: ${names || selected.length + " files"}` }]);
+        setSelectedFileIds((prev) => {
+          const set = new Set(prev || []);
+          newIds.forEach((id) => set.add(id));
+          return Array.from(set);
+        });
       }
       await refreshFiles();
     } catch (err) {
-      updateMessages(sessionId, (prev) => [...prev, { type: "system", text: `Lỗi upload: ${err.message}` }]);
+      updateMessages(sessionId, (prev) => [...prev, { type: "system", text: `Loi upload: ${err.message}` }]);
     } finally {
       setUploading(false);
       e.target.value = null;
     }
   };
 
-  const handleSendMessage = async () => {
+    const handleSendMessage = async () => {
     if (!inputStr.trim()) return;
 
     const query = inputStr;
     const sessionId = currentSession;
     setInputStr("");
+
+    if (selectedFileIds.length) {
+      const names = files.filter((f) => selectedFileIds.includes(f.file_id)).map((f) => f.file_name).join(", ");
+      setProcessingPdf(true);
+      setProcessingLabel(names || "Đang xu ly PDF...");
+    }
 
     updateMessages(sessionId, (prev) => [...prev, { type: "user", text: query }]);
     setLoading(true);
@@ -272,9 +294,11 @@ export default function App() {
       const updatedHist = await fetchHistory(sessionId);
       setHistoryList(updatedHist);
     } catch (err) {
-      updateMessages(sessionId, (prev) => [...prev, { type: "bot", text: `Lỗi: ${err.message}` }]);
+      updateMessages(sessionId, (prev) => [...prev, { type: "bot", text: `Loi: ${err.message}` }]);
     } finally {
       setLoading(false);
+      setProcessingPdf(false);
+      setProcessingLabel("");
     }
   };
 
@@ -456,7 +480,7 @@ export default function App() {
                 <i className="fas fa-bolt"></i>
               </div>
               <div className="msg-content bot-text" style={{ color: "#94a3b8" }}>
-                <i className="fas fa-circle-notch fa-spin"></i> Đang suy nghĩ...
+                <i className="fas fa-circle-notch fa-spin"></i> Ðang suy nghi...
               </div>
             </div>
           )}
@@ -465,7 +489,55 @@ export default function App() {
 
         <div className="input-region">
           <div className="input-container">
-            {(selectedNames.length || uploadedFile) && (
+            {processingPdf && (
+              <div className="processing-banner">
+                <i className="fas fa-circle-notch fa-spin"></i> {processingLabel || "Đang xử lý PDF..."}
+              </div>
+            )}
+            {visibleFiles.length > 0 && (
+              <div className="file-gallery">
+                <div className="file-gallery-header">
+                  <div className="file-gallery-title">
+                    <i className="fas fa-folder-open"></i> File đã tải lên
+                  </div>
+                  <div className="file-gallery-actions">
+                    <button className="chip-btn" onClick={refreshFiles} title="Làm mới danh sách">
+                      <i className="fas fa-sync-alt"></i>
+                    </button>
+                    <button className="chip-btn" onClick={handleSelectAllFiles} title="Chọn tất cả">
+                      <i className="fas fa-check-double"></i>
+                    </button>
+                  </div>
+                </div>
+                <div className="file-chip-list">
+                  {visibleFiles.map((f) => {
+                    const active = selectedFileIds.includes(f.file_id);
+                    return (
+                      <div
+                        key={f.file_id}
+                        className={`file-chip ${active ? "selected" : ""}`}
+                        onClick={() => handleToggleFile(f.file_id)}
+                        title={f.file_name}
+                      >
+                        <div className="file-chip-icon">
+                          <i className="fas fa-file-pdf"></i>
+                        </div>
+                        <div className="file-chip-body">
+                          <div className="file-chip-name">{f.file_name}</div>
+                          <div className="file-chip-meta">PDF</div>
+                        </div>
+                        <div className="file-chip-check">
+                          {active ? <i className="fas fa-check-circle"></i> : <i className="far fa-circle"></i>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Chi hien chip preview cu neu chua co gallery (khong co danh sach files tu server) */}
+            {!files.length && (selectedNames.length || uploadedFile) && (
               <div className="file-preview">
                 <i className="fas fa-file-pdf"></i> {selectedNames.length ? selectedNames.join(", ") : uploadedFile}
                 <i
@@ -493,7 +565,7 @@ export default function App() {
               </button>
               <button
                 className={`icon-btn ${allowWeb ? "active" : ""}`}
-                title={allowWeb ? "Tat tim kiem Web" : "Bat tim kiem Web"}
+                title={allowWeb ? "Tắt tìm kiếm Web" : "Bật tìm kiếm Web"}
                 onClick={() => setAllowWeb(!allowWeb)}
               >
                 <i className="fas fa-globe"></i>
@@ -522,5 +594,14 @@ export default function App() {
     </div>
   );
 }
+
+
+
+
+
+
+
+
+
 
 

@@ -1,5 +1,7 @@
 import sys
 import os
+import json
+import re
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
@@ -12,6 +14,8 @@ import logging
 from env_loader import load_env
 from utils import web_search, VietnameseEmbedder, FAISSVectorStore, process_pdf, generate_summary, load_embeddings_with_cache
 from persistent_memory import PersistentMemory
+from agents import get_academic_advisor_agent
+import google.generativeai as genai
 
 # Logging
 logging.basicConfig(level=logging.INFO)
@@ -134,6 +138,81 @@ def _ensure_file_loaded(file_id: str) -> str:
     _loaded_files.add(resolved_id)
     logger.info(f"Loaded {resolved_id} into shared FAISS store ({len(docs)} chunks)")
     return resolved_id
+
+
+@mcp_tool("analyze_transcript")
+def analyze_transcript(file_id: str) -> str:
+    """
+    Trich xuat du lieu co cau truc tu bang diem sinh vien (PDF) bang Gemini.
+    Tra ve chuoi JSON.
+    """
+    api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        logger.error("GOOGLE_API_KEY/GEMINI_API_KEY missing for analyze_transcript")
+        raise HTTPException(500, "Missing GOOGLE_API_KEY/GEMINI_API_KEY for Gemini")
+
+    try:
+        pdf_path = _resolve_pdf_path(file_id)
+        docs = process_pdf(str(pdf_path))
+        full_text = "\n".join(doc.page_content for doc in docs)
+    except Exception as e:
+        logger.error(f"Error reading transcript {file_id}: {e}")
+        raise HTTPException(500, f"Khong doc duoc file: {e}")
+
+    prompt = (
+        "Hay trich xuat thong tin tu bang diem sinh vien: "
+        "current_semester (int), total_credits (int), current_gpa (float), passed_subjects (list string). "
+        "Tra ve duy nhat JSON hop le."
+    )
+
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        response = model.generate_content(f"{prompt}\n\n{full_text}")
+        raw_text = getattr(response, "text", "") or ""
+    except Exception as e:
+        logger.error(f"Gemini error during analyze_transcript: {e}")
+        raise HTTPException(500, f"Loi goi Gemini: {e}")
+
+    if not raw_text:
+        raise HTTPException(500, "Khong nhan duoc ket qua tu Gemini")
+
+    try:
+        parsed = json.loads(raw_text)
+        return json.dumps(parsed, ensure_ascii=False)
+    except Exception:
+        logger.warning("Gemini tra ve JSON khong hop le, tra ve nguyen van ban.")
+        return raw_text.strip()
+
+
+@mcp_tool("math_eval")
+def math_eval(expression: str) -> str:
+    """
+    Danh gia bieu thuc toan hoc an toan voi eval, chi chap nhan ky tu so hoc co ban.
+    """
+    if not re.fullmatch(r"[0-9\\.\\+\\-\\*/()\\s]+", expression or ""):
+        return "Error: Unsafe expression"
+    try:
+        safe_globals: Dict[str, object] = {"__builtins__": {}}
+        result = eval(expression, safe_globals, {})
+        return str(result)
+    except Exception as e:
+        logger.error(f"Error in math_eval: {e}")
+        return f"Error: {e}"
+
+
+@mcp_tool("consult_advisor")
+def consult_advisor(query: str, file_ids: List[str] | None = None) -> str:
+    """
+    Goi Academic Advisor Agent tu server, tra ve noi dung tu van.
+    """
+    ids = file_ids or []
+    if isinstance(ids, str):
+        ids = [p.strip() for p in ids.split(",") if p.strip()]
+    advisor_agent = get_academic_advisor_agent()
+    prompt = f"User Query: {query}\nContext Files: {ids}"
+    response = advisor_agent.run(prompt)
+    return getattr(response, "content", "")
 
 
 @mcp_tool("retrieve_chunks")

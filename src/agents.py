@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -17,7 +17,17 @@ from utils import FAISSVectorStore, web_search
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-from mcp_tools import tool_retrieve, tool_web_search, tool_memory_get, tool_memory_add, tool_compare_pdfs, tool_get_file_summaries  
+from mcp_tools import (
+    tool_retrieve,
+    tool_web_search,
+    tool_memory_get,
+    tool_memory_add,
+    tool_compare_pdfs,
+    tool_get_file_summaries,
+    tool_analyze_transcript,
+    tool_consult_advisor,
+    tool_math_eval,
+)
 
 
 
@@ -26,10 +36,10 @@ from mcp_tools import tool_retrieve, tool_web_search, tool_memory_get, tool_memo
 
 def get_mcp_planner_agent(allow_web_search: bool = False) -> Agent:
     """
-    Agent dang tool MCP de lay context/history. Tra ve JSON:
-    {"source": "summary_index|vector_store|vector_store_compare|web_search|error", "context": "...", "memory": "...", "chunk_index": int|null}
+    Tra ve JSON:
+    {"source": "summary_index|vector_store|vector_store_compare|web_search|academic_advisor|error", "context": "...", "memory": "...", "chunk_index": int|null}
     """
-    tools = [tool_get_file_summaries, tool_retrieve, tool_compare_pdfs, tool_memory_get]
+    tools = [tool_get_file_summaries, tool_retrieve, tool_compare_pdfs, tool_memory_get, tool_consult_advisor]
     web_msg = "Ban khong duoc dung web_search_tool."
     if allow_web_search:
         tools.insert(2, tool_web_search)
@@ -38,7 +48,8 @@ def get_mcp_planner_agent(allow_web_search: bool = False) -> Agent:
     instructions = (
         "Ban la planner. Dau vao luon co [SESSION:<id>] va co the co [FILES:f1,f2,...]. "
         "Luon truyen session_id tu [SESSION] vao memory_get de lay lich su (ke ca khi rong). "
-        "Neu cau hoi mang tinh tong quan/khai quat/tom tat/“noi dung chinh la gi” hoac so sanh noi dung chinh giua cac file, va [FILES] co file_id, goi tool get_file_summaries(file_ids) va dat source=summary_index (chunk_index=null). Neu khong co file_id, khong goi get_file_summaries, dat source=error va context=Vui long cung cap file_ids. "
+        "DYNAMIC ADVISORY: Neu nguoi dung hoi ve tinh diem, muc tieu GPA, hoac lo trinh hoc: TUYET DOI KHONG tu tra loi, KHONG goi retrieve. Hay goi tool_consult_advisor(query, file_ids). Ket qua tra ve tu tool nay chinh la context. Tra JSON voi source=academic_advisor, context=<ket qua tu tool>, memory=<ket qua memory_get>, chunk_index=null. "
+        "Neu cau hoi mang tinh tong quan/khai quat/tom tat/noi dung chinh la gì hoac so sanh noi dung chinh giua cac file, va [FILES] co file_id, goi tool get_file_summaries(file_ids) va dat source=summary_index (chunk_index=null). Neu khong co file_id, khong goi get_file_summaries, dat source=error va context=Vui long cung cap file_ids. "
         "Neu hoi chi tiet ve >=2 file, goi tool compare_pdfs(query, file_ids, top_k=5) va dat source=vector_store_compare (chi thuc hien khi co >=2 file_id). "
         "Neu hoi chi tiet mot file hoac [FILES] chi co 1 id, goi tool retrieve(question, top_k=5, file_ids=[...]) va dat source=vector_store (chi thuc hien khi co file_id). "
         f"{web_msg} "
@@ -54,6 +65,26 @@ def get_mcp_planner_agent(allow_web_search: bool = False) -> Agent:
         markdown=False,
     )
 
+
+def get_academic_advisor_agent() -> Agent:
+    """
+    Worker Agent tu van hoc vu (Supervisor se goi qua tool_consult_advisor).
+    """
+    instructions = (
+        "Bạn là chuyên gia tư vấn học vụ.\n"
+        "B1: Gọi analyze_transcript (dạng file_id từ 'Context Files') để lấy điểm số hiện tại.\n"
+        "B2: Gọi retrieve_chunks với query (ví dụ: 'quy chế tính điểm', 'công thức GPA') và file_ids từ 'Context Files' để lấy luật trong Sổ tay sinh viên.\n"
+        "B3: SUY LUẬN: Kết hợp Số liệu (B1) + Công thức (B2) + Mục tiêu của User -> Lập phương trình toán học.\n"
+        "B4: Gọi math_eval để tính kết quả chính xác.\n"
+        "B5: Trả về báo cáo chi tiết kèm số liệu."
+    )
+    return Agent(
+        name="Academic Advisor Agent",
+        model=Gemini(id="gemini-2.5-flash"),
+        tools=[tool_analyze_transcript, tool_retrieve, tool_math_eval],
+        instructions=instructions,
+        markdown=False,
+    )
 # Agent Retriever
 class RetrieverAgent:
     def __init__(self, vector_store: FAISSVectorStore, llm_agent: Agent = None):
@@ -101,7 +132,6 @@ class RetrieverAgent:
             logger.error(f"[RetrieverAgent] Lỗi khi xử lý: {e}")
             return "error", f"Lỗi khi truy xuất tài liệu: {e}", None
 
-
 # Agent Web Searcher
 class WebSearcherAgent:
     def __init__(self, llm_agent: Agent = None):
@@ -132,7 +162,6 @@ class WebSearcherAgent:
         except Exception as e:
             logger.error(f"[WebSearcherAgent] Lỗi khi tìm kiếm web: {e}")
             return f"Lỗi khi tìm kiếm web: {e}"
-
 
 # Agent Memory Manager
 class MemoryManagerAgent:
@@ -165,7 +194,6 @@ class MemoryManagerAgent:
             logger.error(f"[MemoryManagerAgent] Lỗi khi truy xuất lịch sử: {e}")
             return f"Lỗi khi truy xuất lịch sử: {e}"
 
-
 # Agent Answer Generator
 class AnswerGeneratorAgent:
     def __init__(self, llm_agent: Agent):
@@ -190,58 +218,6 @@ class AnswerGeneratorAgent:
         except Exception as e:
             logger.error(f"[AnswerGeneratorAgent] Lỗi khi sinh câu trả lời: {e}")
             return f"Lỗi khi sinh câu trả lời: {e}"
-
-
-# Agent Coordinator
-class CoordinatorAgent:
-    def __init__(self, retriever: RetrieverAgent, web_searcher: WebSearcherAgent, memory_manager: MemoryManagerAgent,
-                 answer_generator: AnswerGeneratorAgent, memory: PersistentMemory):
-        self.retriever = retriever
-        self.web_searcher = web_searcher
-        self.memory_manager = memory_manager
-        self.answer_generator = answer_generator
-        self.memory = memory
-
-    def run(self, query: str, session_id: str) -> str:
-        try:
-            logger.info(f"[CoordinatorAgent] Observation: Nhận câu hỏi từ người dùng: {query}")
-            logger.info("[CoordinatorAgent] Thought: Điều phối các agent để xử lý câu hỏi...")
-
-            logger.info("[CoordinatorAgent] Action: Kích hoạt RetrieverAgent...")
-            source, context, chunk_index = self.retriever.run(query)
-            if source == "error":
-                logger.error("[CoordinatorAgent] Evaluation: RetrieverAgent trả về lỗi.")
-                return context
-
-            if source == "web_search":
-                logger.info("[CoordinatorAgent] Action: Kích hoạt WebSearcherAgent...")
-                context = self.web_searcher.run(query)
-                if context.startswith("Lỗi"):
-                    logger.error("[CoordinatorAgent] Evaluation: WebSearcherAgent trả về lỗi.")
-                    return context
-
-            logger.info("[CoordinatorAgent] Action: Kích hoạt MemoryManagerAgent...")
-            memory_context = self.memory_manager.run(query, session_id, chunk_index)
-            if memory_context.startswith("Lỗi"):
-                logger.error("[CoordinatorAgent] Evaluation: MemoryManagerAgent trả về lỗi.")
-                return memory_context
-
-            logger.info("[CoordinatorAgent] Action: Kích hoạt AnswerGeneratorAgent...")
-            answer = self.answer_generator.run(query, context, source, memory_context)
-            if answer.startswith("Lỗi"):
-                logger.error("[CoordinatorAgent] Evaluation: AnswerGeneratorAgent trả về lỗi.")
-                return answer
-
-            logger.info("[CoordinatorAgent] Action: Lưu câu trả lời vào lịch sử...")
-            self.memory.add_to_history(query, answer, session_id, chunk_index)
-
-            logger.info("[CoordinatorAgent] Evaluation: Hoàn thành xử lý câu hỏi.")
-            return answer
-        except Exception as e:
-            logger.error(f"[CoordinatorAgent] Lỗi khi điều phối: {e}")
-            return f"Lỗi khi điều phối các agent: {e}"
-
-
 # Gemini LLM Agent
 def get_rag_agent() -> Agent:
     try:
@@ -295,3 +271,5 @@ def get_ollama_agent(model_name: str = "llama3") -> Agent:
     except Exception as e:
         logger.error(f"[get_ollama_agent] Lỗi khi tạo Ollama Agent: {e}")
         raise
+
+

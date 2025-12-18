@@ -68,6 +68,15 @@ def test_mcp_client_invoke_raises_on_http_error(monkeypatch):
 def test_mcp_tools_wrappers_call_invoke(monkeypatch):
     calls = []
 
+    # class DummyClient:
+    #     def invoke(self, tool, args):
+    #         calls.append((tool, args))
+    #         # tool_retrieve expects list
+    #         if tool == "retrieve_chunks":
+    #             return [f"{tool}-ok"]
+    #         return f"{tool}-ok"
+
+
     class DummyClient:
         def invoke(self, tool, args):
             calls.append((tool, args))

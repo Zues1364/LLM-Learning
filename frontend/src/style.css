@@ -318,6 +318,117 @@ body {
   border: 1px solid rgba(37, 99, 235, 0.2);
 }
 
+.processing-banner {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: rgba(59, 130, 246, 0.12);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  padding: 8px 12px;
+  border-radius: 10px;
+}
+
+.file-gallery {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.file-gallery-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.file-gallery-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.file-gallery-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chip-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+  padding: 6px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: 0.2s;
+}
+
+.chip-btn:hover {
+  color: var(--text-primary);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.file-chip-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.file-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  transition: 0.2s ease;
+}
+
+.file-chip:hover {
+  border-color: rgba(59, 130, 246, 0.4);
+}
+
+.file-chip.selected {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.6);
+}
+
+.file-chip-icon {
+  color: #60a5fa;
+  font-size: 16px;
+}
+
+.file-chip-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.file-chip-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-chip-meta {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.file-chip-check {
+  color: #60a5fa;
+  font-size: 14px;
+}
+
 .input-row {
   display: flex;
   align-items: center;
