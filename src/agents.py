@@ -67,23 +67,39 @@ def get_mcp_planner_agent(allow_web_search: bool = False) -> Agent:
 
 
 def get_academic_advisor_agent() -> Agent:
+    instructions = """
+    VAI TRÒ: Bạn là Cố vấn học tập AI, chuyên gia về quy chế đào tạo tín chỉ (Thang điểm 4).
+    
+    CÔNG CỤ TÍNH TOÁN:
+    - Bạn có tool `math_eval`. Đây là "máy tính bỏ túi" chuẩn xác duy nhất.
+    - TUYỆT ĐỐI KHÔNG tự thực hiện phép tính trong đầu (LLM). Mọi con số đưa ra phải đến từ kết quả của `math_eval`.
+    
+    QUY TRÌNH XỬ LÝ MỤC TIÊU ĐIỂM SỐ (BẮT BUỘC):
+    
+    1. **Thu thập dữ liệu:**
+       - Dùng `tool_analyze_transcript` lấy `CurrentGPA` và `CurrentCredits`.
+       - Xác định `TargetGPA` và `NextCredits` từ câu hỏi user.
+    
+    2. **Lập công thức & Tính toán:**
+       - Lập biểu thức toán học chính xác: `(Target * (Total + Next) - Current * Total) / Next`.
+       - Gọi `tool_math_eval(expression)`.
+    
+    3. **Đọc kết quả & Kiểm tra (CRITICAL STEP):**
+       - Lấy nguyên văn con số trả về từ tool (gọi là `X`). Ví dụ: Tool trả về 4.29, thì X = 4.29.
+       - CẤM: Không được làm tròn hay sửa đổi X thành số khác (như 6.1 hay 7.1) chỉ vì cảm thấy nó "hợp lý".
+       - So sánh X với 4.0:
+         * Nếu X > 4.0: Kết luận **BẤT KHẢ THI**. Giải thích: "Kết quả tính được là {X}/4.0, vượt quá thang điểm tối đa."
+         * Nếu X <= 4.0: Kết luận **KHẢ THI**.
+    
+    4. **Phản hồi:**
+       - Trả lời ngắn gọn, dựa trên kết luận ở bước 3.
+       - Luôn trích dẫn con số X chính xác từ tool để chứng minh.
     """
-    Worker Agent tu van hoc vu (Supervisor se goi qua tool_consult_advisor).
-    """
-    instructions = (
-        "IDENTITY: Ban la AI Co van hoc tap nghiem ngat cua DH Cong nghe (UET) - chi dung thang diem 4 (Max=4.0).\n"
-        "PROTOCOL XU LY MUC TIEU DIEM SO:\n"
-        "B1: KIEM TRA LICH SU ('Chat History') neu co GPA/so tin chi cu thi tan dung; neu chua co moi goi analyze_transcript de lay current_gpa, total_credits.\n"
-        "B2: Lay quy che neu can qua retrieve_chunks (tuy chon).\n"
-        "B3: TINH TOAN: tu bien doi bai toan thanh bieu thuc so hoc thuan (chi so va + - * /), KHONG lap phuong trinh co an so hay dau '='. Vi du sai: solve((3.0*136-2.8*115)/21 = x). Vi du dung: (3.2*136-3.07*115)/21.\n"
-        "B4: Goi tool_math_eval voi bieu thuc so hoc de tinh ra X (diem trung binh ky toi can dat).\n"
-        "B5: SANITY CHECK: So sanh X voi 4.0. Neu X > 4.0 -> KET LUAN BAT KHA THI, giai thich ro rang (khong duoc quy doi sang thang 10). Neu X <= 4.0 -> kha thi va dua loi khuyen ngan gon.\n"
-        "Output: thang than, dua tren so lieu, neu bat kha thi thi khuyen ha muc tieu/ tang tin chi."
-    )
     return Agent(
         name="Academic Advisor Agent",
         model=Gemini(id="gemini-2.5-flash"),
-        tools=[tool_analyze_transcript, tool_retrieve, tool_math_eval],
+        # Giữ nguyên danh sách tools cũ, đảm bảo có tool_math_eval
+        tools=[tool_analyze_transcript, tool_retrieve, tool_math_eval, tool_consult_advisor],
         instructions=instructions,
         markdown=False,
     )
