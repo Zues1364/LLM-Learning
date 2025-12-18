@@ -141,9 +141,10 @@ def _ensure_file_loaded(file_id: str) -> str:
 
 
 @mcp_tool("analyze_transcript")
-def analyze_transcript(file_id: str) -> str:
+def analyze_transcript(file_ids: str | List[str]) -> str:
     """
     Trich xuat du lieu co cau truc tu bang diem sinh vien (PDF) bang Gemini.
+    Ho tro nhieu file bang diem, noi noi dung lai truoc khi tinh toan.
     Tra ve chuoi JSON.
     """
     api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
@@ -151,18 +152,35 @@ def analyze_transcript(file_id: str) -> str:
         logger.error("GOOGLE_API_KEY/GEMINI_API_KEY missing for analyze_transcript")
         raise HTTPException(500, "Missing GOOGLE_API_KEY/GEMINI_API_KEY for Gemini")
 
+    # Chuan hoa danh sach file_ids (chuoi phan cach dau phay hoac list)
+    ids_input = file_ids
+    if isinstance(ids_input, str):
+        ids: List[str] = [p.strip() for p in ids_input.split(",") if p.strip()]
+    else:
+        ids = list(ids_input or [])
+
+    if not ids:
+        raise HTTPException(400, "Khong co file_id de phan tich bang diem")
+
+    sections: List[str] = []
     try:
-        pdf_path = _resolve_pdf_path(file_id)
-        docs = process_pdf(str(pdf_path))
-        full_text = "\n".join(doc.page_content for doc in docs)
+        for fid in ids:
+            pdf_path = _resolve_pdf_path(fid)
+            docs = process_pdf(str(pdf_path))
+            file_text = "\n".join(doc.page_content for doc in docs)
+            sections.append(f"--- FILE {pdf_path.name} ---\n{file_text}")
     except Exception as e:
-        logger.error(f"Error reading transcript {file_id}: {e}")
-        raise HTTPException(500, f"Khong doc duoc file: {e}")
+        logger.error(f"Error reading transcript {fid}: {e}")
+        raise HTTPException(500, f"Khong doc duoc file {fid}: {e}")
+
+    full_text = "\n\n".join(sections)
 
     prompt = (
-        "Hay trich xuat thong tin tu bang diem sinh vien: "
-        "current_semester (int), total_credits (int), current_gpa (float), passed_subjects (list string). "
-        "Tra ve duy nhat JSON hop le."
+        "Hay trich xuat thong tin tu bang diem sinh vien (du lieu gop tu nhieu trang/nhieu file, "
+        "cac file duoc ngan cach boi '--- FILE <ten file> ---'): "
+        "current_semester (int), total_credits (int tong tat ca hoc phan da hoan thanh), "
+        "current_gpa (float GPA tich luy tren toan bo du lieu), passed_subjects (list string ten mon da qua). "
+        "Tinh toan tren TOAN BO du lieu, tra ve duy nhat JSON hop le."
     )
 
     try:
@@ -202,15 +220,31 @@ def math_eval(expression: str) -> str:
 
 
 @mcp_tool("consult_advisor")
-def consult_advisor(query: str, file_ids: List[str] | None = None) -> str:
+def consult_advisor(query: str, file_ids: List[str] | None = None, session_id: str = "default") -> str:
     """
     Goi Academic Advisor Agent tu server, tra ve noi dung tu van.
+    Tu dong lay lich su chat de Agent khong bi mat ngu canh.
     """
     ids = file_ids or []
     if isinstance(ids, str):
         ids = [p.strip() for p in ids.split(",") if p.strip()]
+
+    try:
+        history_context = _memory.get_context("", session_id=session_id, max_rows=5)
+    except Exception as e:
+        logger.warning(f"Failed to fetch history in consult_advisor: {e}")
+        history_context = ""
+
     advisor_agent = get_academic_advisor_agent()
-    prompt = f"User Query: {query}\nContext Files: {ids}"
+    
+    prompt = (
+        f"--- CONTEXT START ---\n"
+        f"Chat History:\n{history_context}\n"
+        f"Context Files: {ids}\n"
+        f"--- CONTEXT END ---\n\n"
+        f"User Query: {query}"
+    )
+    
     response = advisor_agent.run(prompt)
     return getattr(response, "content", "")
 

@@ -48,7 +48,7 @@ def get_mcp_planner_agent(allow_web_search: bool = False) -> Agent:
     instructions = (
         "Ban la planner. Dau vao luon co [SESSION:<id>] va co the co [FILES:f1,f2,...]. "
         "Luon truyen session_id tu [SESSION] vao memory_get de lay lich su (ke ca khi rong). "
-        "DYNAMIC ADVISORY: Neu nguoi dung hoi ve tinh diem, muc tieu GPA, hoac lo trinh hoc: TUYET DOI KHONG tu tra loi, KHONG goi retrieve. Hay goi tool_consult_advisor(query, file_ids). Ket qua tra ve tu tool nay chinh la context. Tra JSON voi source=academic_advisor, context=<ket qua tu tool>, memory=<ket qua memory_get>, chunk_index=null. "
+        "DYNAMIC ADVISORY: Neu nguoi dung hoi ve tinh diem, muc tieu GPA, hoac lo trinh hoc: TUYET DOI KHONG tu tra loi, KHONG goi retrieve. Hay goi tool_consult_advisor(query, file_ids, session_id=[SESSION]). Ket qua tra ve tu tool nay chinh la context. Tra JSON voi source=academic_advisor, context=<ket qua tu tool>, memory=<ket qua memory_get>, chunk_index=null. "
         "Neu cau hoi mang tinh tong quan/khai quat/tom tat/noi dung chinh la gì hoac so sanh noi dung chinh giua cac file, va [FILES] co file_id, goi tool get_file_summaries(file_ids) va dat source=summary_index (chunk_index=null). Neu khong co file_id, khong goi get_file_summaries, dat source=error va context=Vui long cung cap file_ids. "
         "Neu hoi chi tiet ve >=2 file, goi tool compare_pdfs(query, file_ids, top_k=5) va dat source=vector_store_compare (chi thuc hien khi co >=2 file_id). "
         "Neu hoi chi tiet mot file hoac [FILES] chi co 1 id, goi tool retrieve(question, top_k=5, file_ids=[...]) va dat source=vector_store (chi thuc hien khi co file_id). "
@@ -71,12 +71,14 @@ def get_academic_advisor_agent() -> Agent:
     Worker Agent tu van hoc vu (Supervisor se goi qua tool_consult_advisor).
     """
     instructions = (
-        "Bạn là chuyên gia tư vấn học vụ.\n"
-        "B1: Gọi analyze_transcript (dạng file_id từ 'Context Files') để lấy điểm số hiện tại.\n"
-        "B2: Gọi retrieve_chunks với query (ví dụ: 'quy chế tính điểm', 'công thức GPA') và file_ids từ 'Context Files' để lấy luật trong Sổ tay sinh viên.\n"
-        "B3: SUY LUẬN: Kết hợp Số liệu (B1) + Công thức (B2) + Mục tiêu của User -> Lập phương trình toán học.\n"
-        "B4: Gọi math_eval để tính kết quả chính xác.\n"
-        "B5: Trả về báo cáo chi tiết kèm số liệu."
+        "IDENTITY: Ban la AI Co van hoc tap nghiem ngat cua DH Cong nghe (UET) - chi dung thang diem 4 (Max=4.0).\n"
+        "PROTOCOL XU LY MUC TIEU DIEM SO:\n"
+        "B1: KIEM TRA LICH SU ('Chat History') neu co GPA/so tin chi cu thi tan dung; neu chua co moi goi analyze_transcript de lay current_gpa, total_credits.\n"
+        "B2: Lay quy che neu can qua retrieve_chunks (tuy chon).\n"
+        "B3: TINH TOAN: tu bien doi bai toan thanh bieu thuc so hoc thuan (chi so va + - * /), KHONG lap phuong trinh co an so hay dau '='. Vi du sai: solve((3.0*136-2.8*115)/21 = x). Vi du dung: (3.2*136-3.07*115)/21.\n"
+        "B4: Goi tool_math_eval voi bieu thuc so hoc de tinh ra X (diem trung binh ky toi can dat).\n"
+        "B5: SANITY CHECK: So sanh X voi 4.0. Neu X > 4.0 -> KET LUAN BAT KHA THI, giai thich ro rang (khong duoc quy doi sang thang 10). Neu X <= 4.0 -> kha thi va dua loi khuyen ngan gon.\n"
+        "Output: thang than, dua tren so lieu, neu bat kha thi thi khuyen ha muc tieu/ tang tin chi."
     )
     return Agent(
         name="Academic Advisor Agent",
@@ -271,5 +273,6 @@ def get_ollama_agent(model_name: str = "llama3") -> Agent:
     except Exception as e:
         logger.error(f"[get_ollama_agent] Lỗi khi tạo Ollama Agent: {e}")
         raise
+
 
 
