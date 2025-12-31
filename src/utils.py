@@ -3,10 +3,12 @@ import os
 from pathlib import Path
 import numpy as np
 import faiss
+import pdfplumber
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from datetime import datetime
-from typing import List
+from typing import List, Tuple
 import logging
 import urllib.parse
 import requests
@@ -14,9 +16,6 @@ import google.generativeai as genai
 from sentence_transformers import SentenceTransformer
 import pickle
 import hashlib
-import re
-
-from unstructured.partition.pdf import partition_pdf
 
 # Logging
 logging.basicConfig(level=logging.INFO)
@@ -26,6 +25,9 @@ SIMILARITY_THRESHOLD = 0.3
 # Absolute cache dir to avoid CWD mismatch between services
 BASE_DIR = Path(__file__).resolve().parent.parent
 CACHE_DIR = BASE_DIR / "data" / "cache"
+# Versioning to invalidate stale cached chunks/embeddings when parsing logic changes
+CHUNK_CACHE_VERSION = "v4"
+EMB_CACHE_VERSION = "v2"
 
 # Prepare cache dir
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -44,22 +46,132 @@ def get_file_hash(file_path: str) -> str:
     return hasher.hexdigest()
 
 
+# Helper for Vision
+def describe_image_with_gemini(image) -> str:
+    api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        logger.warning("[VISION] No API Key found, skipping Vision.")
+        return ""
+    
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-flash-latest")
+        
+        prompt = (
+            "This image is a page from a document. "
+            "Please transcribe the content into Markdown. "
+            "If there are tables, represent them as Markdown tables. "
+            "If there is text, preserve headers and structure. "
+            "Focus on accuracy for numbers."
+        )
+        response = model.generate_content([prompt, image])
+        return response.text
+    except Exception as e:
+        logger.error(f"Gemini Error: {e}")
+        return ""
+
+
 # PDF processing
-def _clean_text(text: str) -> str:
-    """Light clean to make table text more searchable."""
-    text = text.replace("|", " | ")
-    text = text.replace("\u00a0", " ")
-    text = re.sub(r"(\d)\s{2,}(\d)", r"\1 | \2", text)
-    while "  " in text:
-        text = text.replace("  ", " ")
-    text = re.sub(r"\r\n?", "\n", text)
-    return text.strip()
+def clean_and_fill_table(table: List[List[str]]) -> List[List[str]]:
+    """
+    Cleans text and applies Forward Fill logic for merged cells (specifically for first columns).
+    """
+    if not table or len(table) < 2:
+        return []
+
+    cleaned_table = []
+    last_valid_first_col = ""
+
+    for row_idx, row in enumerate(table):
+        # Clean text: remove newlines, strip whitespace
+        new_row = [str(cell).replace("\n", " ").strip() if cell else "" for cell in row]
+
+        # Logic Forward Fill for the first column (index 0) - Skip header
+        if row_idx > 0:
+            current_first_col = new_row[0]
+            if current_first_col:
+                last_valid_first_col = current_first_col
+            elif last_valid_first_col:
+                new_row[0] = last_valid_first_col
+
+        cleaned_table.append(new_row)
+
+    return cleaned_table
 
 
-def process_pdf(file_path: str) -> List[Document]:
+def convert_table_to_markdown(table: List[List[str]]) -> str:
+    """Converts List[List] to Markdown Table string."""
+    if not table:
+        return ""
+
+    header = table[0]
+    markdown = "| " + " | ".join(header) + " |\n"
+    markdown += "| " + " | ".join(["---"] * len(header)) + " |\n"
+
+    for row in table[1:]:
+        markdown += "| " + " | ".join(row) + " |\n"
+
+    return markdown + "\n"
+
+
+def normalize_table(table: List[List[str]]) -> List[List[str]]:
+    if not table:
+        return []
+    # Simple normalization: ensure all rows have same length as max_cols
+    max_cols = max(len(row) for row in table)
+    normalized = [row + [""] * (max_cols - len(row)) for row in table]
+    return normalized
+
+
+def table_to_row_lines(table: List[List[str]]) -> Tuple[str, str, List[str]]:
+    normalized = normalize_table(table)
+    if not normalized:
+        return "", "", []
+
+    header = normalized[0]
+    header_line = "| " + " | ".join(header) + " |"
+    separator_line = "| " + " | ".join(["---"] * len(header)) + " |"
+
+    data_lines = []
+    for row in normalized[1:]:
+        row_line = "| " + " | ".join(row) + " |"
+        data_lines.append(row_line)
+
+    return header_line, separator_line, data_lines
+
+
+def chunk_table_rows(table: List[List[str]], chunk_size: int = 1000) -> List[str]:
+    """
+    Splits a large table into smaller markdown tables (preserving headers),
+    each fitting within `chunk_size` characters.
+    """
+    header_line, separator_line, data_lines = table_to_row_lines(table)
+    if not header_line:
+        return []
+
+    header_block = header_line + "\n" + separator_line + "\n"
+    chunks = []
+    current_chunk = header_block
+
+    for row_line in data_lines:
+        addition = row_line + "\n"
+        # If adding this row exceeds chunk_size, push current_chunk and start new
+        # But always keep at least one row if possible
+        if len(current_chunk) + len(addition) > chunk_size and len(current_chunk) > len(header_block):
+            chunks.append(current_chunk.strip())
+            current_chunk = header_block + addition
+        else:
+            current_chunk += addition
+
+    if current_chunk.strip() != header_block.strip():
+        chunks.append(current_chunk.strip())
+
+    return chunks
+
+
+def process_pdf(file_path: str, chunk_size: int = 1000, chunk_overlap: int = 200) -> List[Document]:
     if not os.path.exists(file_path):
-        logger.error(f"File PDF khong ton tai: {file_path}")
-        raise FileNotFoundError(f"File PDF khong ton tai: {file_path}")
+        raise FileNotFoundError(f"File not found: {file_path}")
 
     pdf_name = os.path.basename(file_path)
     file_id = pdf_name  # use filename as source id
@@ -71,64 +183,189 @@ def process_pdf(file_path: str) -> List[Document]:
     if os.path.exists(cache_file) and os.path.exists(cache_metadata_file):
         try:
             with open(cache_metadata_file, "rb") as f:
-                cached_hash = pickle.load(f)
-            if cached_hash == pdf_hash:
+                meta = pickle.load(f)
+            cached_hash = meta.get("pdf_hash") if isinstance(meta, dict) else meta
+            cached_version = meta.get("version") if isinstance(meta, dict) else None
+            if cached_hash == pdf_hash and cached_version == CHUNK_CACHE_VERSION:
                 logger.info(f"Loading chunks from cache: {cache_file}")
                 with open(cache_file, "rb") as f:
                     documents = pickle.load(f)
                 logger.info(f"Loaded {len(documents)} cached chunks.")
                 return documents
             else:
-                logger.info("PDF changed, re-processing...")
+                logger.info("PDF changed or cache version bumped, re-processing...")
         except Exception as e:
             logger.error(f"Loi khi load cache: {e}, re-processing PDF...")
 
-    logger.info(f"Processing PDF: {file_path}")
+    logger.info(f"Processing PDF with img2table & pdfplumber: {file_path}")
+    source = os.path.basename(file_path)
 
-    def _partition(strategy: str, use_ocr: bool):
-        return partition_pdf(
-            filename=file_path,
-            strategy=strategy,
-            infer_table_structure=True if use_ocr else False,
-            extract_images_in_pdf=True,
-            languages=["vie"],
-            ocr_languages=["vie"] if use_ocr else None,
-            chunking_strategy="by_title",
-            max_characters=4000,
-            new_after_n_chars=3800,
-            combine_text_under_n_chars=2000,
-            pdf_image_dpi=300,
+    # --- 1. EXTRACT TABLES (img2table) ---
+    try:
+        from img2table.document import PDF as Img2TablePDF
+        from img2table.ocr import TesseractOCR
+        
+        ocr = TesseractOCR(lang="vie+eng")
+        img_pdf = Img2TablePDF(file_path)
+        
+        # 2 strategies: implicit_rows and borderless
+        tables_by_page = img_pdf.extract_tables(
+            ocr=ocr,
+            implicit_rows=True,
+            borderless_tables=True,
         )
+        
+        # Helper to get image sizes for bbox normalization
+        # (Simplified logic: we'll get page size from pdfplumber)
+    except Exception as e:
+        logger.error(f"img2table extraction failed: {e}")
+        tables_by_page = {}
 
-    raw_elements = _partition(strategy="hi_res", use_ocr=True)
+    final_chunks = []
+    
+    # --- 2. EXTRACT CONTENT (Page by Page) ---
+    with pdfplumber.open(file_path) as pdf:
+        for i, page in enumerate(pdf.pages):
+            page_num = i + 1
+            
+            # A. Get Tables for this page
+            # img2table returns dict {page_idx: [tables...]}
+            page_tables = tables_by_page.get(i) or []
+            table_bboxes = []
+            
+            # --- PROCESS TABLES ---
+            if page_tables:
+                for t_idx, table_obj in enumerate(page_tables, start=1):
+                    # Extract Data
+                    try:
+                        df = getattr(table_obj, "df", None)
+                        if df is not None:
+                            table_data = df.fillna("").values.tolist()
+                        else:
+                            content = getattr(table_obj, "content", None)
+                            table_data = [[str(c.value) for c in r] for r in content] if content else []
+                    except:
+                        table_data = []
 
-    documents: List[Document] = []
-    for i, element in enumerate(raw_elements):
-        content = _clean_text(str(element))
-        doc = Document(
-            page_content=content,
-            metadata={
-                "index": i + 1,
-                "file_name": pdf_name,
-                "file_id": file_id,
-                "source_path": file_path,
-                "timestamp": datetime.now().isoformat(),
-            },
-        )
-        documents.append(doc)
+                    if not table_data: 
+                        continue
+
+                    # Validate (simplified check)
+                    flat_text = "".join([str(c) for r in table_data for c in r])
+                    if len(flat_text) < 10: 
+                        continue
+
+                    # Clean and Chunk Table Data (Row-based Chunking)
+                    cleaned_data = clean_and_fill_table(table_data)
+                    
+                    # chunk_size=800 ensures small enough chunks for vector search
+                    # avoiding the issue where "Lý thuyết thông tin" is lost in a huge page
+                    table_markdown_chunks = chunk_table_rows(cleaned_data, chunk_size=800)
+                    
+                    for c_idx, chunk_text in enumerate(table_markdown_chunks, start=1):
+                        doc = Document(
+                            page_content=f"### TABLE (Page {page_num})\n{chunk_text}",
+                            metadata={
+                                "source": source,
+                                "page": page_num,
+                                "file_path": file_path,
+                                "type": "table",
+                                "table_index": t_idx,
+                                "table_chunk_index": c_idx
+                            }
+                        )
+                        final_chunks.append(doc)
+                    
+                    # Store BBox for text exclusion
+                    # img2table bbox: (x1, y1, x2, y2)
+                    bbox_obj = getattr(table_obj, "bbox", None)
+                    if bbox_obj:
+                        # Normalize to pdfplumber (points) logic if needed
+                        # But simplest is just exclude robustly? 
+                        # pdfplumber page.width might differ from img2table image size
+                        # For now, we rely on img2table's superior segmentation and 
+                        # just append text outside.
+                        # Since mapping bboxes precisely between libraries is complex,
+                        # we will try a simpler approach corresponding to the debug script:
+                        # Just accept that we extract tables separately.
+                        pass
+
+            # --- PROCESS TEXT ---
+            # For now, use pdfplumber text but we accept duplication is better than loss.
+            # To avoid total duplication, we can check if text is significantly similar,
+            # but for retrieval, having "Lý thuyết thông tin" in a Table Chunk IS the fix.
+            raw_text = page.extract_text() or ""
+            
+            # --- VISION LOGIC (Preserved) ---
+            # Check for large images (e.g. Tables as Images)
+            images = page.images
+            use_vision = False
+            if images:
+                for img in images:
+                     w = img.get('width', 0)
+                     h = img.get('height', 0)
+                     if w * h > 20000: # Significant image threshold
+                         use_vision = True
+                         break
+            
+            vision_text = ""
+            if use_vision:
+                 logger.info(f"Page {page_num}: Significant image detected. Running Gemini Vision...")
+                 try:
+                     # resolution=300 is good for OCR
+                     page_img_obj = page.to_image(resolution=300)
+                     pil_image = page_img_obj.original
+                     vision_desc = describe_image_with_gemini(pil_image)
+                     if vision_desc:
+                         vision_text = f"\n\n### AI EXTRACTED CONTENT FROM IMAGES:\n{vision_desc}"
+                 except Exception as e:
+                     logger.error(f"Vision failed on page {page_num}: {e}")
+
+            if vision_text:
+                raw_text += vision_text
+            # -------------------------------------
+
+            # Create TEXT CHUNK
+            if raw_text.strip():
+                doc = Document(
+                    page_content=f"Page {page_num}:\n{raw_text}",
+                    metadata={
+                       "source": source,
+                       "page": page_num,
+                       "file_path": file_path,
+                       "type": "text"
+                    }
+                )
+                
+                # Split huge text pages if needed
+                text_splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=chunk_size, 
+                    chunk_overlap=chunk_overlap,
+                    separators=["\n### ", "\n\n", "\n", " ", ""]
+                )
+                splits = text_splitter.split_documents([doc])
+                final_chunks.extend(splits)
+
+    # Post-processing metadata
+    for idx, chunk in enumerate(final_chunks):
+        chunk.metadata["chunk_index"] = idx
+        chunk.metadata["index"] = idx + 1
+        # timestamp etc
+        chunk.metadata["timestamp"] = datetime.now().isoformat()
+        chunk.metadata["file_name"] = pdf_name
+        chunk.metadata["file_id"] = file_id
 
     try:
         with open(cache_file, "wb") as f:
-            pickle.dump(documents, f)
+            pickle.dump(final_chunks, f)
         with open(cache_metadata_file, "wb") as f:
-            pickle.dump(pdf_hash, f)
-        logger.info(f"Saved {len(documents)} chunks to cache: {cache_file}")
+            pickle.dump({"pdf_hash": pdf_hash, "version": CHUNK_CACHE_VERSION}, f)
+        logger.info(f"Saved {len(final_chunks)} chunks to cache: {cache_file}")
     except Exception as e:
         logger.error(f"Loi khi luu cache: {e}")
 
-    logger.info(f"Extracted {len(documents)} chunks from PDF.")
-    return documents
-
+    logger.info(f"PDF processed. Generated {len(final_chunks)} chunks.")
+    return final_chunks
 
 def load_embeddings_with_cache(file_path: str, embedder: Embeddings, documents: List[Document]) -> np.ndarray:
     """
@@ -143,7 +380,11 @@ def load_embeddings_with_cache(file_path: str, embedder: Embeddings, documents: 
     if emb_cache.exists() and emb_meta.exists():
         try:
             meta = json.loads(emb_meta.read_text(encoding="utf-8"))
-            if meta.get("pdf_hash") == pdf_hash and meta.get("embedder") == embedder_name:
+            if (
+                meta.get("pdf_hash") == pdf_hash
+                and meta.get("embedder") == embedder_name
+                and meta.get("version") == EMB_CACHE_VERSION
+            ):
                 emb_np = np.load(emb_cache)
                 if emb_np.ndim == 1:
                     emb_np = np.expand_dims(emb_np, axis=0)
@@ -167,7 +408,10 @@ def load_embeddings_with_cache(file_path: str, embedder: Embeddings, documents: 
     try:
         np.save(emb_cache, emb_np)
         emb_meta.write_text(
-            json.dumps({"pdf_hash": pdf_hash, "embedder": embedder_name}, ensure_ascii=False),
+            json.dumps(
+                {"pdf_hash": pdf_hash, "embedder": embedder_name, "version": EMB_CACHE_VERSION},
+                ensure_ascii=False,
+            ),
             encoding="utf-8",
         )
         logger.info(f"Saved embedding cache for {pdf_name} ({emb_np.shape[0]} vectors).")
@@ -187,7 +431,7 @@ def generate_summary(text: str) -> str:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel("gemini-2.5-flash")
 
-        max_len = 100_000
+        max_len = 500_000
         trimmed_text = text[:max_len]
         if len(text) > max_len:
             logger.info(f"Input text too long ({len(text)} chars); truncated to {max_len}.")

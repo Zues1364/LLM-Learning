@@ -35,3 +35,7 @@ node_modules/
 frontend/node_modules/
 # Figures extracted from PDF
 figures/
+
+# Docs and architectuire diagrams
+diagram/
+latex/

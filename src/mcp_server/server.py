@@ -143,66 +143,269 @@ def _ensure_file_loaded(file_id: str) -> str:
 @mcp_tool("analyze_transcript")
 def analyze_transcript(file_ids: str | List[str]) -> str:
     """
-    Trich xuat du lieu co cau truc tu bang diem sinh vien (PDF) bang Gemini.
-    Ho tro nhieu file bang diem, noi noi dung lai truoc khi tinh toan.
-    Tra ve chuoi JSON.
+    Trich xuat du lieu chi tiet tu bang diem sinh vien (PDF) bang Gemini.
+    Parse theo hoc ky, tra ve JSON cau truc va chuan hoa diem.
     """
+    logger.info("analyze_transcript start: file_ids=%s", file_ids)
     api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
     if not api_key:
         logger.error("GOOGLE_API_KEY/GEMINI_API_KEY missing for analyze_transcript")
-        raise HTTPException(500, "Missing GOOGLE_API_KEY/GEMINI_API_KEY for Gemini")
+        raise HTTPException(500, "Missing API KEY")
 
-    # Chuan hoa danh sach file_ids (chuoi phan cach dau phay hoac list)
     ids_input = file_ids
     if isinstance(ids_input, str):
-        ids: List[str] = [p.strip() for p in ids_input.split(",") if p.strip()]
+        ids: List[str] = [p.strip() for p in ids_input.split(',') if p.strip()]
     else:
         ids = list(ids_input or [])
 
+    logger.info("normalized file_ids: %s", ids)
     if not ids:
-        raise HTTPException(400, "Khong co file_id de phan tich bang diem")
+        logger.warning("No file_ids provided to analyze_transcript")
+        raise HTTPException(400, "Thieu file_id bang diem")
 
-    sections: List[str] = []
+    preview_len = 500
+    texts: List[Dict[str, str]] = []
     try:
         for fid in ids:
-            pdf_path = _resolve_pdf_path(fid)
+            logger.info("Processing transcript file_id=%s", fid)
+            resolved_id = _ensure_file_loaded(fid)
+            pdf_path = _resolve_pdf_path(resolved_id)
+            logger.info("Resolved path for %s: %s", fid, pdf_path)
             docs = process_pdf(str(pdf_path))
+            logger.info("Extracted %s chunks from %s", len(docs), pdf_path.name)
             file_text = "\n".join(doc.page_content for doc in docs)
-            sections.append(f"--- FILE {pdf_path.name} ---\n{file_text}")
+            logger.info("file_text length for %s: %s", pdf_path.name, len(file_text))
+            if file_text:
+                preview = file_text[:preview_len].replace("\n", " ")
+                logger.info("file_text preview for %s: %s", pdf_path.name, preview)
+            texts.append({"file_id": resolved_id, "text": file_text})
     except Exception as e:
-        logger.error(f"Error reading transcript {fid}: {e}")
-        raise HTTPException(500, f"Khong doc duoc file {fid}: {e}")
-
-    full_text = "\n\n".join(sections)
+        logger.error(f"Loi doc file transcript {fid}: {e}")
+        raise HTTPException(500, f"Loi doc file: {e}")
 
     prompt = (
-        "Hay trich xuat thong tin tu bang diem sinh vien (du lieu gop tu nhieu trang/nhieu file, "
-        "cac file duoc ngan cach boi '--- FILE <ten file> ---'): "
-        "current_semester (int), total_credits (int tong tat ca hoc phan da hoan thanh), "
-        "current_gpa (float GPA tich luy tren toan bo du lieu), passed_subjects (list string ten mon da qua). "
-        "Tinh toan tren TOAN BO du lieu, tra ve duy nhat JSON hop le."
+        "Ban la he thong trich xuat du lieu bang diem dai hoc.\n"
+        "INPUT:\n"
+        "- Van ban chua du lieu bang diem, phan chia theo tung hoc ky (Header dang 'HOC KY... MA HOC KY...').\n"
+        "- Cac cot du lieu: STT, Ma MH, Ten Mon Hoc, So TC, Diem he 10, Diem chu, Diem he 4.\n"
+        "\n"
+        "OUTPUT JSON FORMAT (chi tra ve JSON hop le, dung dau nhay kep, KHONG markdown):\n"
+        "{\n"
+        "  \"student_info\": {\"name\": \"...\", \"id\": \"...\", \"class\": \"...\"},\n"
+        "  \"semesters\": [\n"
+        "    {\n"
+        "      \"semester_code\": \"Ma hoc ky (vi du 231, 232)\",\n"
+        "      \"semester_title\": \"Ten day du hoc ky\",\n"
+        "      \"subjects\": [\n"
+        "        {\n"
+        "          \"code\": \"Ma mon\",\n"
+        "          \"name\": \"Ten mon (noi cac dong neu bi ngat)\",\n"
+        "          \"credits\": 3,\n"
+        "          \"grade_10\": 8.5,\n"
+        "          \"grade_letter\": \"A+\",\n"
+        "          \"grade_4\": 4.0\n"
+        "        }\n"
+        "      ]\n"
+        "    }\n"
+        "  ],\n"
+        "  \"overview\": {\"raw_gpa_4\": 3.21, \"total_credits_accumulated\": 90}\n"
+        "}\n"
+        "Neu \"grade_4\" bi trong/khong ro, tu quy doi tu diem chu: "
+        "A+=4.0, A=3.7, B+=3.5, B=3.0, C+=2.5, C=2.0, D+=1.5, D=1.0, F=0.0."
     )
+    logger.info("prompt length: %s", len(prompt))
 
-    try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.5-flash")
-        response = model.generate_content(f"{prompt}\n\n{full_text}")
-        raw_text = getattr(response, "text", "") or ""
-    except Exception as e:
-        logger.error(f"Gemini error during analyze_transcript: {e}")
-        raise HTTPException(500, f"Loi goi Gemini: {e}")
+    def _to_float(value):
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            text = value.strip().replace(',', '.')
+            if not text:
+                return None
+            try:
+                return float(text)
+            except Exception:
+                return None
+        return None
 
-    if not raw_text:
-        raise HTTPException(500, "Khong nhan duoc ket qua tu Gemini")
+    def _to_int(value):
+        number = _to_float(value)
+        if number is None:
+            return None
+        return int(round(number))
 
-    try:
-        parsed = json.loads(raw_text)
-        return json.dumps(parsed, ensure_ascii=False)
-    except Exception:
-        logger.warning("Gemini tra ve JSON khong hop le, tra ve nguyen van ban.")
-        return raw_text.strip()
+    grade_map = {
+        "A+": 4.0, "A": 3.7,
+        "B+": 3.5, "B": 3.0,
+        "C+": 2.5, "C": 2.0,
+        "D+": 1.5, "D": 1.0,
+        "F": 0.0,
+    }
 
+    def _normalize_data(data: Dict) -> Dict:
+        semesters = data.get("semesters")
+        if not isinstance(semesters, list):
+            semesters = []
+            data["semesters"] = semesters
 
+        all_subjects: List[dict] = []
+        for sem in semesters:
+            if not isinstance(sem, dict):
+                continue
+            subjects = sem.get("subjects")
+            if not isinstance(subjects, list):
+                subjects = []
+                sem["subjects"] = subjects
+            for sub in subjects:
+                if not isinstance(sub, dict):
+                    continue
+                credits = _to_int(sub.get("credits"))
+                if credits is not None:
+                    sub["credits"] = credits
+                grade_10 = _to_float(sub.get("grade_10"))
+                if grade_10 is not None:
+                    sub["grade_10"] = grade_10
+                grade_letter = str(sub.get("grade_letter", "")).strip().upper()
+                if grade_letter:
+                    sub["grade_letter"] = grade_letter
+                grade_4 = _to_float(sub.get("grade_4"))
+                if grade_4 is None and grade_letter:
+                    grade_4 = grade_map.get(grade_letter)
+                if grade_4 is not None:
+                    sub["grade_4"] = grade_4
+                all_subjects.append(sub)
+
+        overview = data.get("overview")
+        if not isinstance(overview, dict):
+            overview = {}
+            data["overview"] = overview
+
+        raw_gpa_4 = _to_float(overview.get("raw_gpa_4"))
+        if raw_gpa_4 is not None:
+            overview["raw_gpa_4"] = raw_gpa_4
+
+        total_credits_accumulated = _to_int(overview.get("total_credits_accumulated"))
+        if total_credits_accumulated is None:
+            total_credits_accumulated = 0
+            total_points = 0.0
+            for sub in all_subjects:
+                credits = sub.get("credits")
+                grade_4 = sub.get("grade_4")
+                if credits is None or grade_4 is None:
+                    continue
+                if grade_4 == 0.0:
+                    continue
+                total_credits_accumulated += credits
+                total_points += grade_4 * credits
+            overview["total_credits_accumulated"] = total_credits_accumulated
+            if total_credits_accumulated > 0 and raw_gpa_4 is None:
+                overview["raw_gpa_4"] = round(total_points / total_credits_accumulated, 4)
+                logger.info("Computed raw_gpa_4 fallback from subjects")
+            logger.info("Computed total_credits_accumulated fallback from subjects")
+
+        return data
+
+    def _parse_raw_json(raw_text: str) -> Dict | None:
+        cleaned = raw_text.strip()
+        if "```" in cleaned:
+            cleaned = cleaned.replace("```json", "").replace("```", "").strip()
+        data = None
+        try:
+            data = json.loads(cleaned)
+        except Exception:
+            start = cleaned.find("{")
+            end = cleaned.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                try:
+                    data = json.loads(cleaned[start:end + 1])
+                except Exception as e:
+                    logger.warning("Gemini returned invalid JSON: %s", e)
+                    logger.info("Gemini raw JSON (full): %s", cleaned)
+                    return None
+            else:
+                logger.warning("Gemini returned non-JSON content")
+                logger.info("Gemini raw response (full): %s", cleaned)
+                return None
+        if not isinstance(data, dict):
+            logger.warning("Gemini JSON root is not an object")
+            return None
+        return data
+
+    merged: Dict[str, object] = {"student_info": None, "semesters": [], "overview": {}}
+    errors: List[str] = []
+
+    # Tach theo hoc ky trong tung file de giam kich thuoc dau vao cho Gemini
+    semester_pattern = re.compile(r"(H ¯OC K ¯ý[^\\n]*MAŸ H ¯OC K ¯ý[^\\n]*|HOC KY[^\\n]*MA HOC KY[^\\n]*)", re.IGNORECASE)
+
+    for entry in texts:
+        file_id = entry["file_id"]
+        text = entry["text"]
+        if not text:
+            logger.warning("Empty text for %s", file_id)
+            continue
+
+        # Tach segment theo hoc ky
+        segments: List[str] = []
+        positions = list(semester_pattern.finditer(text))
+        if positions:
+            for idx, match in enumerate(positions):
+                start = match.start()
+                end = positions[idx + 1].start() if idx + 1 < len(positions) else len(text)
+                segments.append(text[start:end].strip())
+        else:
+            segments.append(text.strip())
+
+        for seg_idx, segment in enumerate(segments):
+            label = f"{file_id}#seg{seg_idx+1}"
+            try:
+                genai.configure(api_key=api_key)
+                model = genai.GenerativeModel("gemini-2.5-flash")
+                response = model.generate_content(
+                    f"{prompt}\n\nDATA ({label}):\n{segment}",
+                    generation_config={"max_output_tokens": 4000, "response_mime_type": "application/json"},
+                )
+                raw_text = getattr(response, "text", "") or ""
+                logger.info("Gemini response length for %s: %s", label, len(raw_text))
+                if raw_text:
+                    preview = raw_text[:preview_len].replace("\n", " ")
+                    logger.info("Gemini response preview for %s: %s", label, preview)
+            except Exception as e:
+                logger.error(f"Gemini parse error for {label}: {e}")
+                errors.append(f"{label}: {e}")
+                continue
+
+            if not raw_text:
+                logger.warning("Gemini returned empty response for %s", label)
+                errors.append(f"{label}: empty response")
+                continue
+
+            data = _parse_raw_json(raw_text)
+            if data is None:
+                errors.append(f"{label}: invalid JSON")
+                continue
+
+            if merged.get("student_info") is None and data.get("student_info"):
+                merged["student_info"] = data.get("student_info")
+            sems = data.get("semesters")
+            if isinstance(sems, list):
+                merged["semesters"].extend(sems)
+            ov = data.get("overview")
+            if isinstance(ov, dict):
+                for k in ["raw_gpa_4", "total_credits_accumulated"]:
+                    if k not in merged["overview"] or merged["overview"].get(k) is None:
+                        merged["overview"][k] = ov.get(k)
+
+    if not merged["semesters"]:
+        msg = "No semesters parsed from Gemini"
+        if errors:
+            msg += f". Errors: {errors}"
+        logger.warning(msg)
+        return json.dumps({"error": msg}, ensure_ascii=False)
+
+    normalized = _normalize_data(merged)
+    return json.dumps(normalized, ensure_ascii=False)
 @mcp_tool("math_eval")
 def math_eval(expression: str) -> str:
     """
@@ -250,8 +453,14 @@ def consult_advisor(query: str, file_ids: List[str] | None = None, session_id: s
 
 
 @mcp_tool("retrieve_chunks")
-def retrieve_chunks(question: str, top_k: int = 5, file_ids: List[str] | None = None) -> List[str]:
-    """Truy xuất các đoạn PDF liên quan cho danh sách file_ids."""
+def retrieve_chunks(question: str, top_k: int = 20, file_ids: List[str] | None = None) -> List[str]:
+    """Truy xu §t cA­c Ž`o §­n PDF liA¦n quan cho danh sA­ch file_ids."""
+    
+    # FORCE INCREASE top_k because client might be sending default 5
+    if top_k < 20: 
+        logger.info(f"Boosting top_k from {top_k} to 20 to ensure recall.")
+        top_k = 20
+
     ids_input = file_ids or []
     if isinstance(ids_input, str):
         ids_input = [p.strip() for p in ids_input.split(",")]
@@ -285,7 +494,7 @@ def retrieve_chunks(question: str, top_k: int = 5, file_ids: List[str] | None = 
 
 @mcp_tool("compare_pdfs")
 def compare_pdfs(query: str, file_ids: List[str], top_k: int = 5) -> List[str]:
-    """So sánh/nêu bối cảnh theo query trên tối thiểu hai file."""
+    """So sA­nh/nA¦u b ¯`i c §œnh theo query trA¦n t ¯`i thi ¯Ÿu hai file."""
     ids_input = file_ids or []
     if isinstance(ids_input, str):
         ids_input = [p.strip() for p in ids_input.split(",")]
@@ -315,7 +524,7 @@ def compare_pdfs(query: str, file_ids: List[str], top_k: int = 5) -> List[str]:
 
 @mcp_tool("get_file_summaries")
 def get_file_summaries(file_ids: List[str]) -> List[str]:
-    """Lấy bản tóm tắt nội dung chính của danh sách file_ids."""
+    """L §y b §œn tA3m t §_t n ¯Ti dung chA-nh c ¯a danh sA­ch file_ids."""
     ids_input = file_ids or []
     if isinstance(ids_input, str):
         ids_input = [p.strip() for p in ids_input.split(",")]
