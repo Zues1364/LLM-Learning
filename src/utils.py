@@ -280,15 +280,7 @@ def process_pdf(file_path: str, chunk_size: int = 1000, chunk_overlap: int = 200
                     # img2table bbox: (x1, y1, x2, y2)
                     bbox_obj = getattr(table_obj, "bbox", None)
                     if bbox_obj:
-                        # Normalize to pdfplumber (points) logic if needed
-                        # But simplest is just exclude robustly? 
-                        # pdfplumber page.width might differ from img2table image size
-                        # For now, we rely on img2table's superior segmentation and 
-                        # just append text outside.
-                        # Since mapping bboxes precisely between libraries is complex,
-                        # we will try a simpler approach corresponding to the debug script:
-                        # Just accept that we extract tables separately.
-                        pass
+                         pass
 
             # --- PROCESS TEXT ---
             # For now, use pdfplumber text but we accept duplication is better than loss.

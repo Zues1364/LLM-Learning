@@ -76,7 +76,9 @@ def get_academic_advisor_agent() -> Agent:
     3. `tool_math_eval`: May tinh chinh xac bat buoc cho moi phep tinh so hoc.
 
     DU LIEU DAU VAO QUAN TRONG:
-    - Tim `file_ids` trong doan "Context Files" o dau hoi thoai. Neu trong, yeu cau user cung cap file bang diem.
+    - Tim `file_ids` trong doan "Context Files" o dau hoi thoai.
+    - CHU Y: Chi su dung cac file co ten chua "DIEM", "ĐIỂM", "BANG_DIEM", "TRANSCRIPT", "SCORE" de goi `tool_analyze_transcript`. TUYET DOI KHONG truyen file "SO TAY" hay "QUY CHE" vao tool nay.
+    - Neu khong tim thay file bang diem hop le, yeu cau user cung cap.
     - JSON tra ve co `semesters` va `subjects` voi: code, name, credits, grade_10, grade_letter, grade_4.
     - `overview.raw_gpa_4` va `overview.total_credits_accumulated` neu co.
 

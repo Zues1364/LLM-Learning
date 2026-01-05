@@ -286,24 +286,53 @@ def analyze_transcript(file_ids: str | List[str]) -> str:
         if raw_gpa_4 is not None:
             overview["raw_gpa_4"] = raw_gpa_4
 
-        total_credits_accumulated = _to_int(overview.get("total_credits_accumulated"))
-        if total_credits_accumulated is None:
-            total_credits_accumulated = 0
-            total_points = 0.0
-            for sub in all_subjects:
-                credits = sub.get("credits")
-                grade_4 = sub.get("grade_4")
-                if credits is None or grade_4 is None:
-                    continue
-                if grade_4 == 0.0:
-                    continue
-                total_credits_accumulated += credits
-                total_points += grade_4 * credits
-            overview["total_credits_accumulated"] = total_credits_accumulated
-            if total_credits_accumulated > 0 and raw_gpa_4 is None:
-                overview["raw_gpa_4"] = round(total_points / total_credits_accumulated, 4)
-                logger.info("Computed raw_gpa_4 fallback from subjects")
-            logger.info("Computed total_credits_accumulated fallback from subjects")
+        # FORCE RECALCULATION: Ignore Gemini's partial/hallucinated overview stats
+        # Always compute from the full list of merged subjects to ensure accuracy.
+        total_credits_accumulated = 0
+        total_points = 0.0
+        
+        # Smart Dedup for Accumulated Credits
+        # If subject code repeated, keep the one with HIGHER grade_4.
+        unique_passed = {} # code -> subject_dict
+        
+        for sub in all_subjects:
+            code = sub.get("code")
+            credits = sub.get("credits")
+            grade_4 = sub.get("grade_4")
+
+            if not code or credits is None or grade_4 is None:
+                continue
+            
+            # F grade does not count to accumulation
+            if grade_4 == 0.0:
+                continue
+
+            if code not in unique_passed:
+                unique_passed[code] = sub
+            else:
+                # Duplicate found
+                existing = unique_passed[code]
+                if grade_4 > existing.get("grade_4", -1.0):
+                        logger.info(f"Detected duplicate subject [{code}]. New grade {grade_4} > Old {existing.get('grade_4')}. Updating.")
+                        unique_passed[code] = sub
+                else:
+                        logger.info(f"Detected duplicate subject [{code}]. New grade {grade_4} <= Old {existing.get('grade_4')}. Ignoring.")
+        
+        # Sum up valid unique subjects
+        for sub in unique_passed.values():
+            c = sub.get("credits")
+            g = sub.get("grade_4")
+            total_credits_accumulated += c
+            total_points += g * c
+        
+        overview["total_credits_accumulated"] = total_credits_accumulated
+        if total_credits_accumulated > 0:
+            overview["raw_gpa_4"] = round(total_points / total_credits_accumulated, 4)
+            logger.info(f"Computed raw_gpa_4: {overview['raw_gpa_4']} from {len(unique_passed)} unique subjects")
+        else:
+             overview["raw_gpa_4"] = 0.0
+        
+        logger.info(f"Computed total_credits_accumulated: {total_credits_accumulated}")
 
         return data
 
@@ -337,7 +366,7 @@ def analyze_transcript(file_ids: str | List[str]) -> str:
     errors: List[str] = []
 
     # Tach theo hoc ky trong tung file de giam kich thuoc dau vao cho Gemini
-    semester_pattern = re.compile(r"(H ¯OC K ¯ý[^\\n]*MAŸ H ¯OC K ¯ý[^\\n]*|HOC KY[^\\n]*MA HOC KY[^\\n]*)", re.IGNORECASE)
+    semester_pattern = re.compile(r"(?:HỌC KỲ|HOC KY|H\s*¯OC\s*K\s*¯ý)[^\\n]*(?:MÃ HỌC KỲ|MA HOC KY|MAŸ\s*H\s*¯OC\s*K\s*¯ý)[^\\n]*", re.IGNORECASE)
 
     for entry in texts:
         file_id = entry["file_id"]
@@ -388,9 +417,38 @@ def analyze_transcript(file_ids: str | List[str]) -> str:
 
             if merged.get("student_info") is None and data.get("student_info"):
                 merged["student_info"] = data.get("student_info")
+            
             sems = data.get("semesters")
             if isinstance(sems, list):
-                merged["semesters"].extend(sems)
+                # Smart Merge: Deduplicate semesters and subjects
+                existing_sems = {s.get("semester_code"): s for s in merged["semesters"] if s.get("semester_code")}
+                
+                for incoming_sem in sems:
+                    sem_code = incoming_sem.get("semester_code")
+                    if not sem_code:
+                        # If no code, just add it (fallback)
+                        merged["semesters"].append(incoming_sem)
+                        continue
+
+                    if sem_code in existing_sems:
+                        # Merge subjects into existing semester
+                        target_sem = existing_sems[sem_code]
+                        existing_subjects = {subj.get("code"): subj for subj in target_sem.get("subjects", []) if subj.get("code")}
+                        
+                        inc_subjects = incoming_sem.get("subjects", [])
+                        for sub in inc_subjects:
+                            sub_code = sub.get("code")
+                            if sub_code and sub_code in existing_subjects:
+                                continue # Skip duplicate subject
+                            
+                            # Add new subject
+                            if "subjects" not in target_sem: target_sem["subjects"] = []
+                            target_sem["subjects"].append(sub)
+                    else:
+                        # New semester found
+                        merged["semesters"].append(incoming_sem)
+                        existing_sems[sem_code] = incoming_sem
+
             ov = data.get("overview")
             if isinstance(ov, dict):
                 for k in ["raw_gpa_4", "total_credits_accumulated"]:
