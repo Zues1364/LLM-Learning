@@ -165,11 +165,16 @@ def analyze_transcript(file_ids: str | List[str]) -> str:
 
     preview_len = 500
     texts: List[Dict[str, str]] = []
-    try:
-        for fid in ids:
+    for fid in ids:
+        try:
             logger.info("Processing transcript file_id=%s", fid)
-            resolved_id = _ensure_file_loaded(fid)
-            pdf_path = _resolve_pdf_path(resolved_id)
+            try:
+                resolved_id = _ensure_file_loaded(fid)
+                pdf_path = _resolve_pdf_path(resolved_id)
+            except HTTPException:
+                logger.warning(f"File ID not found or invalid: {fid}. Skipping.")
+                continue
+
             logger.info("Resolved path for %s: %s", fid, pdf_path)
             docs = process_pdf(str(pdf_path))
             logger.info("Extracted %s chunks from %s", len(docs), pdf_path.name)
@@ -179,9 +184,15 @@ def analyze_transcript(file_ids: str | List[str]) -> str:
                 preview = file_text[:preview_len].replace("\n", " ")
                 logger.info("file_text preview for %s: %s", pdf_path.name, preview)
             texts.append({"file_id": resolved_id, "text": file_text})
-    except Exception as e:
-        logger.error(f"Loi doc file transcript {fid}: {e}")
-        raise HTTPException(500, f"Loi doc file: {e}")
+        except Exception as e:
+            logger.error(f"Loi doc file transcript {fid}: {e}")
+            # Do not raise, continue to next file
+            continue
+
+    if not texts:
+        msg = "Khong tim thay bat ky file bang diem nao hop le."
+        logger.error(msg)
+        raise HTTPException(400, msg)
 
     prompt = (
         "Ban la he thong trich xuat du lieu bang diem dai hoc.\n"
@@ -463,17 +474,28 @@ def analyze_transcript(file_ids: str | List[str]) -> str:
         return json.dumps({"error": msg}, ensure_ascii=False)
 
     normalized = _normalize_data(merged)
-    return json.dumps(normalized, ensure_ascii=False)
+    final_json = json.dumps(normalized, ensure_ascii=False)
+    logger.info(f"analyze_transcript complete. Final JSON length: {len(final_json)} chars. Semesters found: {len(normalized.get('semesters', []))}")
+    return final_json
 @mcp_tool("math_eval")
 def math_eval(expression: str) -> str:
     """
     Danh gia bieu thuc toan hoc an toan voi eval, chi chap nhan ky tu so hoc co ban.
     """
-    if not re.fullmatch(r"[0-9\\.\\+\\-\\*/()\\s]+", expression or ""):
-        return "Error: Unsafe expression"
+    if expression is None:
+        return "Error: Empty expression"
+    # Support Vietnamese number format: replace comma with dot
+    # But be careful not to break function calls like pow(a, b) if we supported them (we don't currently)
+    expression_clean = str(expression).replace(",", ".")
+    
+    cleaned = expression_clean or ""
+    # Regex allows: 0-9, dot, +, -, *, /, (, ), space. 
+    # Using explicit character class without unneeded escapes to avoid confusion.
+    if not re.fullmatch(r"[0-9.+-/*()\s]+", cleaned):
+        return f"Error: Unsafe expression: {expression}"
     try:
         safe_globals: Dict[str, object] = {"__builtins__": {}}
-        result = eval(expression, safe_globals, {})
+        result = eval(cleaned, safe_globals, {})
         return str(result)
     except Exception as e:
         logger.error(f"Error in math_eval: {e}")
@@ -498,10 +520,22 @@ def consult_advisor(query: str, file_ids: List[str] | None = None, session_id: s
 
     advisor_agent = get_academic_advisor_agent()
     
+    # Pre-fetch transcript data to inject into prompt
+    transcript_data = ""
+    if ids:
+        try:
+            logger.info(f"consult_advisor: Auto-extracting transcript for files {ids}")
+            # Call the local function directly
+            transcript_data = analyze_transcript(ids)
+        except Exception as e:
+            logger.error(f"Failed to auto-extract transcript in consult_advisor: {e}")
+            transcript_data = f"Error extracting transcript: {e}"
+
     prompt = (
         f"--- CONTEXT START ---\n"
         f"Chat History:\n{history_context}\n"
         f"Context Files: {ids}\n"
+        f"TRANSCRIPT DATA (Parsed from PDFs):\n{transcript_data}\n"
         f"--- CONTEXT END ---\n\n"
         f"User Query: {query}"
     )
@@ -609,7 +643,7 @@ def memory_get(session_id: str, max_rows: int = 10) -> List[str]:
         logger.info(f"Retrieving history for session: {session_id}")
         ctx = _memory.get_context("", session_id=session_id, max_rows=max_rows)
         result = ctx.splitlines()
-        logger.info(f"Retrieved {len(result)} history entries.")
+        logger.info(f"Retrieved {len(result)} lines of history context.")
         return result
     except Exception as e:
         logger.error(f"Error in memory_get: {str(e)}")

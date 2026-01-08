@@ -71,8 +71,14 @@ class PersistentMemory:
                     ORDER BY timestamp DESC LIMIT ?
                 """, (session_id, max_rows))
                 rows = cursor.fetchall()
+                logger.info(f"[DEBUG] get_context: session_id='{session_id}', found {len(rows)} rows. DB path: {self.db_path}")
 
-                context = "\n".join([f"[{row[2]}] Query: {row[0]}\nResponse: {row[1]}" for row in rows])
+                # rows are [Query, Response, Timestamp] ordered by Timestamp DESC (Newest first)
+                # We want Chronological order for the LLM context (Oldest first)
+                # So we reverse the list.
+                rows_chronological = rows[::-1]
+
+                context = "\n".join([f"[{row[2]}] Query: {row[0]}\nResponse: {row[1]}" for row in rows_chronological])
                 if context:
                     logger.info(f"Ngữ cảnh lịch sử được truy xuất:\n{context}")
                 return context
