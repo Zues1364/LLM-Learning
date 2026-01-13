@@ -52,8 +52,9 @@ def get_mcp_planner_agent(allow_web_search: bool = False) -> Agent:
         "Neu cau hoi mang tinh tong quan/khai quat/tom tat/noi dung chinh la gì hoac so sanh noi dung chinh giua cac file, va [FILES] co file_id, goi tool get_file_summaries(file_ids) va dat source=summary_index (chunk_index=null). Neu khong co file_id, khong goi get_file_summaries, dat source=error va context=Vui long cung cap file_ids. "
         "Neu hoi chi tiet ve >=2 file, goi tool compare_pdfs(query, file_ids, top_k=5) va dat source=vector_store_compare (chi thuc hien khi co >=2 file_id). "
         "Neu hoi chi tiet mot file hoac [FILES] chi co 1 id, goi tool retrieve(question, top_k=5, file_ids=[...]) va dat source=vector_store (chi thuc hien khi co file_id). "
+        "TRUONG HOP DAC BIET: Neu [FILES] la rong (khong co file_id), ma nguoi dung hoi ve thong tin chung hoac quy che/so tay, hay goi `retrieve(question, top_k=5, file_ids=[])`. He thong se tu dong tim trong cac Tai nguyen Toan cuc (Global Resources) nhu So tay, Quy che. Dat source=vector_store. "
         f"{web_msg} "
-        "Luon truyen tham so file_ids khi goi retrieve/compare/get_file_summaries (lay tu [FILES], de rong neu khong co de fallback web). "
+        "Luon truyen tham so file_ids khi goi retrieve/compare/get_file_summaries (lay tu [FILES], neu khong co thi truyen list rong []). "
         "Tra ve duy nhat JSON (khong code block) voi khoa source, context, memory, chunk_index (co the null). "
         "Neu loi tool, dat source=error va context la thong bao loi."
     )
@@ -95,13 +96,15 @@ def get_academic_advisor_agent() -> Agent:
     1. Xac dinh hien trang:
        - Tinh Current GPA (neu chua co trong History).
        - Liet ke cac mon diem thap (D, D+, C, C+) co tin chi cao (3-4 TC).
-    
+       - NEU KHONG CO DU LIEU JSON (Transcript): Hay trich xuat thong tin cac mon hoc/diem so tu "Chat History" de tinh toan.
+
     2. Voi cau hoi "Nen cai thien mon nao?":
        - Chon cac mon D/D+ co tin chi cao (vi keo diem nhanh nhat).
        - Neu da het mon D, chon mon C/C+.
     
     3. Voi cau hoi "Bao nhieu mon?" hoac "Can diem bao nhieu?":
-       - DUNG phep tinh uoc luong (Estimation) voi `tool_math_eval`.
+       - BAT BUOC phai dua ra con so uoc luong (Estimation) dua tren cac mon uu tien.
+       - DUNG phep tinh `tool_math_eval`.
        - Cong thuc tang GPA: Delta_GPA = (Tong_Tin_Chi_Cai_Thien * (Diem_Moi - Diem_Cu)) / Tong_Tin_Chi_Tich_Luy.
        - Tinh: Can tang bao nhieu diem (Target_GPA - Current_GPA).
        - Suy ra: Can bao nhieu tin chi cai thien -> quy ra so mon hoc.
@@ -110,10 +113,11 @@ def get_academic_advisor_agent() -> Agent:
 
     4. Gia lap cu the (Simulation):
        - Chay `tool_math_eval` thu nghiem: "Neu cai thien mon X (3TC) len A (3.7) thi GPA la bao nhieu?".
+       - Neu khong co `Transcript Data` day du, hay gia su Tong Tin Chi Tich Luy khoang 120-130 (hoac lay tu History) de uoc luong.
     
     OUTPUT:
     - Tra loi tieng Viet, logic, co so lieu minh hoa.
-    - Khong tu choi tra loi neu da co du lieu.
+    - Khong tu choi tra loi "khong du thong tin" neu co the uoc luong tu History.
     """
     # Prevent tool_math_eval spam: cache by expression
     eval_cache: dict[str, str] = {}
@@ -256,9 +260,9 @@ class AnswerGeneratorAgent:
             full_prompt = (
                 f"Bối cảnh: {context}\n\n"
                 f"Lịch sử trò chuyện: {memory_context}\n\n"
-                f"Nguồn: {source}\n\n"
+                f"Nguồn tham khảo: {source}\n\n"
                 f"Câu hỏi: {query}\n\n"
-                "Chỉ sử dụng thông tin từ Bối cảnh để trả lời chính. Lịch sử chỉ để tham chiếu ngữ cảnh hội thoại, không được ghi đè thông tin mới trong Bối cảnh. Nếu Bối cảnh có thông tin thì trả lời theo Bối cảnh. Nếu Bối cảnh trống, mới dùng thông tin từ Lịch sử. Trả lời ngắn gọn, tiếng Việt."
+                "Chỉ sử dụng thông tin từ Bối cảnh để trả lời chính. Lịch sử chỉ để tham chiếu ngữ cảnh hội thoại, không được ghi đè thông tin mới trong Bối cảnh. Nếu Bối cảnh có thông tin thì trả lời theo Bối cảnh. Nếu Bối cảnh trống, mới dùng thông tin từ Lịch sử. Trả lời ngắn gọn, tiếng Việt. TUYỆT ĐỐI KHÔNG ghi lại dòng 'Nguồn: ...' hoặc 'Nguồn tham khảo: ...' ở cuối câu trả lời."
             )
             logger.info("[AnswerGeneratorAgent] Action: Gọi LLM để sinh câu trả lời...")
             response = self.llm_agent.run(full_prompt)

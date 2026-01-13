@@ -21,7 +21,7 @@ import hashlib
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-SIMILARITY_THRESHOLD = 0.3
+SIMILARITY_THRESHOLD = 0.2
 # Absolute cache dir to avoid CWD mismatch between services
 BASE_DIR = Path(__file__).resolve().parent.parent
 CACHE_DIR = BASE_DIR / "data" / "cache"
@@ -579,12 +579,13 @@ class FAISSVectorStore:
         results = []
         found_any = False
         for idx, sim in scored:
-            logger.info(f"[DEBUG] Chunk {idx + 1}: sim = {sim:.4f}, threshold = {threshold}")
+            doc_file = self.documents[idx].metadata.get('file_id', 'unknown')
+            logger.info(f"[DEBUG] Chunk {idx + 1} ({doc_file}): sim = {sim:.4f}, threshold = {threshold}")
             if sim >= threshold:
                 results.append(self.documents[idx])
                 found_any = True
             else:
-                logger.info(f"[DEBUG] Chunk {idx + 1} dropped, sim {sim:.4f} < {threshold}")
+                logger.info(f"[DEBUG] Dropped Chunk {idx + 1} ({doc_file}), sim {sim:.4f} < {threshold}")
 
         if not found_any and threshold > 0.05:
             logger.info(f"[DEBUG] No hits above {threshold}, retry with 0.05")

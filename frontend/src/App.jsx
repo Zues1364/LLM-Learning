@@ -76,6 +76,37 @@ async function deleteSessionApi(sessionId) {
   return res.json();
 }
 
+// --- Resource API ---
+async function fetchResources() {
+  const res = await fetch(`${API_BASE}/api/resources`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function uploadResourcePdf(file) {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${API_BASE}/api/resources/pdf`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function addResourceUrl(url) {
+  const res = await fetch(`${API_BASE}/api/resources/url`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function deleteResource(id) {
+  const res = await fetch(`${API_BASE}/api/resources/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 export default function App() {
   const initialSessionId = useRef(createSessionId()).current;
 
@@ -108,7 +139,14 @@ export default function App() {
   const [processingPdf, setProcessingPdf] = useState(false);
   const [processingLabel, setProcessingLabel] = useState("");
 
+  // Resource State
+  const [resources, setResources] = useState([]);
+  const [showResourcePanel, setShowResourcePanel] = useState(false);
+  const [resourceUrl, setResourceUrl] = useState("");
+  const [resourceLoading, setResourceLoading] = useState(false);
+
   const fileInputRef = useRef(null);
+  const resourceFileInputRef = useRef(null);
   const chatEndRef = useRef(null);
   const filesRef = useRef([]);
 
@@ -131,6 +169,15 @@ export default function App() {
       });
     } catch (err) {
       console.error("Fetch files failed", err);
+    }
+  }, []);
+
+  const refreshResources = useCallback(async () => {
+    try {
+      const data = await fetchResources();
+      setResources(data);
+    } catch (err) {
+      console.error("Fetch resources failed", err);
     }
   }, []);
 
@@ -159,7 +206,8 @@ export default function App() {
 
   useEffect(() => {
     refreshFiles();
-  }, [refreshFiles]);
+    refreshResources();
+  }, [refreshFiles, refreshResources]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -272,7 +320,49 @@ export default function App() {
     }
   };
 
-    const handleSendMessage = async () => {
+  const handleResourceUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setResourceLoading(true);
+    try {
+      await uploadResourcePdf(file);
+      await refreshResources();
+    } catch (err) {
+      alert(`Lỗi upload resource: ${err.message}`);
+    } finally {
+      setResourceLoading(false);
+      e.target.value = null;
+    }
+  };
+
+  const handleAddUrl = async () => {
+    if (!resourceUrl.trim()) return;
+    setResourceLoading(true);
+    try {
+      await addResourceUrl(resourceUrl);
+      setResourceUrl("");
+      await refreshResources();
+    } catch (err) {
+      alert(`Lỗi thêm URL: ${err.message}`);
+    } finally {
+      setResourceLoading(false);
+    }
+  };
+
+  const handleDeleteResource = async (id) => {
+    if (!window.confirm("Bạn có chắc muốn xóa tài nguyên này?")) return;
+    setResourceLoading(true);
+    try {
+      await deleteResource(id);
+      await refreshResources();
+    } catch (err) {
+      alert(`Lỗi xóa: ${err.message}`);
+    } finally {
+      setResourceLoading(false);
+    }
+  };
+
+  const handleSendMessage = async () => {
     if (!inputStr.trim()) return;
 
     const query = inputStr;
@@ -419,6 +509,13 @@ export default function App() {
               </div>
             ))}
           {historyList.length === 0 && <div style={{ padding: "0 15px", fontSize: "13px", color: "#64748b" }}>Chưa có lịch sử</div>}
+
+          {/* Resource Button */}
+          <div className="nav-title" style={{ marginTop: 20 }}>Hệ thống</div>
+          <div className="history-item" onClick={() => setShowResourcePanel(!showResourcePanel)} style={{ cursor: "pointer", background: showResourcePanel ? "var(--glass-highlight)" : "transparent" }}>
+            <i className="fas fa-book"></i> Quản lý Tài nguyên
+          </div>
+
         </div>
 
         <div className="profile">
@@ -428,6 +525,77 @@ export default function App() {
       </aside>
 
       <main className="main">
+        {showResourcePanel && (
+          <div className="resource-panel" style={{
+            position: "absolute",
+            top: 20, right: 20, bottom: 20, width: 350,
+            background: "var(--bg-secondary)",
+            border: "1px solid var(--glass-border)",
+            borderRadius: 12,
+            backdropFilter: "blur(20px)",
+            padding: 20,
+            zIndex: 100,
+            display: "flex", flexDirection: "column",
+            boxShadow: "0 4px 30px rgba(0,0,0,0.5)"
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 15 }}>
+              <h3 style={{ margin: 0 }}>Tài nguyên RAG</h3>
+              <button className="icon-btn" onClick={() => setShowResourcePanel(false)}><i className="fas fa-times"></i></button>
+            </div>
+
+            <div style={{ flex: 1, overflowY: "auto", marginBottom: 15 }}>
+              {resourceLoading && <div style={{ textAlign: "center", color: "#94a3b8" }}><i className="fas fa-circle-notch fa-spin"></i> Loading...</div>}
+              {!resourceLoading && resources.map((res, i) => (
+                <div key={i} style={{
+                  padding: "8px 10px",
+                  background: "rgba(255,255,255,0.05)",
+                  borderRadius: 6,
+                  marginBottom: 6,
+                  fontSize: "13px",
+                  display: "flex",
+                  alignItems: "center"
+                }}>
+                  <i className={`fas ${res.type === 'url' ? 'fa-globe' : 'fa-file-pdf'}`} style={{ marginRight: 8, color: res.type === 'url' ? '#60a5fa' : '#f87171' }}></i>
+                  <span style={{ wordBreak: "break-all", flex: 1 }}>{res.name}</span>
+                  <button onClick={() => handleDeleteResource(res.id)} style={{ background: "transparent", border: "none", color: "#94a3b8", cursor: "pointer", padding: "0 5px" }}>
+                    <i className="fas fa-trash-alt"></i>
+                  </button>
+                </div>
+              ))}
+              {!resourceLoading && resources.length === 0 && <div style={{ color: "#64748b", fontSize: 13 }}>Chưa có tài nguyên nào.</div>}
+            </div>
+
+            <div style={{ borderTop: "1px solid var(--glass-border)", paddingTop: 15 }}>
+              <div style={{ marginBottom: 10, fontSize: 13, fontWeight: "bold" }}>Thêm PDF Sổ tay</div>
+              <input type="file" ref={resourceFileInputRef} accept="application/pdf" style={{ display: "none" }} onChange={handleResourceUpload} />
+              <button className="chip-btn" onClick={() => resourceFileInputRef.current?.click()} style={{ width: "100%", justifyContent: "center" }}>
+                <i className="fas fa-upload"></i> Upload PDF
+              </button>
+
+              <div style={{ marginTop: 15, marginBottom: 10, fontSize: 13, fontWeight: "bold" }}>Thêm Link Quy chế</div>
+              <div style={{ display: "flex", gap: 5 }}>
+                <input
+                  value={resourceUrl}
+                  onChange={(e) => setResourceUrl(e.target.value)}
+                  placeholder="https://uet.edu.vn/..."
+                  style={{
+                    flex: 1,
+                    background: "rgba(0,0,0,0.2)",
+                    border: "1px solid var(--glass-border)",
+                    borderRadius: 6,
+                    padding: "6px 10px",
+                    color: "white",
+                    fontSize: 13
+                  }}
+                />
+                <button className="chip-btn" onClick={handleAddUrl} disabled={!resourceUrl}>
+                  <i className="fas fa-plus"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="chat-scroll-area">
           {currentMessages.length === 0 ? (
             <div className="hero-container">
@@ -594,14 +762,3 @@ export default function App() {
     </div>
   );
 }
-
-
-
-
-
-
-
-
-
-
-

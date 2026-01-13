@@ -6,10 +6,10 @@ import shutil
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, List, Set
+from typing import Dict, List, Set, Optional
 from uuid import uuid4
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -20,6 +20,11 @@ from agents import AnswerGeneratorAgent, get_mcp_planner_agent, get_rag_agent
 from env_loader import load_env
 from mcp_client.client import MCPClient
 from persistent_memory import PersistentMemory
+# resource_loader import NOT needed here if we delegate to scan_resources via MCP? 
+# Use resource_loader for 'get_resources' list only? 
+# Or just duplicate the listing logic to avoid dependency issues if separate process?
+# They likely share the 'data' dir.
+from resource_loader import resource_loader 
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -38,8 +43,10 @@ app.add_middleware(
 # Paths
 BASE_DIR = Path(__file__).resolve().parent.parent
 PDF_DIR = BASE_DIR / "data" / "pdfs"
+RESOURCE_PDF_DIR = BASE_DIR / "data" / "resources" / "pdfs"
 SESSION_CACHE_DIR = BASE_DIR / "data" / "session_cache"
 os.makedirs(PDF_DIR, exist_ok=True)
+os.makedirs(RESOURCE_PDF_DIR, exist_ok=True)
 os.makedirs(SESSION_CACHE_DIR, exist_ok=True)
 
 # Globals
@@ -50,21 +57,18 @@ last_uploaded_file_ids: List[str] = []
 rag_agent = None
 mcp_client = MCPClient()
 
-# Load env and map GEMINI_API_KEY to GOOGLE_API_KEY for Gemini SDK compatibility
+# Load env
 load_env()
 if os.getenv("GEMINI_API_KEY") and not os.getenv("GOOGLE_API_KEY"):
     os.environ["GOOGLE_API_KEY"] = os.getenv("GEMINI_API_KEY")
 
 answer_agent = AnswerGeneratorAgent(get_rag_agent())
 
-
 def _session_dir(session_id: str) -> Path:
     return SESSION_CACHE_DIR / session_id
 
-
 def _session_meta_path(session_id: str) -> Path:
     return _session_dir(session_id) / "meta.json"
-
 
 def _load_session_files(session_id: str) -> List[str]:
     meta_path = _session_meta_path(session_id)
@@ -76,7 +80,6 @@ def _load_session_files(session_id: str) -> List[str]:
         return ids if isinstance(ids, list) else []
     except Exception:
         return []
-
 
 def _save_session_files(session_id: str, file_ids: List[str]):
     if not file_ids:
@@ -95,27 +98,88 @@ class QueryRequest(BaseModel):
     session_id: str = "user_session_1"
     file_ids: List[str] | None = None
 
-
 class HistoryItem(BaseModel):
     query: str
     response: str
     timestamp: str
 
-
-class CompareRequest(BaseModel):
-    file_ids: List[str]
-    query: str
-
-
 class SessionRequest(BaseModel):
     session_id: str
+
+class UrlRequest(BaseModel):
+    url: str
+
+# --- Resource Endpoints ---
+
+@app.get("/api/resources")
+async def get_resources():
+    # Use locally imported resource_loader just to LIST.
+    # It reads from disk/config.json.
+    return resource_loader.get_resources()
+
+@app.post("/api/resources/pdf")
+async def upload_resource_pdf(file: UploadFile = File(...)):
+    if not file.filename.endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="File phai la PDF")
+    
+    try:
+        # Save directly to resource dir
+        target_path = RESOURCE_PDF_DIR / file.filename
+        with open(target_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+        # Notify MCP Server to scan
+        try:
+            mcp_client.invoke("scan_resources", {})
+        except Exception as e:
+             logger.warning(f"Failed to trigger MCP scan: {e}")
+            
+        return {"message": "PDF added to resources successfully", "name": file.filename}
+    except Exception as e:
+        logger.error(f"Error adding PDF resource: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/resources/url")
+async def add_resource_url(req: UrlRequest):
+    try:
+        # We can use resource_loader.add_url locally which updates config.json
+        # Then trigger scan on server
+        resource_loader.add_url(req.url)
+        
+        try:
+            mcp_client.invoke("scan_resources", {})
+        except Exception as e:
+             logger.warning(f"Failed to trigger MCP scan: {e}")
+             
+        return {"message": "URL added to resources successfully", "url": req.url}
+    except Exception as e:
+        logger.error(f"Error adding URL resource: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/resources/{resource_id}")
+async def delete_resource(resource_id: str):
+    try:
+        success = resource_loader.delete_resource(resource_id)
+        if not success:
+             raise HTTPException(status_code=404, detail="Resource not found")
+        
+        # Trigger Reset Scan
+        try:
+            mcp_client.invoke("scan_resources", {"reset": True})
+        except Exception as e:
+            logger.warning(f"Failed to trigger MCP scan: {e}")
+            
+        return {"message": "Resource deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting resource: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @app.post("/upload_pdf")
 async def upload_pdf(file: UploadFile = File(...)):
-    """
-    Upload a single PDF, assign a unique file_id. PDF will be processed lazily on first query.
-    """
     global last_file_id, last_uploaded_file_ids
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="File phai la PDF")
@@ -143,15 +207,11 @@ async def upload_pdf(file: UploadFile = File(...)):
 
 @app.get("/files")
 async def list_files():
-    """List uploaded PDFs in current runtime."""
     return [{"file_id": fid, "file_name": file_meta.get(fid, fid)} for fid in loaded_file_ids]
 
 
 @app.post("/upload_pdfs")
 async def upload_multiple_pdfs(files: List[UploadFile] = File(...)):
-    """
-    Upload multiple PDFs concurrently. PDFs are processed lazily on first query.
-    """
     global last_file_id, last_uploaded_file_ids
     if not files:
         raise HTTPException(status_code=400, detail="Chua chon file PDF")
