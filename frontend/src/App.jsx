@@ -91,6 +91,14 @@ async function uploadResourcePdf(file) {
   return res.json();
 }
 
+async function uploadResourceHtml(file) {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${API_BASE}/api/resources/html`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 async function addResourceUrl(url) {
   const res = await fetch(`${API_BASE}/api/resources/url`, {
     method: "POST",
@@ -147,6 +155,7 @@ export default function App() {
 
   const fileInputRef = useRef(null);
   const resourceFileInputRef = useRef(null);
+  const resourceHtmlInputRef = useRef(null);
   const chatEndRef = useRef(null);
   const filesRef = useRef([]);
 
@@ -329,6 +338,21 @@ export default function App() {
       await refreshResources();
     } catch (err) {
       alert(`Lỗi upload resource: ${err.message}`);
+    } finally {
+      setResourceLoading(false);
+      e.target.value = null;
+    }
+  };
+
+  const handleResourceHtmlUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setResourceLoading(true);
+    try {
+      await uploadResourceHtml(file);
+      await refreshResources();
+    } catch (err) {
+      alert(`Lỗi upload HTML: ${err.message}`);
     } finally {
       setResourceLoading(false);
       e.target.value = null;
@@ -570,6 +594,12 @@ export default function App() {
               <input type="file" ref={resourceFileInputRef} accept="application/pdf" style={{ display: "none" }} onChange={handleResourceUpload} />
               <button className="chip-btn" onClick={() => resourceFileInputRef.current?.click()} style={{ width: "100%", justifyContent: "center" }}>
                 <i className="fas fa-upload"></i> Upload PDF
+              </button>
+
+              <div style={{ marginBottom: 10, marginTop: 15, fontSize: 13, fontWeight: "bold" }}>Thêm HTML Local</div>
+              <input type="file" ref={resourceHtmlInputRef} accept=".html,.htm" style={{ display: "none" }} onChange={handleResourceHtmlUpload} />
+              <button className="chip-btn" onClick={() => resourceHtmlInputRef.current?.click()} style={{ width: "100%", justifyContent: "center" }}>
+                <i className="fas fa-code"></i> Upload HTML
               </button>
 
               <div style={{ marginTop: 15, marginBottom: 10, fontSize: 13, fontWeight: "bold" }}>Thêm Link Quy chế</div>

@@ -16,10 +16,12 @@ logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent.parent
 RESOURCE_DIR = BASE_DIR / "data" / "resources"
 PDF_DIR = RESOURCE_DIR / "pdfs"
+HTML_DIR = RESOURCE_DIR / "html"
 CONFIG_FILE = RESOURCE_DIR / "config.json"
 
 # Ensure directories exist
 os.makedirs(PDF_DIR, exist_ok=True)
+os.makedirs(HTML_DIR, exist_ok=True)
 if not CONFIG_FILE.exists():
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump({"urls": []}, f)
@@ -76,6 +78,32 @@ class ResourceLoader:
             except Exception as e:
                 logger.error(f"[ResourceLoader] Failed to load PDF {pdf_file.name}: {e}")
 
+        # 2. Load HTMLs
+        for html_file in HTML_DIR.glob("*.html"):
+            file_id = html_file.name
+            if file_id in self.loaded_resources:
+                continue
+            
+            try:
+                logger.info(f"[ResourceLoader] Ingesting HTML: {html_file.name}")
+                # crawler supports local file paths
+                docs = crawl_url(str(html_file))
+                
+                # Fix metadata
+                for d in docs:
+                    d.metadata["is_global_resource"] = True
+                    # Use filename as ID. 
+                    # Note: crawl_url might put 'file_id' in metadata, we override or ensure consistency
+                    d.metadata["file_id"] = file_id 
+                    # Also ensure 'file_name' is set for display
+                    d.metadata["file_name"] = file_id
+                
+                if docs:
+                    self.vector_store.add_documents(docs)
+                    self.loaded_resources.add(file_id)
+            except Exception as e:
+                logger.error(f"[ResourceLoader] Failed to load HTML {html_file.name}: {e}")
+
         # 2. Load URLs
         config = self._load_config()
         urls = config.get("urls", [])
@@ -118,7 +146,28 @@ class ResourceLoader:
             for d in docs: d.metadata["is_global_resource"] = True
             embeddings = load_embeddings_with_cache(str(target_path), embedder, docs)
             self.vector_store.add_documents_with_embeddings(docs, embeddings)
+            embeddings = load_embeddings_with_cache(str(target_path), embedder, docs)
+            self.vector_store.add_documents_with_embeddings(docs, embeddings)
             self.loaded_resources.add(original_filename)
+
+    def add_html(self, file_path: str, original_filename: str):
+        """
+        Moves a temp file to resource html dir and ingests it.
+        """
+        target_path = HTML_DIR / original_filename
+        shutil.copy(file_path, target_path)
+        
+        # Trigger load single
+        if self.vector_store:
+            docs = crawl_url(str(target_path))
+            for d in docs:
+                d.metadata["is_global_resource"] = True
+                d.metadata["file_id"] = original_filename
+                d.metadata["file_name"] = original_filename
+            
+            if docs:
+                self.vector_store.add_documents(docs)
+                self.loaded_resources.add(original_filename)
 
     def add_url(self, url: str):
         """
@@ -156,6 +205,10 @@ class ResourceLoader:
         # PDFs
         for p in PDF_DIR.glob("*.pdf"):
             res.append({"type": "pdf", "name": p.name, "id": p.name})
+
+        # HTMLs
+        for h in HTML_DIR.glob("*.html"):
+            res.append({"type": "html", "name": h.name, "id": h.name})
         
         # URLs
         config = self._load_config()
@@ -198,6 +251,19 @@ class ResourceLoader:
                 return True
             except Exception as e:
                 logger.error(f"[ResourceLoader] Failed to delete PDF {resource_id}: {e}")
+                return False
+
+        # 2. Check if HTML
+        html_path = HTML_DIR / resource_id
+        if html_path.exists() and (resource_id.endswith(".html") or resource_id.endswith(".htm")):
+            try:
+                os.remove(html_path)
+                logger.info(f"[ResourceLoader] Removed HTML file: {resource_id}")
+                if resource_id in self.loaded_resources:
+                    self.loaded_resources.remove(resource_id)
+                return True
+            except Exception as e:
+                logger.error(f"[ResourceLoader] Failed to delete HTML {resource_id}: {e}")
                 return False
 
         # 2. Check if URL

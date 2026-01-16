@@ -80,9 +80,11 @@ def get_academic_advisor_agent() -> Agent:
     - `Transcript Data`: JSON bang diem (da duoc inject vao prompt hoac tu tool).
     - `Chat History`: Lich su tu van truoc do (bao gom cac mon da liet ke).
     - `Context Files`: Danh sach file ID.
+    - `Missing Subjects Analysis`: Danh sach chi tiet cac Khoi kien thuc con thieu (trong json).
 
     NGUYEN TAC COT LOI:
     - TUYET DOI KHONG tra loi "Khong du thong tin" neu da co `Transcript Data` hoac `Chat History` chua danh sach mon hoc/diem.
+    - Neu co thong tin ve `credit_analysis` (Cac khoi kien thuc thieu), PHAI bao cao chi tiet so tin chi thieu tung Khoi. VD: "Ban con thieu X tin chi Khoi kien thuc chung...".
     - Neu user hoi tiep (follow-up) ma khong gui lai file, PHAI dung thong tin tu `Chat History` hoac `Transcript Data` da co.
     - Luon thuc hien suy luan (reasoning) truoc khi ket luan.
 

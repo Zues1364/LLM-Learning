@@ -1,5 +1,6 @@
 import json
 import os
+from bs4 import BeautifulSoup
 from pathlib import Path
 import numpy as np
 import faiss
@@ -16,6 +17,9 @@ import google.generativeai as genai
 from sentence_transformers import SentenceTransformer
 import pickle
 import hashlib
+import unicodedata
+import re
+from types import SimpleNamespace
 
 # Logging
 logging.basicConfig(level=logging.INFO)
@@ -26,8 +30,8 @@ SIMILARITY_THRESHOLD = 0.2
 BASE_DIR = Path(__file__).resolve().parent.parent
 CACHE_DIR = BASE_DIR / "data" / "cache"
 # Versioning to invalidate stale cached chunks/embeddings when parsing logic changes
-CHUNK_CACHE_VERSION = "v4"
-EMB_CACHE_VERSION = "v2"
+CHUNK_CACHE_VERSION = "v5"
+EMB_CACHE_VERSION = "v3"
 
 # Prepare cache dir
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -35,6 +39,21 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 # Embedding cache naming
 EMB_SUFFIX = "_embeddings.npy"
 EMB_META_SUFFIX = "_embeddings_meta.json"
+
+
+def normalize_for_match(text: str) -> str:
+    """
+    Lightweight normalization for lexical matching.
+    - Remove accents
+    - Lowercase
+    - Collapse whitespace
+    """
+    if not text:
+        return ""
+    decomposed = unicodedata.normalize("NFD", text)
+    without_accents = "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
+    lowered = without_accents.lower()
+    return re.sub(r"\s+", " ", lowered).strip()
 
 
 # Helper: md5 hash of file
@@ -230,7 +249,22 @@ def process_pdf(file_path: str, chunk_size: int = 1000, chunk_overlap: int = 200
             
             # A. Get Tables for this page
             # img2table returns dict {page_idx: [tables...]}
-            page_tables = tables_by_page.get(i) or []
+            page_tables = list(tables_by_page.get(i) or [])
+
+            # Fallback: if img2table fails or returns empty, try pdfplumber tables
+            if not page_tables:
+                try:
+                    raw_tables = page.extract_tables()
+                    for raw_tbl in raw_tables or []:
+                        if not raw_tbl:
+                            continue
+                        normalized_rows = [[(cell or "").strip() for cell in row] for row in raw_tbl]
+                        page_tables.append(SimpleNamespace(df=None, content=normalized_rows, bbox=None))
+                    if page_tables:
+                        logger.info(f"[PDF FALLBACK] pdfplumber extracted {len(page_tables)} tables on page {page_num}")
+                except Exception as e:
+                    logger.error(f"[PDF FALLBACK] pdfplumber tables failed on page {page_num}: {e}")
+
             table_bboxes = []
             
             # --- PROCESS TABLES ---
@@ -490,6 +524,9 @@ class FAISSVectorStore:
             return
 
         logger.info(f"Adding {len(documents)} documents to FAISSVectorStore")
+        for doc in documents:
+            if "_norm_text" not in doc.metadata:
+                doc.metadata["_norm_text"] = normalize_for_match(doc.page_content)
         embeddings = self.embedder.embed_documents([doc.page_content for doc in documents])
         emb_np = np.array(embeddings, dtype="float32")
         if emb_np.ndim == 1:
@@ -517,6 +554,10 @@ class FAISSVectorStore:
         """
         if not documents:
             return
+
+        for doc in documents:
+            if "_norm_text" not in doc.metadata:
+                doc.metadata["_norm_text"] = normalize_for_match(doc.page_content)
 
         emb_np = np.array(embeddings, dtype="float32")
         if emb_np.ndim == 1:
@@ -554,12 +595,29 @@ class FAISSVectorStore:
             return []
 
         q_vec = self._embed_query(query)
+        allowed_set = set(file_ids) if file_ids else None
 
-        # Filter by file_ids if provided
+        # Prepare lexical features (diacritic-insensitive) for fallback boosting
+        norm_query = normalize_for_match(query)
+        query_tokens = [t for t in re.findall(r"[a-z0-9]{3,}", norm_query) if len(t) >= 3]
+        phrase_candidates: set[str] = set()
+        for n in (3, 2):
+            for i in range(len(query_tokens) - n + 1):
+                phrase = " ".join(query_tokens[i : i + n])
+                if len(phrase) >= 8:
+                    phrase_candidates.add(phrase)
+        # Also build looser n-grams (keeps short tokens like "tin") to catch course names verbatim
+        loose_tokens = re.findall(r"[a-z0-9]+", norm_query)
+        for n in (3, 2):
+            for i in range(len(loose_tokens) - n + 1):
+                phrase = " ".join(loose_tokens[i : i + n])
+                if len(phrase) >= 6:
+                    phrase_candidates.add(phrase)
+
+        # Vector search (FAISS)
         candidate_indices: List[int]
-        if file_ids:
-            allow = set(file_ids)
-            candidate_indices = [i for i, doc in enumerate(self.documents) if doc.metadata.get("file_id") in allow]
+        if allowed_set:
+            candidate_indices = [i for i, doc in enumerate(self.documents) if doc.metadata.get("file_id") in allowed_set]
             if not candidate_indices:
                 logger.info("No chunks match given file_ids.")
                 return []
@@ -576,22 +634,51 @@ class FAISSVectorStore:
             D, I = self.index.search(q_vec, top_k)
             scored = list(zip(I[0], D[0]))
 
-        results = []
-        found_any = False
-        for idx, sim in scored:
-            doc_file = self.documents[idx].metadata.get('file_id', 'unknown')
-            logger.info(f"[DEBUG] Chunk {idx + 1} ({doc_file}): sim = {sim:.4f}, threshold = {threshold}")
-            if sim >= threshold:
-                results.append(self.documents[idx])
-                found_any = True
-            else:
-                logger.info(f"[DEBUG] Dropped Chunk {idx + 1} ({doc_file}), sim {sim:.4f} < {threshold}")
+        scored = [(idx, sim) for idx, sim in scored if idx >= 0]
 
-        if not found_any and threshold > 0.05:
+        # Base scores from vector search
+        combined_scores: dict[int, float] = {idx: sim for idx, sim in scored}
+
+        # Lexical boosting: bring exact/near-exact string matches into the result set
+        if query_tokens:
+            for idx, doc in enumerate(self.documents):
+                if allowed_set and doc.metadata.get("file_id") not in allowed_set:
+                    continue
+
+                norm_doc = doc.metadata.get("_norm_text") or normalize_for_match(doc.page_content)
+                doc.metadata["_norm_text"] = norm_doc
+
+                phrase_hit = any(p in norm_doc for p in phrase_candidates) if phrase_candidates else False
+                token_hits = sum(1 for t in query_tokens if t in norm_doc)
+
+                if phrase_hit or token_hits:
+                    boost = 0.0
+                    if phrase_hit:
+                        boost += 0.60  # strong boost for multi-word match (e.g., course name)
+                    if token_hits:
+                        boost += min(0.05 * token_hits, 0.35)  # bounded token bonus
+
+                    prev = combined_scores.get(idx, 0.0)
+                    combined_scores[idx] = prev + boost
+                    # logger.info(f"[DEBUG] Lexical boost chunk {idx + 1}: base={prev:.4f} boost={boost:.4f} phrase_hit={phrase_hit} token_hits={token_hits}")
+
+        # Re-rank with combined scores
+        ranked = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)
+        results: List[Document] = []
+        for idx, score in ranked:
+            if len(results) >= top_k:
+                break
+            doc_file = self.documents[idx].metadata.get("file_id", "unknown")
+            logger.info(f"[DEBUG] Chunk {idx + 1} ({doc_file}): combined_score = {score:.4f}, threshold = {threshold}")
+            if score >= threshold:
+                results.append(self.documents[idx])
+
+        if not results and threshold > 0.05:
             logger.info(f"[DEBUG] No hits above {threshold}, retry with 0.05")
-            fallback_threshold = 0.05
-            for idx, sim in scored:
-                if sim >= fallback_threshold:
+            for idx, score in ranked:
+                if len(results) >= top_k:
+                    break
+                if score >= 0.05:
                     results.append(self.documents[idx])
 
         logger.info(f"[DEBUG] Returned {len(results)} documents")
@@ -611,3 +698,180 @@ def web_search(query: str, num_results=10, api_key="b91e335ef3ef0b0f01dceef77c1c
     except Exception as e:
         logger.error(f"Loi khi tim kiem web: {e}")
         return ["(Khong co ket qua web)"]
+
+
+def parse_curriculum_from_html_content(html_content: str) -> List[dict]:
+    """
+    Parses the curriculum HTML content into a structured list of blocks and sub-blocks.
+    Returns a hierarchy of Knowledge Blocks with credit requirements and subjects.
+    """
+    soup = BeautifulSoup(html_content, 'html.parser')
+
+    # Find the main table - heuristic: tables with "Mã" and "Số tín chỉ"
+    target_table = None
+    for t in soup.find_all('table'):
+        t_text = t.get_text()
+        if "Mã" in t_text and "học phần" in t_text and "Số tín chỉ" in t_text:
+            target_table = t
+            break
+    
+    if not target_table:
+        logger.warning("[Curriculum Parsing] Could not find curriculum table in HTML.")
+        return []
+
+    rows = target_table.find_all('tr')
+    
+    structure = []
+    current_block = None
+    current_sub_block = None
+
+    # Regex patterns
+    block_pattern = re.compile(r"^[IVX]+\s*$") # I, II, III...
+    sub_block_pattern = re.compile(r"^[IVX]+\.\d+(\.\d+)?\s*$") # V.1, V.2.1
+
+    for row in rows:
+        cols = row.find_all('td')
+        if not cols: continue
+        
+        col_texts = [c.get_text(separator=" ", strip=True) for c in cols]
+        
+        # Skip header rows
+        if len(col_texts) > 3 and "Số tín chỉ" in col_texts[3]:
+            continue
+
+        first_col = col_texts[0]
+        
+        # 1. Detect Main Block (I, II...)
+        if block_pattern.match(first_col):
+            block_name = col_texts[1] if len(col_texts) > 1 else ""
+            credits = 0
+            for c in col_texts[2:]:
+                if re.match(r"^\d+(/\d+)?$", c):
+                     parts = c.split('/')
+                     credits = int(parts[0])
+                     break
+            
+            current_block = {
+                "id": first_col,
+                "name": block_name,
+                "required_credits": credits,
+                "type": "main",
+                "subjects": [],
+                "sub_blocks": []
+            }
+            structure.append(current_block)
+            current_sub_block = None
+            continue
+
+        # 2. Detect Sub-Block (V.1, V.2...)
+        if sub_block_pattern.match(first_col):
+            sub_name = col_texts[1] if len(col_texts) > 1 else ""
+            credits = 0
+            for c in col_texts[2:]:
+                 if re.match(r"^\d+(/\d+)?$", c):
+                         parts = c.split('/')
+                         credits = int(parts[0])
+                         break
+            
+            current_sub_block = {
+                "id": first_col,
+                "name": sub_name,
+                "required_credits": credits,
+                "type": "sub",
+                "subjects": [],
+                "sub_blocks": [] 
+            }
+            if current_block:
+                current_block["sub_blocks"].append(current_sub_block)
+            continue
+            
+        # 3. Detect Subject
+        if len(col_texts) >= 4:
+            code = col_texts[1]
+            name = col_texts[2]
+            credit_text = col_texts[3]
+            
+            if re.match(r"^[A-Z]{3}\d{4}[A-Z]?$", code):
+                try:
+                    creds = int(credit_text)
+                except:
+                    creds = 0
+                
+                subj = {"code": code, "name": name, "credits": creds}
+                
+                if current_sub_block:
+                    current_sub_block["subjects"].append(subj)
+                elif current_block:
+                    current_block["subjects"].append(subj)
+    
+    return structure
+
+
+def compute_curriculum_missing_credits(structure: List[dict], transcript_codes: set) -> List[dict]:
+    """
+    Computes missing credits per block based on structure and user transcript.
+    Handles hierarchy by aggregating subjects from children sub-blocks if necessary.
+    """
+    missing_details = []
+
+    for block in structure:
+        # Check if block has sub-blocks
+        if not block["sub_blocks"]:
+            # Simple case: Main Block with direct subjects
+            main_collected = [s for s in block["subjects"] if s["code"] in transcript_codes]
+            main_accumulated = sum(s["credits"] for s in main_collected)
+            
+            missing = block["required_credits"] - main_accumulated
+            if missing > 0:
+                candidates = [s for s in block["subjects"] if s["code"] not in transcript_codes]
+                missing_details.append({
+                    "block_name": block['name'],
+                    "missing_credits": missing,
+                    "candidates": candidates
+                })
+        else:
+            # Complex case: Block has sub-buckets
+            # 1. Identify Requirement Buckets (Sub-blocks with req > 0)
+            # 2. Each non-bucket sub-block (req=0) belongs to the nearest preceding bucket?
+            #    Or belongs to Main Block? In the VNU HTML:
+            #    V.2 (21 credits) -> [V.2.1, V.2.2, V.2.3, V.2.4] (0 credits explicitly, but contain subjects)
+            
+            buckets = []
+            current_bucket = None
+            
+            # Treat Main Block subjects as a "Main" bucket if it has requirements?
+            # Actually Main Block req (51) = sum of V.1 (18) + V.2 (21) + V.3 (5) + V.4 (7)
+            # So we iterate sub-blocks only.
+            
+            for sub in block["sub_blocks"]:
+                if sub["required_credits"] > 0:
+                    current_bucket = {
+                        "name": sub["name"],
+                        "required_credits": sub["required_credits"],
+                        "subjects": list(sub["subjects"])
+                    }
+                    buckets.append(current_bucket)
+                else:
+                    if current_bucket:
+                        current_bucket["subjects"].extend(sub["subjects"])
+            
+            # Process each bucket
+            for bucket in buckets:
+                bucket_accumulated = 0
+                bucket_completed_codes = set()
+                
+                for s in bucket["subjects"]:
+                     if s["code"] in transcript_codes and s["code"] not in bucket_completed_codes:
+                         bucket_accumulated += s["credits"]
+                         bucket_completed_codes.add(s["code"])
+                
+                bs_missing = bucket["required_credits"] - bucket_accumulated
+                if bs_missing > 0:
+                     candidates = [s for s in bucket["subjects"] if s["code"] not in transcript_codes]
+                     missing_details.append({
+                        "block_name": f"{block['name']} - {bucket['name']}",
+                        "missing_credits": bs_missing,
+                        "candidates": candidates
+                     })
+
+    return missing_details

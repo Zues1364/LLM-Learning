@@ -3,16 +3,27 @@ import os
 import json
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import logging
+from bs4 import BeautifulSoup
 
 from env_loader import load_env
-from utils import web_search, VietnameseEmbedder, FAISSVectorStore, process_pdf, generate_summary, load_embeddings_with_cache
+from utils import (
+    web_search,
+    VietnameseEmbedder,
+    FAISSVectorStore,
+    process_pdf,
+    generate_summary,
+    load_embeddings_with_cache,
+    normalize_for_match,
+    parse_curriculum_from_html_content,
+    compute_curriculum_missing_credits,
+)
 from persistent_memory import PersistentMemory
 from agents import get_academic_advisor_agent
 from resource_loader import resource_loader # NEW IMPORT
@@ -80,6 +91,9 @@ def web_search_tool(query: str, num_results: int = 10) -> List[str]:
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 PDF_DIR = BASE_DIR / "data" / "pdfs"
+RESOURCE_DIR = BASE_DIR / "data" / "resources"
+CURRICULUM_HTML_DIR = RESOURCE_DIR / "html"
+CURRICULUM_PDF_DIR = RESOURCE_DIR / "pdfs"
 MEMORY_DB = BASE_DIR / "data" / "memory.db"
 
 load_env()
@@ -167,6 +181,52 @@ def _ensure_file_loaded(file_id: str) -> str:
     return resolved_id
 
 
+def _extract_class_code_from_text(text: str) -> Optional[str]:
+    """Best-effort extraction of 'Lớp quản lý' / class code from raw transcript text."""
+    norm = normalize_for_match(text)
+    if not norm:
+        return None
+
+    # Try explicit marker
+    # Fix regex: put hyphen at end or escape it to avoid range ambiguity
+    match = re.search(r"lop quan ly[:\s]+([a-z0-9/_\.\-]+)", norm)
+    if match:
+        return match.group(1).upper().replace(" ", "")
+
+    # Fallback: look for QH-20xx style tokens
+    match = re.search(r"(qh[\-\/ ]?\d{4}[\-\/ ]?i[\-\/ ]?cq[\-\/ ]?[a-z0-9\-]+)", norm)
+    if match:
+        return match.group(1).upper().replace(" ", "")
+    return None
+
+
+def _build_completed_subjects(semesters: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """
+    Flatten subjects across semesters, keeping the best grade per course code.
+    Returns a dict keyed by subject code.
+    """
+    best: Dict[str, Dict[str, Any]] = {}
+    for sem in semesters or []:
+        sem_code = sem.get("semester_code")
+        for sub in sem.get("subjects") or []:
+            code = (sub.get("code") or "").strip()
+            if not code:
+                continue
+            grade = sub.get("grade_4")
+            current = best.get(code)
+            if current is None or (grade is not None and grade > (current.get("grade_4") or -1)):
+                best[code] = {
+                    "code": code,
+                    "name": sub.get("name"),
+                    "credits": sub.get("credits"),
+                    "grade_10": sub.get("grade_10"),
+                    "grade_letter": sub.get("grade_letter"),
+                    "grade_4": grade,
+                    "semester": sem_code,
+                }
+    return best
+
+
 @mcp_tool("analyze_transcript")
 def analyze_transcript(file_ids: str | List[str]) -> str:
     """
@@ -199,6 +259,7 @@ def analyze_transcript(file_ids: str | List[str]) -> str:
 
     preview_len = 500
     texts: List[Dict[str, str]] = []
+    class_hint_from_raw: Optional[str] = None
     for fid in ids:
         try:
             logger.info("Processing transcript file_id=%s", fid)
@@ -214,6 +275,10 @@ def analyze_transcript(file_ids: str | List[str]) -> str:
             logger.info("Extracted %s chunks from %s", len(docs), pdf_path.name)
             file_text = "\n".join(doc.page_content for doc in docs)
             texts.append({"file_id": resolved_id, "text": file_text})
+            # Try to capture class/program code directly from raw text as a fallback
+            class_hint = _extract_class_code_from_text(file_text)
+            if class_hint and not class_hint_from_raw:
+                class_hint_from_raw = class_hint
         except Exception as e:
             logger.error(f"Loi doc file transcript {fid}: {e}")
             continue
@@ -231,7 +296,7 @@ def analyze_transcript(file_ids: str | List[str]) -> str:
         "\n"
         "OUTPUT JSON FORMAT (chi tra ve JSON hop le, dung dau nhay kep, KHONG markdown):\n"
         "{\n"
-        "  \"student_info\": {\"name\": \"...\", \"id\": \"...\", \"class\": \"...\"},\n"
+        "  \"student_info\": {\"name\": \"...\", \"id\": \"...\", \"class\": \"...\", \"major\": \"...\"},\n"
         "  \"semesters\": [\n"
         "    {\n"
         "      \"semester_code\": \"Ma hoc ky (vi du 231, 232)\",\n"
@@ -386,9 +451,29 @@ def analyze_transcript(file_ids: str | List[str]) -> str:
             except Exception as e:
                 errors.append(f"{label}: {e}")
 
-    if not merged["semesters"]: return json.dumps({"error": f"No semesters. {errors}"}, ensure_ascii=False)
+    if not merged["semesters"]:
+        return json.dumps({"error": f"No semesters. {errors}"}, ensure_ascii=False)
     
-    return json.dumps(_normalize_data(merged), ensure_ascii=False)
+    normalized = _normalize_data(merged)
+
+    # Enrich student info with class/program hints
+    if normalized.get("student_info") is None:
+        normalized["student_info"] = {}
+    if class_hint_from_raw and not normalized["student_info"].get("class"):
+        normalized["student_info"]["class"] = class_hint_from_raw
+    
+    # Use major as program_hint if available, else class
+    major = normalized["student_info"].get("major")
+    cls = normalized["student_info"].get("class")
+    if major:
+        normalized["student_info"]["program_hint"] = major
+    elif cls:
+        normalized["student_info"]["program_hint"] = cls
+
+    # Flatten best-attempt subjects for downstream checks
+    normalized["completed_subjects"] = list(_build_completed_subjects(normalized.get("semesters") or []).values())
+    
+    return json.dumps(normalized, ensure_ascii=False)
 
 
 @mcp_tool("math_eval")
@@ -400,6 +485,385 @@ def math_eval(expression: str) -> str:
     except Exception as e: return f"Error: {e}"
 
 
+def _list_curriculum_candidates() -> List[Path]:
+    candidates: List[Path] = []
+    if CURRICULUM_HTML_DIR.exists():
+        candidates.extend(CURRICULUM_HTML_DIR.glob("*.html"))
+    if CURRICULUM_PDF_DIR.exists():
+        candidates.extend(CURRICULUM_PDF_DIR.glob("*.pdf"))
+    return candidates
+
+
+def _extract_subjects_from_text(raw_text: str) -> List[Dict[str, Any]]:
+    """
+    Parse subject codes and credits from free-form text.
+    This is heuristic but works for the handbook's tabular text.
+    """
+    code_pattern = re.compile(r"([A-Z]{2,4}\\d{3,4}[A-Z]?)")
+    subjects: Dict[str, Dict[str, Any]] = {}
+    for line in (raw_text or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        m = code_pattern.search(line)
+        if not m:
+            continue
+        code = m.group(1)
+        tail = line[m.end():].strip()
+        tokens = tail.split()
+        name_tokens: List[str] = []
+        credits: Optional[int] = None
+        for tok in tokens:
+            if re.fullmatch(r"\\d+(?:\\.\\d+)?", tok):
+                try:
+                    val = int(float(tok))
+                except ValueError:
+                    continue
+                if 0 < val <= 10:
+                    credits = val
+                    break
+            name_tokens.append(tok)
+        name = " ".join(name_tokens).strip(" .-") or None
+        existing = subjects.get(code)
+        if existing is None or (credits and not existing.get("credits")):
+            subjects[code] = {"code": code, "name": name, "credits": credits}
+    return list(subjects.values())
+
+
+def _parse_html_curriculum(file_path: Path) -> List[Dict[str, Any]]:
+    """
+    Parse curriculum subjects from an HTML file using table structure.
+    Expected columns: STT, Code, Name, Credits, ...
+    """
+    subjects = []
+    try:
+        html = file_path.read_text(encoding="utf-8", errors="ignore")
+        soup = BeautifulSoup(html, "html.parser")
+        
+        # Heuristic: Find all rows that look like subject entries
+        rows = soup.find_all("tr")
+        for row in rows:
+            cols = row.find_all("td")
+            if len(cols) < 4:
+                continue
+            
+            texts = [c.get_text(separator=" ", strip=True) for c in cols]
+            
+            # Check for Course Code in column 1 (index 1)
+            # Pattern: 2-4 uppercase letters followed by 3-4 digits, optional suffix letter
+            code_cand = texts[1]
+            if not re.match(r"^[A-Z]{2,4}\d{3,4}[A-Z]?", code_cand):
+                continue
+            
+            # Check for Credits in column 3 (index 3)
+            try:
+                credits = int(float(texts[3]))
+            except ValueError:
+                continue
+                
+            name = texts[2]
+            
+            subjects.append({
+                "code": code_cand,
+                "name": name,
+                "credits": credits
+            })
+    except Exception as e:
+        logger.error(f"Error parsing HTML curriculum {file_path}: {e}")
+        
+    return subjects
+
+
+def _flatten_structure(structure: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Helper to extract all subjects from hierarchical structure."""
+    all_subs = []
+    for block in structure:
+        all_subs.extend(block.get("subjects", []))
+        for sub in block.get("sub_blocks", []):
+            all_subs.extend(sub.get("subjects", []))
+    return all_subs
+
+
+def analyze_curriculum(program_hint: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Load curriculum resource (HTML/PDF) and extract required subjects.
+    Returns a structured dict even if only partial data is available.
+    """
+    candidates = _list_curriculum_candidates()
+    if not candidates:
+        return {
+            "program_name": program_hint,
+            "subjects": [],
+            "total_credits": None,
+            "source_path": None,
+            "notes": "Khong tim thay file chuong trinh dao tao trong resources.",
+        }
+
+    hint_norm = normalize_for_match(program_hint or "")
+
+    def _score(path: Path) -> float:
+        name_norm = normalize_for_match(path.stem)
+        score = 0.0
+        for token in hint_norm.split():
+            if token and token in name_norm:
+                score += 2.0
+        if "khoa hoc may tinh" in name_norm or "khmt" in name_norm:
+            score += 1.0
+        return score
+
+    # Sort candidates by score descending
+    candidates.sort(key=_score, reverse=True)
+
+    final_result = {
+        "program_name": program_hint,
+        "subjects": [],
+        "structure": [], 
+        "total_credits": None,
+        "source_path": None,
+        "notes": "Khong tim thay chuong trinh dao tao hop le (co mon hoc).",
+    }
+
+    for selected in candidates:
+        logger.info(f"Trying curriculum candidate: {selected.name} (score={_score(selected)})")
+        
+        subjects = []
+        total_credits = None
+        text_content = ""
+        source_path = str(selected)
+        notes = f"Du lieu chuong trinh dao tao: {selected.name}"
+
+        try:
+            if selected.suffix.lower() == ".html":
+                # Extract text for Total Credits parsing
+                raw_html = selected.read_text(encoding="utf-8", errors="ignore")
+                soup = BeautifulSoup(raw_html, "html.parser")
+                # Clean up for text extraction
+                for tag in soup(["script", "style", "nav", "footer", "header", "form"]):
+                    tag.decompose()
+                text_content = soup.get_text(separator="\n")
+                
+                # Parse subjects and structure
+                structure = parse_curriculum_from_html_content(raw_html)
+                subjects = _flatten_structure(structure) if structure else _parse_html_curriculum(selected)
+                if not structure and subjects:
+                    # Fallback structure?
+                    structure = [{"name": "Detected Subjects", "subjects": subjects, "required_credits": 0, "sub_blocks": []}]
+            else:
+                docs = process_pdf(str(selected))
+                text_content = "\n".join([d.page_content for d in docs])
+                subjects = _extract_subjects_from_text(text_content)
+        except Exception as e:
+            logger.error(f"Failed to parse curriculum candidate {selected}: {e}")
+            continue # Try next candidate
+
+        # Extract Total Credits from text
+        if text_content:
+            norm_text = re.sub(r"\s+", " ", text_content)
+            match = re.search(r"Tổng số tín chỉ[^:0-9]*:?\s*(\d{2,3})", norm_text, re.IGNORECASE)
+            if match:
+                try:
+                    total_credits = int(match.group(1))
+                except: pass
+        
+        sum_credits = sum([s["credits"] for s in subjects if s.get("credits")]) if subjects else 0
+
+        # Heuristic: If we found < 5 subjects, this file is probably not a detailed curriculum list
+        if len(subjects) < 5:
+            logger.warning(f"Candidate {selected.name} yielded only {len(subjects)} subjects. Skipping.")
+            continue
+        
+        # If we got here, this candidate is good enough
+        if total_credits is None or total_credits < 50:
+            total_credits = sum_credits if sum_credits > 0 else None
+            
+        final_result = {
+            "program_name": program_hint or selected.stem,
+            "subjects": subjects,
+            "structure": structure,
+            "total_credits": total_credits,
+            "source_path": source_path,
+            "notes": notes + f". Tim thay {len(subjects)} mon hoc.",
+        }
+        logger.info(f"Selected curriculum: {selected.name} with {len(subjects)} subjects.")
+        break
+
+    return final_result
+
+
+def compute_missing_subjects(transcript_data: Dict[str, Any], curriculum: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Compare transcript with curriculum list to find missing courses and low-grade courses.
+    """
+    semesters = transcript_data.get("semesters") or []
+    completed_map = _build_completed_subjects(semesters)
+    curriculum_subjects = curriculum.get("subjects") or []
+
+    missing: List[Dict[str, Any]] = []
+    for subj in curriculum_subjects:
+        code = subj.get("code")
+        if not code:
+            continue
+        best = completed_map.get(code)
+        if best is None or (best.get("grade_4") is None) or best.get("grade_4") <= 0:
+            missing.append(subj)
+
+    low_grades = [
+        s for s in completed_map.values()
+        if s.get("grade_4") is not None and s.get("grade_4") <= 2.5
+    ]
+    low_grades.sort(key=lambda x: (x.get("grade_4") or 0, -(x.get("credits") or 0)))
+
+    low_grades.sort(key=lambda x: (x.get("grade_4") or 0, -(x.get("credits") or 0)))
+
+    # Compute detailed block analysis if structure is available
+    credit_analysis = []
+    if curriculum.get("structure"):
+        completed_codes = set(completed_map.keys())
+        credit_analysis = compute_curriculum_missing_credits(curriculum["structure"], completed_codes)
+
+    return {
+        "completed_map": completed_map,
+        "missing": missing,
+        "low_grades": low_grades,
+        "credit_analysis": credit_analysis,
+    }
+
+
+def _infer_next_semester_code(transcript_data: Dict[str, Any]) -> Optional[str]:
+    """
+    Derive a best-guess next semester code from transcript (e.g., 241 -> 242).
+    """
+    sem_codes: List[int] = []
+    for sem in transcript_data.get("semesters") or []:
+        code = sem.get("semester_code")
+        if code is None:
+            continue
+        try:
+            sem_codes.append(int(str(code)))
+        except Exception:
+            continue
+    if not sem_codes:
+        return None
+    try:
+        return str(max(sem_codes) + 1)
+    except Exception:
+        return None
+
+
+def _extract_target_gpa(query: str) -> Optional[float]:
+    """
+    Pull a target GPA value from the user query if present.
+    """
+    if not query:
+        return None
+    match = re.search(r"(?:gpa|diem|điểm)[^0-9]{0,5}([0-4](?:[.,]\\d{1,2})?)", query, re.IGNORECASE)
+    if match:
+        try:
+            return float(match.group(1).replace(",", "."))
+        except ValueError:
+            return None
+    return None
+
+
+def calculate_gpa_feasibility(
+    transcript_data: Dict[str, Any],
+    curriculum_total_credits: Optional[int] = None,
+    target_gpa: Optional[float] = None,
+) -> Dict[str, Any]:
+    """
+    Estimate maximum reachable GPA and retake impact.
+    """
+    completed_map = _build_completed_subjects(transcript_data.get("semesters") or [])
+    total_credits = 0
+    total_points = 0.0
+    for sub in completed_map.values():
+        cr = sub.get("credits")
+        g4 = sub.get("grade_4")
+        if cr is None or g4 is None:
+            continue
+        total_credits += cr
+        total_points += cr * g4
+
+    curriculum_total = curriculum_total_credits or transcript_data.get("overview", {}).get("total_credits_accumulated")
+    remaining_credits = max((curriculum_total or 0) - total_credits, 0) if curriculum_total else 0
+    denom = total_credits + remaining_credits
+    max_possible_gpa = ((total_points + remaining_credits * 4.0) / denom) if denom > 0 else None
+    feasible = None
+    if target_gpa is not None and max_possible_gpa is not None:
+        feasible = target_gpa <= max_possible_gpa + 1e-6
+
+    retake_candidates = [
+        s for s in completed_map.values()
+        if s.get("grade_4") is not None and s.get("grade_4") <= 2.5 and (s.get("credits") or 0) > 0
+    ]
+    retake_candidates.sort(key=lambda x: (x.get("grade_4") or 0, -(x.get("credits") or 0)))
+
+    return {
+        "current_credits": total_credits,
+        "current_gpa": round(total_points / total_credits, 4) if total_credits else None,
+        "remaining_credits": remaining_credits,
+        "max_possible_gpa": round(max_possible_gpa, 4) if max_possible_gpa is not None else None,
+        "target_gpa": target_gpa,
+        "feasible": feasible,
+        "retake_candidates": retake_candidates[:5],
+    }
+
+
+def check_course_schedule(
+    subjects: List[Dict[str, Any]],
+    target_semester: Optional[str] = None,
+    class_code: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Use the handbook (global resources) to see if subjects appear in the upcoming schedule.
+    """
+    if not subjects:
+        return []
+
+    _init_vector_store()
+    if _store is None:
+        return []
+    # Ensure global resources are present
+    resource_loader.set_vector_store(_store)
+    if not resource_loader.loaded_resources:
+        resource_loader.load_resources()
+
+    file_scope = list(resource_loader.loaded_resources) if resource_loader.loaded_resources else None
+    results: List[Dict[str, Any]] = []
+
+    for subj in subjects:
+        code = subj.get("code")
+        if not code:
+            continue
+        query_parts = [code]
+        if target_semester:
+            query_parts.append(f"hoc ky {target_semester}")
+        if class_code:
+            query_parts.append(class_code)
+        query_parts.append("thoi khoa bieu mo lop hoc phan hoc ky toi")
+        query = " ".join(query_parts)
+
+        chunks = _store.retrieve(query, top_k=3, file_ids=file_scope) if _store else []
+        if not chunks:
+            results.append({
+                "code": code,
+                "offered": False,
+                "snippet": None,
+                "file_id": None,
+                "query": query,
+            })
+            continue
+        top_chunk = chunks[0]
+        results.append({
+            "code": code,
+            "offered": code in top_chunk.page_content,
+            "snippet": top_chunk.page_content[:500],
+            "file_id": top_chunk.metadata.get("file_id") or top_chunk.metadata.get("file_name"),
+            "query": query,
+        })
+    return results
+
+
 @mcp_tool("consult_advisor")
 def consult_advisor(query: str, file_ids: List[str] | None = None, session_id: str = "default") -> str:
     ids = file_ids or []
@@ -409,18 +873,78 @@ def consult_advisor(query: str, file_ids: List[str] | None = None, session_id: s
     except: history = ""
     
     transcript = ""
+    transcript_data: Dict[str, Any] | None = None
     if ids:
         logger.info(f"[consult_advisor] Calling analyze_transcript with ids={ids}")
         try:
             transcript = analyze_transcript(ids)
             logger.info(f"[consult_advisor] analyze_transcript result length: {len(transcript)}")
+            try:
+                transcript_data = json.loads(transcript)
+            except Exception as e:
+                logger.warning(f"[consult_advisor] Unable to parse transcript JSON: {e}")
+                transcript_data = None
         except Exception as e:
             logger.error(f"[consult_advisor] Error calling analyze_transcript: {e}")
             transcript = f"Error: {e}"
     else:
         logger.warning("[consult_advisor] No file_ids provided, transcript will be empty.")
     
-    prompt = f"--- CONTEXT ---\nHistory:\n{history}\nFiles: {ids}\nTranscript:\n{transcript}\n--- END ---\nQuery: {query}"
+    program_hint = None
+    if transcript_data:
+        # Prioritize major extracted explicitly
+        program_hint = (
+            (transcript_data.get("student_info") or {}).get("major")
+            or (transcript_data.get("student_info") or {}).get("program_hint")
+            or (transcript_data.get("student_info") or {}).get("class")
+        )
+
+    curriculum = analyze_curriculum(program_hint)
+    
+    # Validation: If curriculum has no subjects, we cannot reliably compute missing info.
+    if not curriculum.get("subjects"):
+        logger.warning(f"[consult_advisor] No curriculum subjects found for program_hint='{program_hint}'")
+        curriculum["notes"] = (curriculum.get("notes") or "") + " [WARNING: No curriculum found! Cannot compute missing subjects.]"
+
+    missing_info = compute_missing_subjects(transcript_data or {}, curriculum) if transcript_data else {"missing": [], "completed_map": {}, "low_grades": []}
+    next_semester = _infer_next_semester_code(transcript_data or {}) if transcript_data else None
+    schedule_info = check_course_schedule(missing_info.get("missing") or [], target_semester=next_semester, class_code=program_hint)
+
+    target_gpa = _extract_target_gpa(query)
+    gpa_projection = calculate_gpa_feasibility(
+        transcript_data or {},
+        curriculum_total_credits=curriculum.get("total_credits"),
+        target_gpa=target_gpa,
+    ) if transcript_data else {}
+
+    scenario = "general"
+    reg_keywords = ["dang ky", "dk", "ky toi", "hoc ky toi", "mon gi", "thieu mon", "dang ký", "đăng ký", "môn"]
+    gpa_keywords = ["gpa", "tich luy", "tăng điểm", "cải thiện", "diem", "điểm"]
+    norm_query = normalize_for_match(query)
+    if any(k in norm_query for k in reg_keywords):
+        scenario = "registration"
+    if any(k in norm_query for k in gpa_keywords):
+        scenario = "gpa_improvement"
+
+    advisor_context = {
+        "history": history,
+        "files": ids,
+        "scenario": scenario,
+        "transcript_json": transcript_data or transcript,
+        "program_hint": program_hint,
+        "curriculum": curriculum,
+        "missing_subjects": missing_info,
+        "next_semester": next_semester,
+        "schedule_offerings": schedule_info,
+        "gpa_projection": gpa_projection,
+    }
+
+    prompt = (
+        "--- CONTEXT ---\n"
+        f"{json.dumps(advisor_context, ensure_ascii=False)}\n"
+        "--- END ---\n"
+        f"Query: {query}"
+    )
     return getattr(get_academic_advisor_agent().run(prompt), "content", "")
 
 @mcp_tool("retrieve_chunks")

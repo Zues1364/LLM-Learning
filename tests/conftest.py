@@ -56,7 +56,8 @@ def patch_partition_pdf(monkeypatch):
     def _fake_partition_pdf(*args, **kwargs):
         return [DummyElement("chunk-1"), DummyElement("chunk-2")]
 
-    monkeypatch.setattr(utils, "partition_pdf", _fake_partition_pdf)
+    if hasattr(utils, "partition_pdf"):
+        monkeypatch.setattr(utils, "partition_pdf", _fake_partition_pdf)
     yield
 
 

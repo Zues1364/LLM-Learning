@@ -44,9 +44,11 @@ app.add_middleware(
 BASE_DIR = Path(__file__).resolve().parent.parent
 PDF_DIR = BASE_DIR / "data" / "pdfs"
 RESOURCE_PDF_DIR = BASE_DIR / "data" / "resources" / "pdfs"
+RESOURCE_HTML_DIR = BASE_DIR / "data" / "resources" / "html"
 SESSION_CACHE_DIR = BASE_DIR / "data" / "session_cache"
 os.makedirs(PDF_DIR, exist_ok=True)
 os.makedirs(RESOURCE_PDF_DIR, exist_ok=True)
+os.makedirs(RESOURCE_HTML_DIR, exist_ok=True)
 os.makedirs(SESSION_CACHE_DIR, exist_ok=True)
 
 # Globals
@@ -139,6 +141,28 @@ async def upload_resource_pdf(file: UploadFile = File(...)):
         logger.error(f"Error adding PDF resource: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/resources/html")
+async def upload_resource_html(file: UploadFile = File(...)):
+    if not (file.filename.endswith(".html") or file.filename.endswith(".htm")):
+        raise HTTPException(status_code=400, detail="File phai la HTML")
+    
+    try:
+        # Save directly to resource dir
+        target_path = RESOURCE_HTML_DIR / file.filename
+        with open(target_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+        # Notify MCP Server to scan
+        try:
+            mcp_client.invoke("scan_resources", {})
+        except Exception as e:
+             logger.warning(f"Failed to trigger MCP scan: {e}")
+            
+        return {"message": "HTML added to resources successfully", "name": file.filename}
+    except Exception as e:
+        logger.error(f"Error adding HTML resource: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/resources/url")
 async def add_resource_url(req: UrlRequest):
     try:
@@ -154,6 +178,9 @@ async def add_resource_url(req: UrlRequest):
         return {"message": "URL added to resources successfully", "url": req.url}
     except Exception as e:
         logger.error(f"Error adding URL resource: {e}")
+        # Specific handler for WAF/Crawler errors
+        if "WAF Blocked" in str(e):
+             raise HTTPException(status_code=400, detail=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/resources/{resource_id}")
