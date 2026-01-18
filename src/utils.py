@@ -9,7 +9,7 @@ from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from datetime import datetime
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Any, Optional
 import logging
 import urllib.parse
 import requests
@@ -803,27 +803,93 @@ def parse_curriculum_from_html_content(html_content: str) -> List[dict]:
                     current_sub_block["subjects"].append(subj)
                 elif current_block:
                     current_block["subjects"].append(subj)
+            continue
+
+        # 4. Detect Description/Note Row (for open electives like "Các học phần thuộc nhóm ngành...")
+        # Check text in columns 1 or 2 (merged)
+        note_text = None
+        for c in col_texts:
+            if len(c) > 15 and ("nhóm ngành" in c.lower() or "tự chọn" in c.lower() or "bổ trợ" in c.lower()):
+                note_text = c
+                break
+        
+        if note_text:
+            if current_sub_block:
+                if "notes" not in current_sub_block: current_sub_block["notes"] = []
+                current_sub_block["notes"].append(note_text)
+            elif current_block:
+                if "notes" not in current_block: current_block["notes"] = []
+                current_block["notes"].append(note_text)
     
     return structure
 
 
-def compute_curriculum_missing_credits(structure: List[dict], transcript_codes: set) -> List[dict]:
+def compute_curriculum_missing_credits(structure: List[dict], completed_map: Dict[str, Any]) -> List[dict]:
     """
     Computes missing credits per block based on structure and user transcript.
-    Handles hierarchy by aggregating subjects from children sub-blocks if necessary.
+    Handles hierarchy by aggregating subjects from children sub-blocks.
+    Supports "Open Electives" via text notes (e.g. "Kinh tế", "Luật").
     """
     missing_details = []
+    
+    # Track which transcript codes are "consumed" by explicit matches
+    used_codes = set()
+    
+    # First pass: Mark explicit matches
+    for block in structure:
+        # Helper to recurse and mark used
+        def mark_used(b):
+            for s in b.get("subjects", []):
+                if s["code"] in completed_map:
+                    used_codes.add(s["code"])
+            for sub in b.get("sub_blocks", []):
+                mark_used(sub)
+        mark_used(block)
+
+    def find_open_electives(keywords: List[str], exclude_codes: set) -> List[dict]:
+        found = []
+        for code, sub in completed_map.items():
+            if code in exclude_codes: continue
+            name_lower = (sub.get("name") or "").lower()
+            code_prefix = code[:3]
+            # Heuristics for faculties based on user request (Marketing, Eco, Law)
+            # Marketing -> MKT, INE, BSA, "marketing"
+            # Kinh tế -> INE, UEB, "kinh tế"
+            # Luật -> JUS, LAW, "luật"
+            # Điện tử -> ELT, FET
+            
+            is_match = False
+            for kw in keywords:
+                if kw in name_lower: is_match = True
+            
+            # Code based matching for common external faculties
+            if "kinh tế" in keywords or "marketing" in keywords:
+                if code_prefix in ["INE", "UEB", "BSA", "MKT", "FIN"]: 
+                    is_match = True
+                if "marketing" in name_lower: is_match = True
+            
+            if "luật" in keywords:
+                if code_prefix in ["JUS", "LAW", "LLM"]: is_match = True
+            
+            if "điện tử" in keywords or "viễn thông" in keywords:
+                if code_prefix in ["ELT", "FET"]: is_match = True
+
+            if is_match:
+                found.append(sub)
+        logger.info(f"Find Open Electives: keys={keywords}, found={len(found)}")
+        return found
 
     for block in structure:
         # Check if block has sub-blocks
         if not block["sub_blocks"]:
             # Simple case: Main Block with direct subjects
-            main_collected = [s for s in block["subjects"] if s["code"] in transcript_codes]
+            # Simple case: Main Block with direct subjects
+            main_collected = [s for s in block["subjects"] if s["code"] in completed_map]
             main_accumulated = sum(s["credits"] for s in main_collected)
             
             missing = block["required_credits"] - main_accumulated
             if missing > 0:
-                candidates = [s for s in block["subjects"] if s["code"] not in transcript_codes]
+                candidates = [s for s in block["subjects"] if s["code"] not in completed_map]
                 missing_details.append({
                     "block_name": block['name'],
                     "missing_credits": missing,
@@ -848,7 +914,8 @@ def compute_curriculum_missing_credits(structure: List[dict], transcript_codes: 
                     current_bucket = {
                         "name": sub["name"],
                         "required_credits": sub["required_credits"],
-                        "subjects": list(sub["subjects"])
+                        "subjects": list(sub["subjects"]),
+                        "notes": sub.get("notes", [])
                     }
                     buckets.append(current_bucket)
                 else:
@@ -861,17 +928,39 @@ def compute_curriculum_missing_credits(structure: List[dict], transcript_codes: 
                 bucket_completed_codes = set()
                 
                 for s in bucket["subjects"]:
-                     if s["code"] in transcript_codes and s["code"] not in bucket_completed_codes:
+                     if s["code"] in completed_map and s["code"] not in bucket_completed_codes:
                          bucket_accumulated += s["credits"]
                          bucket_completed_codes.add(s["code"])
                 
                 bs_missing = bucket["required_credits"] - bucket_accumulated
                 if bs_missing > 0:
-                     candidates = [s for s in bucket["subjects"] if s["code"] not in transcript_codes]
-                     missing_details.append({
-                        "block_name": f"{block['name']} - {bucket['name']}",
-                        "missing_credits": bs_missing,
-                        "candidates": candidates
-                     })
+                     # Check for notes in this bucket or parent block
+                     notes = bucket.get("notes", []) + block.get("notes", [])
+                     open_candidates = []
+                     
+                     # Extract keywords from notes
+                     keywords = []
+                     matches_text = " ".join(notes).lower()
+                     if "kinh tế" in matches_text: keywords.append("kinh tế")
+                     if "luật" in matches_text: keywords.append("luật")
+                     if "điện tử" in matches_text: keywords.append("điện tử")
+                     if "marketing" in matches_text: keywords.append("marketing")
+                     
+                     if keywords:
+                         found_open = find_open_electives(keywords, used_codes | bucket_completed_codes)
+                         for s in found_open:
+                             if bs_missing <= 0: break
+                             # Use this subject to fill credit
+                             bs_missing -= s["credits"]
+                             bucket_accumulated += s["credits"]
+                             used_codes.add(s["code"]) # Mark as used now
+                     
+                     if bs_missing > 0:
+                         candidates = [s for s in bucket["subjects"] if s["code"] not in completed_map]
+                         missing_details.append({
+                            "block_name": f"{block['name']} - {bucket['name']}",
+                            "missing_credits": bs_missing,
+                            "candidates": candidates
+                         })
 
     return missing_details

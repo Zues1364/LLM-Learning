@@ -718,8 +718,7 @@ def compute_missing_subjects(transcript_data: Dict[str, Any], curriculum: Dict[s
     # Compute detailed block analysis if structure is available
     credit_analysis = []
     if curriculum.get("structure"):
-        completed_codes = set(completed_map.keys())
-        credit_analysis = compute_curriculum_missing_credits(curriculum["structure"], completed_codes)
+        credit_analysis = compute_curriculum_missing_credits(curriculum["structure"], completed_map)
 
     return {
         "completed_map": completed_map,
@@ -769,9 +768,16 @@ def calculate_gpa_feasibility(
     transcript_data: Dict[str, Any],
     curriculum_total_credits: Optional[int] = None,
     target_gpa: Optional[float] = None,
+    # Policy flavors (Default: VNU UET 2023-2024)
+    mandatory_retake_grade: float = 0.0, # F must retake
+    improve_threshold: float = 1.5,      # Grades <= 1.5 (D+) can be improved
+    improve_target_grade: float = 4.0,   # Assume improvement leads to A
 ) -> Dict[str, Any]:
     """
     Estimate maximum reachable GPA and retake impact.
+    Policy Params:
+    - mandatory_retake_grade: Grades <= this (e.g. 0.0) MUST be retaken.
+    - improve_threshold: Grades <= this (e.g. 1.5) CAN be improved.
     """
     completed_map = _build_completed_subjects(transcript_data.get("semesters") or [])
     total_credits = 0
@@ -784,28 +790,78 @@ def calculate_gpa_feasibility(
         total_credits += cr
         total_points += cr * g4
 
+    # Logic Improved based on Handbook (Strict VNU Rules)
+    # - F (0.0): Mandatory Retake.
+    # - D (1.0), D+ (1.5): Allowed to Improve.
+    
+    # 1. Calculate strictly "Secure" credits (>= 2.0) vs "Retake-able" (<= 1.5)
+    secure_points = 0.0
+    secure_credits = 0
+    
+    retake_mandatory_credits = 0 # F
+    retake_optional_credits = 0  # D, D+
+    
+    retake_candidates = []
+
+    for s in completed_map.values():
+        cr = s.get("credits") or 0
+        g4 = s.get("grade_4")
+        if g4 is None or cr == 0: continue
+        
+        # Policy Check:
+        if g4 <= mandatory_retake_grade + 0.01: # F (use epsilon/margin if needed, currently 0.0)
+            # Actually simplest: F is < 1.0 usually. But user passed 0.0.
+            # If g4 is 0.0.
+             retake_mandatory_credits += cr
+             retake_candidates.append(s)
+        elif g4 <= improve_threshold: # D, D+
+             retake_optional_credits += cr
+             secure_points += (g4 * cr) 
+             secure_credits += cr
+             retake_candidates.append(s)
+        else:
+             secure_points += (g4 * cr)
+             secure_credits += cr
+
+    # Total Curriculum (e.g. 136)
     curriculum_total = curriculum_total_credits or transcript_data.get("overview", {}).get("total_credits_accumulated")
-    remaining_credits = max((curriculum_total or 0) - total_credits, 0) if curriculum_total else 0
-    denom = total_credits + remaining_credits
-    max_possible_gpa = ((total_points + remaining_credits * 4.0) / denom) if denom > 0 else None
+    if not curriculum_total:
+         curriculum_total = max(secure_credits + retake_optional_credits + retake_mandatory_credits, 130)
+
+    # Missing from curriculum (never taken)
+    credits_attempted = secure_credits + retake_mandatory_credits 
+    credits_never_taken = max(curriculum_total - credits_attempted, 0)
+    
+    # MAX GPA SCENARIO:
+    # Let's recalculate secure_points WITHOUT low grades
+    real_secure_points = 0.0
+    for s in completed_map.values():
+        g4 = s.get("grade_4")
+        # Secure means > improve_threshold
+        if g4 is not None and g4 > improve_threshold: 
+             real_secure_points += g4 * (s.get("credits") or 0)
+             
+    credits_to_ace = retake_mandatory_credits + retake_optional_credits + credits_never_taken
+    max_total_points = real_secure_points + (credits_to_ace * improve_target_grade)
+    
+    max_possible_gpa = (max_total_points / curriculum_total) if curriculum_total > 0 else 0.0
+
     feasible = None
-    if target_gpa is not None and max_possible_gpa is not None:
+    if target_gpa is not None:
         feasible = target_gpa <= max_possible_gpa + 1e-6
 
-    retake_candidates = [
-        s for s in completed_map.values()
-        if s.get("grade_4") is not None and s.get("grade_4") <= 2.5 and (s.get("credits") or 0) > 0
-    ]
-    retake_candidates.sort(key=lambda x: (x.get("grade_4") or 0, -(x.get("credits") or 0)))
+    # Sort retake candidates
+    retake_candidates.sort(key=lambda x: (x.get("grade_4") or 0))
 
     return {
-        "current_credits": total_credits,
-        "current_gpa": round(total_points / total_credits, 4) if total_credits else None,
-        "remaining_credits": remaining_credits,
-        "max_possible_gpa": round(max_possible_gpa, 4) if max_possible_gpa is not None else None,
+        "current_credits": secure_credits, 
+        "current_gpa": round(secure_points / secure_credits, 4) if secure_credits else 0.0,
+        "remaining_credits": credits_never_taken, 
+        "max_possible_gpa": round(max_possible_gpa, 4),
         "target_gpa": target_gpa,
         "feasible": feasible,
-        "retake_candidates": retake_candidates[:5],
+        "retake_candidates": retake_candidates, 
+        "policy_note": f"Policy: Retake <= {mandatory_retake_grade}, Improve <= {improve_threshold}, Target Grade: {improve_target_grade}"
     }
 
 

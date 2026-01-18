@@ -55,7 +55,9 @@ def get_mcp_planner_agent(allow_web_search: bool = False) -> Agent:
         "TRUONG HOP DAC BIET: Neu [FILES] la rong (khong co file_id), ma nguoi dung hoi ve thong tin chung hoac quy che/so tay, hay goi `retrieve(question, top_k=5, file_ids=[])`. He thong se tu dong tim trong cac Tai nguyen Toan cuc (Global Resources) nhu So tay, Quy che. Dat source=vector_store. "
         f"{web_msg} "
         "Luon truyen tham so file_ids khi goi retrieve/compare/get_file_summaries (lay tu [FILES], neu khong co thi truyen list rong []). "
-        "Tra ve duy nhat JSON (khong code block) voi khoa source, context, memory, chunk_index (co the null). "
+        "Tra ve duy nhat MOT object JSON (khong phai list, khong code block) voi cac keys: source, context, memory, chunk_index. "
+        "Vi du: {\"source\": \"academic_advisor\", \"context\": \"...\", \"memory\": \"...\", \"chunk_index\": null} "
+        "Neu chunk_index la null, hay de la null (khong phai string 'null'). "
         "Neu loi tool, dat source=error va context la thong bao loi."
     )
     return Agent(
@@ -100,11 +102,16 @@ def get_academic_advisor_agent() -> Agent:
        - Liet ke cac mon diem thap (D, D+, C, C+) co tin chi cao (3-4 TC).
        - NEU KHONG CO DU LIEU JSON (Transcript): Hay trich xuat thong tin cac mon hoc/diem so tu "Chat History" de tinh toan.
 
-    2. Voi cau hoi "Nen cai thien mon nao?":
+    2. TRA CUU QUY CHE (POLICY CHECK) - QUAN TRONG:
+       - Truoc khi dua ra loi khuyen, hay tu hoi: "Quy che hien tai cho phep cai thien diem nao?".
+       - Goi `tool_retrieve("quy che hoc lai cai thien diem", top_k=3)` de tim thong tin trong So tay neu chua ro.
+       - Mac dinh (VNU UET): F bat buoc hoc lai. D, D+ duoc cai thien. C tro len KHONG duoc.
+
+    3. Voi cau hoi "Nen cai thien mon nao?":
+       - Chi tu van cai thien cac mon duoc phep (D, D+, F).
        - Chon cac mon D/D+ co tin chi cao (vi keo diem nhanh nhat).
-       - Neu da het mon D, chon mon C/C+.
     
-    3. Voi cau hoi "Bao nhieu mon?" hoac "Can diem bao nhieu?":
+    4. Voi cau hoi "Bao nhieu mon?" hoac "Can diem bao nhieu?":
        - BAT BUOC phai dua ra con so uoc luong (Estimation) dua tren cac mon uu tien.
        - DUNG phep tinh `tool_math_eval`.
        - Cong thuc tang GPA: Delta_GPA = (Tong_Tin_Chi_Cai_Thien * (Diem_Moi - Diem_Cu)) / Tong_Tin_Chi_Tich_Luy.
@@ -113,7 +120,7 @@ def get_academic_advisor_agent() -> Agent:
        - VI DU: "De tang 0.1 GPA voi 120 tin chi, ban can +12 diem tich luy. Cai thien 1 mon 3 tin tu D(1.0) len B(3.0) tang duoc 3*(3-1) = 6 diem. Vay can khoang 2 mon."
        - Trinh bay suy luan nay cho user hieu.
 
-    4. Gia lap cu the (Simulation):
+    5. Gia lap cu the (Simulation):
        - Chay `tool_math_eval` thu nghiem: "Neu cai thien mon X (3TC) len A (3.7) thi GPA la bao nhieu?".
        - Neu khong co `Transcript Data` day du, hay gia su Tong Tin Chi Tich Luy khoang 120-130 (hoac lay tu History) de uoc luong.
     
