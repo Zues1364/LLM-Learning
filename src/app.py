@@ -302,9 +302,10 @@ async def ask_question(request: QueryRequest):
             context = obj.get("context", "")
             memory_context = obj.get("memory", "")
             chunk_index = obj.get("chunk_index")
-        except Exception:
-            logger.warning("Planner output khong parse duoc JSON: %s", planner_output)
-            friendly = "Khong doc duoc ke hoach, ban co the hoi lai hoac bat tim kiem web."
+        except Exception as e:
+            logger.warning("Planner output khong parse duoc JSON. Error: %s", e)
+            logger.warning("Raw Planner Output: %s", planner_output)
+            friendly = "Xin lỗi, hệ thống gặp lỗi khi đọc kế hoạch xử lý (JSON Parse Error). Vui lòng thử lại."
             return {"answer": friendly}
 
         if selected_files:

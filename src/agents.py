@@ -27,6 +27,7 @@ from mcp_tools import (
     tool_analyze_transcript,
     tool_consult_advisor,
     tool_math_eval,
+    tool_get_schedule,
 )
 
 
@@ -50,13 +51,15 @@ def get_mcp_planner_agent(allow_web_search: bool = False) -> Agent:
         "Luon truyen session_id tu [SESSION] vao memory_get de lay lich su (ke ca khi rong). "
         "DYNAMIC ADVISORY: Neu nguoi dung hoi ve tinh diem, muc tieu GPA, hoac lo trinh hoc: TUYET DOI KHONG tu tra loi, KHONG goi retrieve. Hay goi tool_consult_advisor(query, file_ids, session_id=[SESSION]). Ket qua tra ve tu tool nay chinh la context. Tra JSON voi source=academic_advisor, context=<ket qua tu tool>, memory=<ket qua memory_get>, chunk_index=null. "
         "Neu cau hoi mang tinh tong quan/khai quat/tom tat/noi dung chinh la gì hoac so sanh noi dung chinh giua cac file, va [FILES] co file_id, goi tool get_file_summaries(file_ids) va dat source=summary_index (chunk_index=null). Neu khong co file_id, khong goi get_file_summaries, dat source=error va context=Vui long cung cap file_ids. "
-        "Neu hoi chi tiet ve >=2 file, goi tool compare_pdfs(query, file_ids, top_k=5) va dat source=vector_store_compare (chi thuc hien khi co >=2 file_id). "
-        "Neu hoi chi tiet mot file hoac [FILES] chi co 1 id, goi tool retrieve(question, top_k=5, file_ids=[...]) va dat source=vector_store (chi thuc hien khi co file_id). "
-        "TRUONG HOP DAC BIET: Neu [FILES] la rong (khong co file_id), ma nguoi dung hoi ve thong tin chung hoac quy che/so tay, hay goi `retrieve(question, top_k=5, file_ids=[])`. He thong se tu dong tim trong cac Tai nguyen Toan cuc (Global Resources) nhu So tay, Quy che. Dat source=vector_store. "
+        "Neu hoi chi tiet ve >=2 file, goi tool compare_pdfs(query, file_ids, top_k=15) va dat source=vector_store_compare (chi thuc hien khi co >=2 file_id). "
+        "Neu hoi chi tiet mot file hoac [FILES] chi co 1 id, goi tool retrieve(question, top_k=15, file_ids=[...]) va dat source=vector_store (chi thuc hien khi co file_id). "
+        "TRUONG HOP DAC BIET: Neu [FILES] la rong (khong co file_id), ma nguoi dung hoi ve thong tin chung hoac quy che/so tay/chung chi ngoai ngu/IELTS/toeic/tot nghiep, hay goi `retrieve(question, top_k=15, file_ids=[])`. He thong se tu dong tim trong cac Tai nguyen Toan cuc (Global Resources) nhu So tay, Quy che. Dat source=vector_store. "
+        "QUAN TRONG - CHINH SACH/POLICY OVERRIDE: Neu cau hoi ve khainiem/dinhnghia/muctieu/hocphan/mien giam/chung chi: Bat buoc them tien to 'trong So tay hoc vu' vao question VA truyen `file_ids=[]` (rong) ngay ca khi co [FILES]. Dieu nay dam bao tim kiem toan cuc. "
         f"{web_msg} "
         "Luon truyen tham so file_ids khi goi retrieve/compare/get_file_summaries (lay tu [FILES], neu khong co thi truyen list rong []). "
         "Tra ve duy nhat MOT object JSON (khong phai list, khong code block) voi cac keys: source, context, memory, chunk_index. "
         "Vi du: {\"source\": \"academic_advisor\", \"context\": \"...\", \"memory\": \"...\", \"chunk_index\": null} "
+        "LUU Y QUAN TRONG: Output phai la RAW JSON, khong duoc boc trong markdown ```json. Dam bao escape dau ngoac kep \" trong context neu co."
         "Neu chunk_index la null, hay de la null (khong phai string 'null'). "
         "Neu loi tool, dat source=error va context la thong bao loi."
     )
@@ -76,7 +79,8 @@ def get_academic_advisor_agent() -> Agent:
     CONG CU (TOOLS):
     1. `tool_analyze_transcript`: Lay du lieu bang diem chi tiet (JSON).
     2. `tool_retrieve`: Tra cuu So tay hoc vu (quy che, tien quyet, lo trinh).
-    3. `tool_math_eval`: May tinh chinh xac bat buoc cho moi phep tinh so hoc.
+    3. `tool_get_schedule(subject_codes)`: Tra cuu TKB chinh xac cho cac ma mon hoc (Layout table). DUNG tool nay cho moi cau hoi ve thoi gian/dia diem/lich hoc.
+    4. `tool_math_eval`: May tinh chinh xac bat buoc cho moi phep tinh so hoc.
 
     DU LIEU DAU VAO:
     - `Transcript Data`: JSON bang diem (da duoc inject vao prompt hoac tu tool).
@@ -109,7 +113,9 @@ def get_academic_advisor_agent() -> Agent:
 
     3. Voi cau hoi "Nen cai thien mon nao?":
        - Chi tu van cai thien cac mon duoc phep (D, D+, F).
-       - Chon cac mon D/D+ co tin chi cao (vi keo diem nhanh nhat).
+       - KIEM TRA TRUOC: So sanh `Target GPA` voi `max_gpa_no_retakes` (neu co trong json).
+       - Neu `max_gpa_no_retakes` >= `Target GPA` -> KHUYEN: "Ban KHONG can hoc cai thien, chi can hoc tot cac mon con lai.".
+       - Neu khong, moi khuyen chon mon D/D+ tin chi cao de cai thien.
     
     4. Voi cau hoi "Bao nhieu mon?" hoac "Can diem bao nhieu?":
        - BAT BUOC phai dua ra con so uoc luong (Estimation) dua tren cac mon uu tien.
@@ -123,6 +129,14 @@ def get_academic_advisor_agent() -> Agent:
     5. Gia lap cu the (Simulation):
        - Chay `tool_math_eval` thu nghiem: "Neu cai thien mon X (3TC) len A (3.7) thi GPA la bao nhieu?".
        - Neu khong co `Transcript Data` day du, hay gia su Tong Tin Chi Tich Luy khoang 120-130 (hoac lay tu History) de uoc luong.
+    
+
+    6. [QUAN TRONG] LAP LICH / THOI KHOA BIEU (SCHEDULE PLANNING):
+       - Neu nguoi dung yeu cau "Lap lich", "Thoi khoa bieu", "Lich hoc", "Kiem tra lich":
+       - Identify subject codes involved (e.g. INT3306, PEC1008).
+       - BAT BUOC phai goi `tool_get_schedule(subject_codes=[...])` voi danh sach ma mon.
+       - tool_retrieve(file_ids=[]) CHI dung cho cau hoi ly thuyet/quy che chung, KHONG hieu qua de tim dong trong bang.
+       - Sau khi nhan ket qua JSON tu tool_get_schedule, hay ghep noi vao bang bieu hoac list.
     
     OUTPUT:
     - Tra loi tieng Viet, logic, co so lieu minh hoa.
@@ -144,7 +158,7 @@ def get_academic_advisor_agent() -> Agent:
     return Agent(
         name="Academic Advisor Agent",
         model=Gemini(id="gemini-2.5-flash"),
-        tools=[tool_analyze_transcript, tool_retrieve, safe_math_eval],
+        tools=[tool_analyze_transcript, tool_retrieve, safe_math_eval, tool_get_schedule],
         instructions=instructions,
         markdown=True,
     )
@@ -334,6 +348,70 @@ def get_ollama_agent(model_name: str = "llama3") -> Agent:
     except Exception as e:
         logger.error(f"[get_ollama_agent] Lỗi khi tạo Ollama Agent: {e}")
         raise
+
+
+# Agent Scheduler
+class SchedulerAgent:
+    def __init__(self, llm_agent: Agent = None):
+        try:
+            self.llm_agent = llm_agent or get_scheduler_agent_internal()
+        except NameError:
+             # If internal factory is not defined yet (python linear execution), define it or lazy load
+             # But here we define it below, so it's fine if class method calls it at runtime
+             pass
+
+    def run(self, context: str, subject_code: str) -> dict:
+        try:
+            # Lazy load if needed
+            if not getattr(self, 'llm_agent', None):
+                 self.llm_agent = get_scheduler_agent_internal()
+                 
+            logger.info(f"[SchedulerAgent] Observation: Extract schedule for {subject_code}")
+            prompt = f"Trích xuất lịch học cho môn {subject_code} từ thông tin sau:\n\n{context}"
+            response = self.llm_agent.run(prompt)
+            raw_content = response.content
+            
+            # Clean possible markdown format
+            if raw_content.startswith("```json"):
+                raw_content = raw_content.replace("```json", "").replace("```", "").strip()
+            
+            # Try to parse
+            data = json.loads(raw_content)
+            logger.info(f"[SchedulerAgent] Extracted data for {subject_code}")
+            return data
+        except Exception as e:
+            logger.error(f"[SchedulerAgent] Lỗi khi trích xuất lịch: {e}")
+            return {}
+
+def get_scheduler_agent_internal() -> Agent:
+    instructions = (
+        "Bạn là trợ lý lập lịch cá nhân. Nhiệm vụ của bạn là trích xuất thông tin lịch học từ văn bản được cung cấp.\n"
+        "Đầu vào: Một đoạn văn bản chứa thông tin thời khóa biểu (có thể là bảng hoặc danh sách).\n"
+        "Đầu ra: Trả về kết quả dưới dạng JSON với cấu trúc sau (nếu không tìm thấy thì để null/empty):\n"
+        "[\n"
+        "  {\n"
+        "    \"subject_code\": \"Mã môn (ví dụ: INT3306)\",\n"
+        "    \"subject_name\": \"Tên môn\",\n"
+        "    \"class_code\": \"Mã lớp (ví dụ: INT3306 1)\",\n"
+        "    \"credits\": Số tín chỉ,\n"
+        "    \"schedule\": [\n"
+        "       { \"day\": \"Thứ mấy (2,3,4,5,6,7,CN)\", \"period\": \"Tiết (ví dụ: 1-3)\", \"room\": \"Phòng học\" }\n"
+        "    ],\n"
+        "    \"lecturer\": \"Giảng viên (nếu có)\",\n"
+        "    \"group\": \"Nhóm (CL, 1, 2...)\"\n"
+        "  }\n"
+        "]\n"
+        "Chỉ trả về JSON thuần túy, không có Markdown block (```json)."
+    )
+    return Agent(
+        name="Scheduler Internal Agent",
+        model=Gemini(id="gemini-2.5-flash"),
+        instructions=instructions,
+        markdown=False,
+    )
+
+def get_scheduler_agent() -> SchedulerAgent:
+    return SchedulerAgent()
 
 
 

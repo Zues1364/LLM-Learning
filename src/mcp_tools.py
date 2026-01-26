@@ -10,7 +10,7 @@ def _get_client(client: MCPClient | None) -> MCPClient:
     return client or MCPClient()
 
 
-def tool_retrieve(question: str, top_k: int = 5, file_ids: List[str] | None = None,
+def tool_retrieve(question: str, top_k: int = 15, file_ids: List[str] | None = None,
                   client: MCPClient | None = None) -> str:
     """
     Retrieve relevant chunks from the PDF store. Use when the question is about the uploaded PDF.
@@ -59,7 +59,7 @@ def tool_memory_add(session_id: str, query: str, answer: str, chunk_index: int |
     )
 
 
-def tool_compare_pdfs(query: str, file_ids: List[str], top_k: int = 5, client: MCPClient | None = None) -> str:
+def tool_compare_pdfs(query: str, file_ids: List[str], top_k: int = 15, client: MCPClient | None = None) -> str:
     """
     Compare/query across multiple PDFs. Returns combined context per file.
     """
@@ -121,4 +121,16 @@ def tool_consult_advisor(
             "session_id": session_id,
         },
     )
+    return str(result)
+
+
+def tool_get_schedule(subject_codes: List[str], client: MCPClient | None = None) -> str:
+    """
+    Tim kiem lich hoc (TKB) cho danh sach cac ma mon hoc.
+    Tra ve ket qua la cac dong chua ma mon hoc tu file TKB PDF toan truong.
+    Input example: ["INT3306", "PEC1008"]
+    """
+    mcp = _get_client(client)
+    result: Any = mcp.invoke("get_schedule", {"subject_codes": subject_codes})
+    # JSON string is returned from server, so we just pass it through/ensure string
     return str(result)

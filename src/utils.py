@@ -588,7 +588,7 @@ class FAISSVectorStore:
         q_norm[q_norm == 0] = 1.0
         return q_embedding / q_norm
 
-    def retrieve(self, query: str, top_k=5, threshold=SIMILARITY_THRESHOLD, file_ids: List[str] | None = None) -> List[Document]:
+    def retrieve(self, query: str, top_k=15, threshold=SIMILARITY_THRESHOLD, file_ids: List[str] | None = None) -> List[Document]:
         logger.info(f"Retrieve for query: {query}")
         if self.embeddings_np is None or self.embeddings_np.size == 0:
             logger.warning("Vector store empty.")
@@ -654,13 +654,79 @@ class FAISSVectorStore:
                 if phrase_hit or token_hits:
                     boost = 0.0
                     if phrase_hit:
-                        boost += 0.60  # strong boost for multi-word match (e.g., course name)
+                        boost += 2.0  # strong boost for multi-word match (e.g., course name, "loại học phần")
                     if token_hits:
                         boost += min(0.05 * token_hits, 0.35)  # bounded token bonus
 
                     prev = combined_scores.get(idx, 0.0)
                     combined_scores[idx] = prev + boost
                     # logger.info(f"[DEBUG] Lexical boost chunk {idx + 1}: base={prev:.4f} boost={boost:.4f} phrase_hit={phrase_hit} token_hits={token_hits}")
+
+        # --- SPECIAL BOOST FOR SUBJECT CODES ---
+        # Regex for subject codes: 3 letters + 4 digits + optional 1 letter (e.g. INT3306, PEC1008, INT3420E)
+        subject_code_pattern = r"\b[A-Z]{3}\d{4}[A-Z]?\b"
+        subject_codes_in_query = set(re.findall(subject_code_pattern, query.upper()))
+        
+        if subject_codes_in_query:
+            logger.info(f"[DEBUG] Valid Subject Codes in Query: {subject_codes_in_query}")
+            for idx, doc in enumerate(self.documents):
+                if allowed_set and doc.metadata.get("file_id") not in allowed_set:
+                    continue
+                
+                # Check if ANY subject code from query exists in the document content
+                # Use raw content check for accuracy
+                content_upper = doc.page_content.upper()
+                for code in subject_codes_in_query:
+                    if code in content_upper:
+                        # MASSIVE BOOST to ensure it bubbles to the top
+                        prev = combined_scores.get(idx, 0.0)
+                        # Boost by +3.0 is usually enough to overtake any semantic noise
+                        new_score = prev + 3.0
+                        logger.info(f"[DEBUG] 🚀 SUBJECT CODE BOOST for Chunk {idx + 1}: {code} found -> +3.0 (Score: {new_score:.4f})")
+
+        # --- HEURISTIC BOOST FOR DEFINITIONS (HANDBOOK/REGULATIONS) & SCHEDULE PENALTY ---
+        # 1. Update Definition Patterns: Broaden to include general concepts, regulations, and exemption/certificates
+        definition_patterns = [
+            r"là gì", r"định nghĩa", r"gồm những gì", r"thế nào là", r"như thế nào",
+            r"quy chế", r"quy định", r"điều kiện", r"bao nhiêu tín", r"học lại", 
+            r"cải thiện", r"đăng ký", r"hủy", r"tiên quyết", r"miễn", r"chứng chỉ", 
+            r"ngoại ngữ", r"ielts", r"toeic", r"các loại", r"danh sách", r"cấu trúc"
+        ]
+        is_general_query = any(re.search(p, query.lower()) for p in definition_patterns)
+        
+        # 2. Check for Schedule Intent (Is the user explicitly asking for Time/Location?)
+        schedule_intent_patterns = [r"lịch", r"phòng", r"thứ", r"tiết", r"giờ", r"bao giờ", r"ở đâu", r"thời khóa biểu", r"tkb"]
+        is_schedule_query = any(re.search(p, query.lower()) for p in schedule_intent_patterns)
+        
+        # Determine Boost/Penalty Strategy
+        authority_keywords = ["SỔ TAY", "QUY CHẾ", "QUY ĐỊNH", "HƯỚNG DẪN"]
+        schedule_keywords = ["TKB", "THỜI KHÓA BIỂU", "LỊCH HỌC"]
+
+        for idx, doc in enumerate(self.documents):
+            if allowed_set and doc.metadata.get("file_id") not in allowed_set:
+                continue
+            
+            source_name = str(doc.metadata.get("source", "")).upper()
+            file_id = str(doc.metadata.get("file_id", "")).upper()
+            
+            # A. AUTHORITY BOOST (Handbook wins for general/policy queries)
+            is_authority = any(k in source_name or k in file_id for k in authority_keywords)
+            if is_authority and is_general_query:
+                prev = combined_scores.get(idx, 0.0)
+                new_score = prev + 1.5 # Boost authoritative sources for definitions/policy
+                combined_scores[idx] = new_score
+                # logger.info(f"[DEBUG] 📖 AUTHORITY BOOST for Chunk {idx + 1}: +1.5")
+
+            # B. SCHEDULE PENALTY (Schedule loses if query is NOT strictly about schedule)
+            # Logic: If chunk comes from a Schedule file, BUT the query doesn't look like a schedule request -> PENALIZE
+            is_schedule_doc = any(k in source_name or k in file_id for k in schedule_keywords) or (doc.metadata.get("type") == "table" and "thứ" in doc.page_content.lower())
+            
+            if is_schedule_doc and not is_schedule_query:
+                prev = combined_scores.get(idx, 0.0)
+                penalty = 0.5
+                new_score = prev - penalty
+                combined_scores[idx] = new_score
+                # logger.info(f"[DEBUG] 📉 SCHEDULE PENALTY for Chunk {idx + 1}: -{penalty} (Query not requesting schedule)")
 
         # Re-rank with combined scores
         ranked = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)
@@ -834,14 +900,28 @@ def compute_curriculum_missing_credits(structure: List[dict], completed_map: Dic
     
     # Track which transcript codes are "consumed" by explicit matches
     used_codes = set()
+
+    # Create Normalized Map for Robust Matching
+    # Key: Normalized Code (Upper, No Space) -> Value: Transcript Subject Data
+    norm_completed_map = {}
+    for code, data in completed_map.items():
+        norm_code = code.upper().replace(" ", "")
+        norm_completed_map[norm_code] = data
     
     # First pass: Mark explicit matches
     for block in structure:
         # Helper to recurse and mark used
         def mark_used(b):
             for s in b.get("subjects", []):
-                if s["code"] in completed_map:
-                    used_codes.add(s["code"])
+                s_code = str(s.get("code","")).strip()
+                if not s_code: continue
+                norm_s_code = s_code.upper().replace(" ", "")
+                
+                if norm_s_code in norm_completed_map:
+                    # Mark original transcript code as used
+                    orig_code = norm_completed_map[norm_s_code]["code"]
+                    used_codes.add(orig_code)
+            
             for sub in b.get("sub_blocks", []):
                 mark_used(sub)
         mark_used(block)
@@ -852,11 +932,6 @@ def compute_curriculum_missing_credits(structure: List[dict], completed_map: Dic
             if code in exclude_codes: continue
             name_lower = (sub.get("name") or "").lower()
             code_prefix = code[:3]
-            # Heuristics for faculties based on user request (Marketing, Eco, Law)
-            # Marketing -> MKT, INE, BSA, "marketing"
-            # Kinh tế -> INE, UEB, "kinh tế"
-            # Luật -> JUS, LAW, "luật"
-            # Điện tử -> ELT, FET
             
             is_match = False
             for kw in keywords:
@@ -876,20 +951,31 @@ def compute_curriculum_missing_credits(structure: List[dict], completed_map: Dic
 
             if is_match:
                 found.append(sub)
-        logger.info(f"Find Open Electives: keys={keywords}, found={len(found)}")
+        # logger.info(f"Find Open Electives: keys={keywords}, found={len(found)}")
         return found
 
     for block in structure:
-        # Check if block has sub-blocks
         if not block["sub_blocks"]:
             # Simple case: Main Block with direct subjects
-            # Simple case: Main Block with direct subjects
-            main_collected = [s for s in block["subjects"] if s["code"] in completed_map]
-            main_accumulated = sum(s["credits"] for s in main_collected)
+            main_accumulated = 0
+            for s in block["subjects"]:
+                s_code = str(s.get("code","")).strip()
+                norm_s_code = s_code.upper().replace(" ", "")
+                if norm_s_code in norm_completed_map:
+                    # Use ACTUAL credits from student transcript, not curriculum default
+                    user_sub = norm_completed_map[norm_s_code]
+                    main_accumulated += (user_sub.get("credits") or s["credits"])
             
             missing = block["required_credits"] - main_accumulated
             if missing > 0:
-                candidates = [s for s in block["subjects"] if s["code"] not in completed_map]
+                # Filter candidates that are NOT in completed map (normalized check)
+                candidates = []
+                for s in block["subjects"]:
+                    s_code = str(s.get("code","")).strip()
+                    norm_s_code = s_code.upper().replace(" ", "")
+                    if norm_s_code not in norm_completed_map:
+                        candidates.append(s)
+
                 missing_details.append({
                     "block_name": block['name'],
                     "missing_credits": missing,
@@ -897,17 +983,8 @@ def compute_curriculum_missing_credits(structure: List[dict], completed_map: Dic
                 })
         else:
             # Complex case: Block has sub-buckets
-            # 1. Identify Requirement Buckets (Sub-blocks with req > 0)
-            # 2. Each non-bucket sub-block (req=0) belongs to the nearest preceding bucket?
-            #    Or belongs to Main Block? In the VNU HTML:
-            #    V.2 (21 credits) -> [V.2.1, V.2.2, V.2.3, V.2.4] (0 credits explicitly, but contain subjects)
-            
             buckets = []
             current_bucket = None
-            
-            # Treat Main Block subjects as a "Main" bucket if it has requirements?
-            # Actually Main Block req (51) = sum of V.1 (18) + V.2 (21) + V.3 (5) + V.4 (7)
-            # So we iterate sub-blocks only.
             
             for sub in block["sub_blocks"]:
                 if sub["required_credits"] > 0:
@@ -925,20 +1002,27 @@ def compute_curriculum_missing_credits(structure: List[dict], completed_map: Dic
             # Process each bucket
             for bucket in buckets:
                 bucket_accumulated = 0
-                bucket_completed_codes = set()
+                bucket_completed_codes = set() # Store original codes
                 
+                # accumulation
                 for s in bucket["subjects"]:
-                     if s["code"] in completed_map and s["code"] not in bucket_completed_codes:
-                         bucket_accumulated += s["credits"]
-                         bucket_completed_codes.add(s["code"])
+                    s_code = str(s.get("code","")).strip()
+                    norm_s_code = s_code.upper().replace(" ", "")
+                    
+                    if norm_s_code in norm_completed_map:
+                        user_sub = norm_completed_map[norm_s_code]
+                        orig_code = user_sub["code"]
+                        
+                        if orig_code not in bucket_completed_codes:
+                             bucket_accumulated += (user_sub.get("credits") or s["credits"])
+                             bucket_completed_codes.add(orig_code)
                 
                 bs_missing = bucket["required_credits"] - bucket_accumulated
                 if bs_missing > 0:
-                     # Check for notes in this bucket or parent block
+                     # Check for notes
                      notes = bucket.get("notes", []) + block.get("notes", [])
                      open_candidates = []
                      
-                     # Extract keywords from notes
                      keywords = []
                      matches_text = " ".join(notes).lower()
                      if "kinh tế" in matches_text: keywords.append("kinh tế")
@@ -950,13 +1034,18 @@ def compute_curriculum_missing_credits(structure: List[dict], completed_map: Dic
                          found_open = find_open_electives(keywords, used_codes | bucket_completed_codes)
                          for s in found_open:
                              if bs_missing <= 0: break
-                             # Use this subject to fill credit
                              bs_missing -= s["credits"]
                              bucket_accumulated += s["credits"]
-                             used_codes.add(s["code"]) # Mark as used now
+                             used_codes.add(s["code"]) 
                      
                      if bs_missing > 0:
-                         candidates = [s for s in bucket["subjects"] if s["code"] not in completed_map]
+                         candidates = []
+                         for s in bucket["subjects"]:
+                            s_code = str(s.get("code","")).strip()
+                            norm_s_code = s_code.upper().replace(" ", "")
+                            if norm_s_code not in norm_completed_map:
+                                candidates.append(s)
+
                          missing_details.append({
                             "block_name": f"{block['name']} - {bucket['name']}",
                             "missing_credits": bs_missing,

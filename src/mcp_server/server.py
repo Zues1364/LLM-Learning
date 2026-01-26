@@ -476,6 +476,68 @@ def analyze_transcript(file_ids: str | List[str]) -> str:
     return json.dumps(normalized, ensure_ascii=False)
 
 
+@mcp_tool("get_schedule")
+def get_schedule(subject_codes: List[str]) -> str:
+    """
+    Deterministically retrieve schedule info for specific subjects from the Global TKB PDF.
+    Bypasses vector search for accuracy.
+    """
+    logger.info(f"get_schedule invoked for: {subject_codes}")
+    
+    # 1. Locate Schedule File
+    tkb_candidates = []
+    # Check resources/pdfs
+    if CURRICULUM_PDF_DIR.exists():
+        tkb_candidates.extend(CURRICULUM_PDF_DIR.glob("*TKB*.pdf"))
+        tkb_candidates.extend(CURRICULUM_PDF_DIR.glob("*Schedu*.pdf"))
+    
+    # Check data/pdfs (uploaded files)
+    tkb_candidates.extend(PDF_DIR.glob("*TKB*.pdf"))
+    
+    if not tkb_candidates:
+        return json.dumps({"error": "Global Schedule file (TKB) not found."}, ensure_ascii=False)
+        
+    # Pick the most likely candidate (e.g., matching "HK2" or "2025")
+    # For now, pick the first one containing TKB or just the first
+    target_pdf = tkb_candidates[0]
+    logger.info(f"Using Schedule File: {target_pdf}")
+    
+    try:
+        docs = process_pdf(str(target_pdf))
+        full_text = "\n".join([d.page_content for d in docs])
+        
+        results = []
+        for code in subject_codes:
+            norm_code = code.upper().strip()
+            # Regex to find the row. Assuming standard format found in these PDFs:
+            # Code followed by distinct Time/Room info. 
+            # This is heuristic. If the PDF is a proper table, img2table would be better, 
+            # but for now we try a robust text scan or just returning the RELEVANT chunks raw.
+            # actually returning relevant lines is safer than trying to parse JSON if format varies.
+            
+            # Find lines containing the code
+            matches = []
+            for line in full_text.splitlines():
+                if norm_code in line.upper():
+                    matches.append(line.strip())
+            
+            if matches:
+                results.append({
+                    "subject_code": norm_code,
+                    "schedule_lines": matches
+                })
+            else:
+                 results.append({
+                    "subject_code": norm_code,
+                    "note": "Not found in TKB."
+                })
+                
+        return json.dumps(results, ensure_ascii=False)
+        
+    except Exception as e:
+        logger.error(f"Error processing schedule: {e}")
+        return json.dumps({"error": str(e)})
+
 @mcp_tool("math_eval")
 def math_eval(expression: str) -> str:
     if expression is None: return "Error: Empty"
@@ -772,6 +834,7 @@ def calculate_gpa_feasibility(
     mandatory_retake_grade: float = 0.0, # F must retake
     improve_threshold: float = 1.5,      # Grades <= 1.5 (D+) can be improved
     improve_target_grade: float = 4.0,   # Assume improvement leads to A
+    missing_credits_override: Optional[int] = None, # If provided, use this instead of curriculum_total matching
 ) -> Dict[str, Any]:
     """
     Estimate maximum reachable GPA and retake impact.
@@ -823,14 +886,22 @@ def calculate_gpa_feasibility(
              secure_points += (g4 * cr)
              secure_credits += cr
 
-    # Total Curriculum (e.g. 136)
-    curriculum_total = curriculum_total_credits or transcript_data.get("overview", {}).get("total_credits_accumulated")
-    if not curriculum_total:
-         curriculum_total = max(secure_credits + retake_optional_credits + retake_mandatory_credits, 130)
-
     # Missing from curriculum (never taken)
-    credits_attempted = secure_credits + retake_mandatory_credits 
-    credits_never_taken = max(curriculum_total - credits_attempted, 0)
+    # If override provided, trust it.
+    if missing_credits_override is not None:
+         credits_never_taken = missing_credits_override
+         # Recalculate curriculum total reversed from this?
+         # Curriculum = Attempted_Unique + Never_Taken.
+         # Attempted (Secure + F) + Never.
+         credits_attempted = secure_credits + retake_mandatory_credits
+         curriculum_total = credits_attempted + credits_never_taken
+    else:
+        # Fallback to Total - Attempted
+        curriculum_total = curriculum_total_credits or transcript_data.get("overview", {}).get("total_credits_accumulated")
+        if not curriculum_total:
+             curriculum_total = max(secure_credits + retake_optional_credits + retake_mandatory_credits, 130)
+        credits_attempted = secure_credits + retake_mandatory_credits 
+        credits_never_taken = max(curriculum_total - credits_attempted, 0)
     
     # MAX GPA SCENARIO:
     # Let's recalculate secure_points WITHOUT low grades
@@ -846,6 +917,17 @@ def calculate_gpa_feasibility(
     
     max_possible_gpa = (max_total_points / curriculum_total) if curriculum_total > 0 else 0.0
 
+    # SCENARIO: No Optional Retakes (Just F + New Subjects)
+    # Points = Secure_Points (includes D/D+) + (Mandatory_Retake * Target) + (New * Target)
+    # Secure_Points was calculated in Loop 1 (includes D/D+)
+    
+    # But wait, Secure_Credits includes D/D+. secure_points includes D/D+ points.
+    # retake_mandatory_credits = F. 
+    # credits_never_taken.
+    
+    points_no_retake = secure_points + (retake_mandatory_credits * improve_target_grade) + (credits_never_taken * improve_target_grade)
+    max_gpa_no_retakes = (points_no_retake / curriculum_total) if curriculum_total > 0 else 0.0
+
     feasible = None
     if target_gpa is not None:
         feasible = target_gpa <= max_possible_gpa + 1e-6
@@ -857,7 +939,8 @@ def calculate_gpa_feasibility(
         "current_credits": secure_credits, 
         "current_gpa": round(secure_points / secure_credits, 4) if secure_credits else 0.0,
         "remaining_credits": credits_never_taken, 
-        "max_possible_gpa": round(max_possible_gpa, 4),
+        "max_possible_gpa": round(max_possible_gpa, 4), # With ALL retakes
+        "max_gpa_no_retakes": round(max_gpa_no_retakes, 4), # Only F + New
         "target_gpa": target_gpa,
         "feasible": feasible,
         "retake_candidates": retake_candidates, 
@@ -894,30 +977,84 @@ def check_course_schedule(
         query_parts = [code]
         if target_semester:
             query_parts.append(f"hoc ky {target_semester}")
+            # Heuristic expansion for HK2 / HKII
+            if str(target_semester).endswith("2"):
+                query_parts.append("HKII")
+                query_parts.append("Học kỳ 2")
+                query_parts.append("Học kỳ II")
+                query_parts.append("Semester 2")
+
         if class_code:
             query_parts.append(class_code)
-        query_parts.append("thoi khoa bieu mo lop hoc phan hoc ky toi")
         query = " ".join(query_parts)
+        
+        # CRITICAL FIX: Ensure global Schedule PDF is in scope!
+        # The file_scope passed usually only has transcript IDs.
+        # We need to find the Schedule PDF ID from resources if not already present.
+        
+        search_scope = list(file_scope) if file_scope else []
+        
+        try:
+            from pathlib import Path
+            resource_dir = Path(__file__).resolve().parent.parent.parent / "data" / "resources" / "pdfs"
+            if resource_dir.exists():
+                for p in resource_dir.glob("*TKB*.pdf"):
+                    pid = p.name
+                    if pid not in search_scope:
+                        search_scope.append(pid)
+        except Exception as e:
+            logger.warning(f"Failed to auto-add Schedule PDF to scope: {e}")
 
-        chunks = _store.retrieve(query, top_k=3, file_ids=file_scope) if _store else []
+        # Increase Top-K to 10 for schedule queries
+        chunks = _store.retrieve(query, top_k=10, file_ids=search_scope if search_scope else None) if _store else []
         if not chunks:
-            results.append({
-                "code": code,
-                "offered": False,
-                "snippet": None,
-                "file_id": None,
-                "query": query,
-            })
-            continue
-        top_chunk = chunks[0]
+             # Fallback: Try global search (no scope)
+             chunks = _store.retrieve(query, top_k=10) if _store else []
+        
+        context_text = "\n\n".join([c.page_content for c in chunks[:5]]) # Use top 5 chunks context
+        
+        # Enhanced Prompt with Column Legend for precise extraction
+        prompt = f"""
+        Bạn là trợ lý tra cứu lịch học.
+        Nhiệm vụ: Tìm tất cả các lớp mở cho môn học "{code}" từ dữ liệu dưới đây.
+        
+        QUY TẮC ĐỌC BẢNG (PDF Table Structure):
+        - Cột "Thứ": Ngày học (2,3,4,5,6,7).
+        - Cột "Ca": Ca học (1,2,3,4).
+        - Cột "GĐ": Giảng đường (Ví dụ: 301-G2, 203-A).
+        - Cột "Lớp" / "Mã LHP": Mã lớp học phần (Ví dụ: INT3301 1).
+        
+        YÊU CẦU TRẢ LỜI:
+        - Nếu tìm thấy: Liệt kê chi tiết từng lớp (Mã lớp - Thứ - Ca - Phòng - Giảng viên).
+        - Nếu không tìm thấy: Ghi "Không tìm thấy lịch mở lớp cho học kỳ này".
+        
+        DỮ LIỆU ĐẦU VÀO (Markdown Table Chunks):
+        {context_text}
+        """
+
+        extracted_info = "Không thể đọc dữ liệu"
+        try:
+             import google.generativeai as genai
+             # Ensure API key is set safely
+             api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+             if api_key:
+                 genai.configure(api_key=api_key)
+                 model = genai.GenerativeModel("gemini-2.5-flash")
+                 resp = model.generate_content(prompt)
+                 extracted_info = resp.text.strip()
+             else:
+                 extracted_info = context_text[:1000] + "... (Missing API Key for parsing)"
+        except Exception as e:
+             logger.error(f"LLM extraction failed: {e}")
+             extracted_info = f"Lỗi trích xuất: {e}. Dữ liệu thô: {context_text[:200]}"
+
         results.append({
             "code": code,
-            "offered": code in top_chunk.page_content,
-            "snippet": top_chunk.page_content[:500],
-            "file_id": top_chunk.metadata.get("file_id") or top_chunk.metadata.get("file_name"),
+            "offered": "không tìm thấy" not in extracted_info.lower(),
+            "snippet": extracted_info,
+            "file_id": chunks[0].metadata.get("file_id"),
             "query": query,
         })
-    return results
 
 
 @mcp_tool("consult_advisor")
@@ -966,11 +1103,19 @@ def consult_advisor(query: str, file_ids: List[str] | None = None, session_id: s
     next_semester = _infer_next_semester_code(transcript_data or {}) if transcript_data else None
     schedule_info = check_course_schedule(missing_info.get("missing") or [], target_semester=next_semester, class_code=program_hint)
 
+    # Use precise missing credit analysis if available, otherwise fallback
+    # Use precise missing credit analysis if available, otherwise fallback
+    missing_credits_calc = None
+    if missing_info.get("credit_analysis"):
+        # credit_analysis is a List[dict], not Dict
+        missing_credits_calc = sum(b.get("missing_credits", 0) for b in missing_info["credit_analysis"])
+
     target_gpa = _extract_target_gpa(query)
     gpa_projection = calculate_gpa_feasibility(
         transcript_data or {},
         curriculum_total_credits=curriculum.get("total_credits"),
         target_gpa=target_gpa,
+        missing_credits_override=missing_credits_calc,
     ) if transcript_data else {}
 
     scenario = "general"
