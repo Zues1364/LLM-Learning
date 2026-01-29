@@ -1,5 +1,8 @@
-﻿import { useEffect, useRef, useState, useCallback } from "react";
+﻿
+import { useEffect, useRef, useState, useCallback } from "react";
 import DOMPurify from "dompurify";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import "./style.css";
 
 const API_BASE = "http://127.0.0.1:9000";
@@ -430,46 +433,7 @@ export default function App() {
     setInputStr(target.value);
   };
 
-  const renderAnswerHtml = (text) => {
-    if (!text) return "";
-    const normalizeInline = (line) =>
-      line
-        .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-        .replace(/\*(.+?)\*/g, "<em>$1</em>")
-        .replace(/`([^`]+)`/g, "<code>$1</code>")
-        .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
 
-    const normalized = text.replace(/\r\n/g, "\n").replace(/\u00a0/g, " ").trim();
-    const bulletFriendly = normalized.replace(/(^|[\n\r]|[:.])\s*([*-])\s+/g, "\n$2 ");
-    const lines = bulletFriendly
-      .split("\n")
-      .map((ln) => ln.trim())
-      .filter(Boolean);
-
-    const htmlParts = [];
-    let listBuffer = [];
-
-    const flushList = () => {
-      if (!listBuffer.length) return;
-      htmlParts.push("<ul>");
-      listBuffer.forEach((item) => htmlParts.push(`<li>${normalizeInline(item)}</li>`));
-      htmlParts.push("</ul>");
-      listBuffer = [];
-    };
-
-    for (const line of lines) {
-      const bullet = line.match(/^[*-]\s+(.*)/);
-      if (bullet) {
-        listBuffer.push(bullet[1]);
-      } else {
-        flushList();
-        htmlParts.push(`<p>${normalizeInline(line)}</p>`);
-      }
-    }
-    flushList();
-
-    return DOMPurify.sanitize(htmlParts.join(""));
-  };
 
   return (
     <div className="shell">
@@ -650,7 +614,9 @@ export default function App() {
                   )}
 
                   {msg.type === "bot" ? (
-                    <div className="msg-content bot-text" dangerouslySetInnerHTML={{ __html: renderAnswerHtml(msg.text) }} />
+                    <div className="msg-content bot-text">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.text}</ReactMarkdown>
+                    </div>
                   ) : (
                     <div className={`msg-content ${isUser ? "user-text" : "bot-text"}`}>
                       {isSystem ? (

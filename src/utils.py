@@ -485,7 +485,8 @@ class VietnameseEmbedder(Embeddings):
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         try:
-            embeddings = self.model.encode(texts, show_progress_bar=False)
+            # Enable progress bar for visibility on large batches
+            embeddings = self.model.encode(texts, show_progress_bar=True)
             return embeddings.tolist()
         except Exception as e:
             logger.error(f"Loi khi tao embeddings cho documents: {e}")

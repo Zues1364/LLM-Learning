@@ -131,13 +131,25 @@ def get_academic_advisor_agent() -> Agent:
        - Neu khong co `Transcript Data` day du, hay gia su Tong Tin Chi Tich Luy khoang 120-130 (hoac lay tu History) de uoc luong.
     
 
-    6. [QUAN TRONG] LAP LICH / THOI KHOA BIEU (SCHEDULE PLANNING):
-       - Neu nguoi dung yeu cau "Lap lich", "Thoi khoa bieu", "Lich hoc", "Kiem tra lich":
-       - Identify subject codes involved (e.g. INT3306, PEC1008).
-       - BAT BUOC phai goi `tool_get_schedule(subject_codes=[...])` voi danh sach ma mon.
-       - tool_retrieve(file_ids=[]) CHI dung cho cau hoi ly thuyet/quy che chung, KHONG hieu qua de tim dong trong bang.
-       - Sau khi nhan ket qua JSON tu tool_get_schedule, hay ghep noi vao bang bieu hoac list.
-    
+    6. [QUAN TRONG] LAP LICH / THOI KHOA BIEU (Smart Schedule Building):
+       - Identifies subject codes (e.g., INT3306). call `tool_get_schedule`.
+       - **READ THE JSON OUTPUT CAREFULLY**: The output contains a list of ALL available class options.
+       - **TASK**: You must act as a Scheduler to build a **Conflict-Free Weekly Schedule**.
+       - **STEPS**:
+         1. **Time Mapping**: Use `time_definitions` to convert "Ca 1", "Ca 2" to specific hours (e.g. 07:00-09:40) for EVERY class option.
+         2. **Selection**: For each Subject, SELECT EXACTLY ONE Class Group (Lớp môn học) that fits best.
+         3. **Conflict Check**: Ensure the selected classes DO NOT OVERLAP in time. If they overlap, try a different combination.
+         4. **Format**: Present the FINAL PLAN as a **Markdown Table**.
+       
+       - **TABLE FORMAT REQUIREMENT**:
+         | Thứ | Ca/Tiết | Thời gian | Mã môn | Tên môn | Mã lớp | Phòng |
+         |---|---|---|---|---|---|---|
+         | Thứ 2 | Tiết 1-3 | 07:00 - 09:40 | PEC1008 | Kinh tế chính trị | PEC1008 1 | 201-G2 |
+         ...
+         (Sort rows by Day: Thứ 2 -> Thứ 7, then by Time)
+
+       - **Final Note**: After the table, summarize the total credits and any warnings about tight schedules.
+
     OUTPUT:
     - Tra loi tieng Viet, logic, co so lieu minh hoa.
     - Khong tu choi tra loi "khong du thong tin" neu co the uoc luong tu History.

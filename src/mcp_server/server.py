@@ -480,11 +480,11 @@ def analyze_transcript(file_ids: str | List[str]) -> str:
 def get_schedule(subject_codes: List[str]) -> str:
     """
     Deterministically retrieve schedule info for specific subjects from the Global TKB PDF.
-    Bypasses vector search for accuracy.
+    Scans ALL available TKB-related PDFs to find both class data and time definitions.
     """
     logger.info(f"get_schedule invoked for: {subject_codes}")
     
-    # 1. Locate Schedule File
+    # 1. Locate Schedule Files
     tkb_candidates = []
     # Check resources/pdfs
     if CURRICULUM_PDF_DIR.exists():
@@ -494,49 +494,84 @@ def get_schedule(subject_codes: List[str]) -> str:
     # Check data/pdfs (uploaded files)
     tkb_candidates.extend(PDF_DIR.glob("*TKB*.pdf"))
     
+    # Deduplicate by path
+    tkb_candidates = list(dict.fromkeys(tkb_candidates)) # keeps order
+    
     if not tkb_candidates:
         return json.dumps({"error": "Global Schedule file (TKB) not found."}, ensure_ascii=False)
         
-    # Pick the most likely candidate (e.g., matching "HK2" or "2025")
-    # For now, pick the first one containing TKB or just the first
-    target_pdf = tkb_candidates[0]
-    logger.info(f"Using Schedule File: {target_pdf}")
+    logger.info(f"Found {len(tkb_candidates)} TKB candidates: {[p.name for p in tkb_candidates]}")
     
-    try:
-        docs = process_pdf(str(target_pdf))
-        full_text = "\n".join([d.page_content for d in docs])
-        
-        results = []
-        for code in subject_codes:
-            norm_code = code.upper().strip()
-            # Regex to find the row. Assuming standard format found in these PDFs:
-            # Code followed by distinct Time/Room info. 
-            # This is heuristic. If the PDF is a proper table, img2table would be better, 
-            # but for now we try a robust text scan or just returning the RELEVANT chunks raw.
-            # actually returning relevant lines is safer than trying to parse JSON if format varies.
+    combined_results = {} # code -> {lines: [], notes: []}
+    time_table_context = ""
+    
+    # Initialize results map
+    for code in subject_codes:
+        combined_results[code.upper().strip()] = {"schedule_lines": [], "note": ""}
+
+    # 2. Iterate ALL candidates
+    for target_pdf in tkb_candidates:
+        try:
+            logger.info(f"Scanning TKB Candidate: {target_pdf.name}")
+            docs = process_pdf(str(target_pdf))
+            full_text = "\n".join([d.page_content for d in docs])
             
-            # Find lines containing the code
-            matches = []
-            for line in full_text.splitlines():
-                if norm_code in line.upper():
-                    matches.append(line.strip())
-            
-            if matches:
-                results.append({
-                    "subject_code": norm_code,
-                    "schedule_lines": matches
-                })
-            else:
-                 results.append({
-                    "subject_code": norm_code,
-                    "note": "Not found in TKB."
-                })
+            # A. Scan for Time Context (Accumulate/Overwrite if better found?)
+            # Heuristic: Prefer context with "07:00" explicitly
+            if not time_table_context or "07:00" not in time_table_context:
+                current_time_lines = []
+                for line in full_text.splitlines():
+                    if re.search(r"(Tiết|Ca)\s+\d+.*(\d{1,2}:\d{2})", line, re.IGNORECASE):
+                        current_time_lines.append(line.strip())
                 
-        return json.dumps(results, ensure_ascii=False)
+                if current_time_lines:
+                    # Dedupe
+                    unique_lines = list(set(current_time_lines))
+                    # Join
+                    ctx = "\n[CONTEXT TIME TABLE DETECTED IN PDF]:\n" + "\n".join(unique_lines[:15])
+                    # If this context looks "richer" (has actual timestamps), use it
+                    if "07:00" in ctx or "16:20" in ctx:
+                        time_table_context = ctx
+            
+            # B. Scan for Subject Lines
+            for code in subject_codes:
+                norm_code = code.upper().strip()
+                matches = []
+                for line in full_text.splitlines():
+                    if norm_code in line.upper():
+                        matches.append(line.strip())
+                
+                if matches:
+                    combined_results[norm_code]["schedule_lines"].extend(matches)
         
-    except Exception as e:
-        logger.error(f"Error processing schedule: {e}")
-        return json.dumps({"error": str(e)})
+        except Exception as e:
+            logger.error(f"Error processing matching PDF {target_pdf.name}: {e}")
+            continue
+
+    # 3. Format Output
+    final_output = []
+    for code in subject_codes:
+        norm_code = code.upper().strip()
+        data = combined_results[norm_code]
+        
+        # Unique lines to avoid dupes across files
+        unique_lines = list(set(data["schedule_lines"]))
+        
+        if unique_lines:
+            item = {
+                "subject_code": norm_code,
+                "schedule_lines": unique_lines
+            }
+            if time_table_context:
+                item["time_definitions"] = time_table_context
+            final_output.append(item)
+        else:
+             final_output.append({
+                "subject_code": norm_code,
+                "note": "Not found in TKB."
+            })
+            
+    return json.dumps(final_output, ensure_ascii=False)
 
 @mcp_tool("math_eval")
 def math_eval(expression: str) -> str:
