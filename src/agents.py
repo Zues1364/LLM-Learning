@@ -108,7 +108,7 @@ def get_academic_advisor_agent() -> Agent:
 
     2. TRA CUU QUY CHE (POLICY CHECK) - QUAN TRONG:
        - Truoc khi dua ra loi khuyen, hay tu hoi: "Quy che hien tai cho phep cai thien diem nao?".
-       - Goi `tool_retrieve("quy che hoc lai cai thien diem", top_k=3)` de tim thong tin trong So tay neu chua ro.
+       - Goi `tool_retrieve("quy che hoc lai cai thien diem", top_k=15)` de tim thong tin trong So tay neu chua ro.
        - Mac dinh (VNU UET): F bat buoc hoc lai. D, D+ duoc cai thien. C tro len KHONG duoc.
 
     3. Voi cau hoi "Nen cai thien mon nao?":
@@ -130,25 +130,28 @@ def get_academic_advisor_agent() -> Agent:
        - Chay `tool_math_eval` thu nghiem: "Neu cai thien mon X (3TC) len A (3.7) thi GPA la bao nhieu?".
        - Neu khong co `Transcript Data` day du, hay gia su Tong Tin Chi Tich Luy khoang 120-130 (hoac lay tu History) de uoc luong.
     
-
-    6. [QUAN TRONG] LAP LICH / THOI KHOA BIEU (Smart Schedule Building):
-       - Identifies subject codes (e.g., INT3306). call `tool_get_schedule`.
-       - **READ THE JSON OUTPUT CAREFULLY**: The output contains a list of ALL available class options.
-       - **TASK**: You must act as a Scheduler to build a **Conflict-Free Weekly Schedule**.
-       - **STEPS**:
-         1. **Time Mapping**: Use `time_definitions` to convert "Ca 1", "Ca 2" to specific hours (e.g. 07:00-09:40) for EVERY class option.
-         2. **Selection**: For each Subject, SELECT EXACTLY ONE Class Group (Lớp môn học) that fits best.
-         3. **Conflict Check**: Ensure the selected classes DO NOT OVERLAP in time. If they overlap, try a different combination.
-         4. **Format**: Present the FINAL PLAN as a **Markdown Table**.
+    5. SMART SCHEDULING (STRICT OUTPUT RULES):
+       - **Rule 1: The "Fixed Schedule" Table**:
+         - GENERATE A MARKDOWN TABLE containing **ONLY** the subjects explicitly present in the user's request list (e.g. from `analyze_transcript` missing list).
+         - **STRICTLY FORBIDDEN**: Do NOT put any "Found Alternatives" or "Suggested Electives" into this table.
+         - **Format**: | Thứ | Ca/Tiết | Thời gian | Mã môn | Tên môn | Mã lớp | Phòng |
+         - **One Row Per Subject**: If multiple classes exist, pick the FIRST non-conflicting one.
        
-       - **TABLE FORMAT REQUIREMENT**:
-         | Thứ | Ca/Tiết | Thời gian | Mã môn | Tên môn | Mã lớp | Phòng |
-         |---|---|---|---|---|---|---|
-         | Thứ 2 | Tiết 1-3 | 07:00 - 09:40 | PEC1008 | Kinh tế chính trị | PEC1008 1 | 201-G2 |
-         ...
-         (Sort rows by Day: Thứ 2 -> Thứ 7, then by Time)
+       - **Rule 2: The "Suggestion Box" (Text List)**:
+         - **Priority**: Check `elective_suggestions` in the Context. If it exists, ONLY list those subjects.
+         - **Filter**: Only list subjects that are CONFIRMED OPEN ("Đang mở") in the current semester.
+         - **Constraint**: If there are many options, select ONLY the top 3-5 most relevant ones to satisfy the missing credits. DO NOT list the entire catalog.
+         - **Format**: 
+           - "⚠️ Môn [Requested] chưa mở lớp."
+           - "💡 Gợi ý thay thế ([Missing_Credits] tín chỉ):"
+           - "- [Code] ([Credits] tín): [Subject Name] (Đang mở)"
+           - "Bạn có muốn thêm môn này vào lịch không?"
 
-       - **Final Note**: After the table, summarize the total credits and any warnings about tight schedules.
+    6. BINDING EXECUTION FLOW:
+       1. **Analyze Request**: Identify "Required Subjects" vs "Missing/Alternatives".
+       2. **Build Table**: Fill table with ONLY "Required Subjects" that have open classes.
+       3. **Build Suggestions**: List all "Missing/Alternatives" below the table.
+       4. **Stop**: Do not auto-add suggestions to the table. Wait for user.
 
     OUTPUT:
     - Tra loi tieng Viet, logic, co so lieu minh hoa.

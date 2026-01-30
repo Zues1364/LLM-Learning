@@ -1,3 +1,0 @@
-Testing get_schedule for: ['PEC1008', 'PHI1002', 'HIS1001']
-
---- Result ---

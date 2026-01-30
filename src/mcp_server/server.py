@@ -591,6 +591,93 @@ def _list_curriculum_candidates() -> List[Path]:
     return candidates
 
 
+@mcp_tool("get_curriculum_lookup")
+def get_curriculum_lookup(group_hint: str = None) -> str:
+    """
+    Parses the Curriculum HTML to return a structure of Module Groups and their Subjects.
+    Useful for finding list of electives when a specific subject is not found in schedule.
+    args:
+        group_hint: Optional text to filter groups (e.g. "V.2.1" or "Phần mềm"). If None, returns all.
+    """
+    logger.info(f"get_curriculum_lookup invoked with hint: {group_hint}")
+    html_path = CURRICULUM_HTML_DIR / "Chương trình đào tạo ngành Khoa học máy tính - Trường Đại học Công nghệ, ĐHQGHN - Univeristy of Engineering and Technology.html"
+    
+    if not html_path.exists():
+        return json.dumps({"error": "Curriculum HTML file not found."})
+
+    try:
+        with open(html_path, "r", encoding="utf-8") as f:
+            soup = BeautifulSoup(f.read(), "html.parser")
+        
+        rows = soup.find_all("tr")
+        groups = {}
+        current_group_code = None
+        
+        for row in rows:
+            cells = row.find_all("td")
+            if not cells: continue
+            
+            first_cell_text = cells[0].get_text(strip=True)
+            
+            # Detect Group Header (e.g., V.2.1)
+            if re.match(r"^[IVX]+\.\d+(\.\d+)?$", first_cell_text):
+                current_group_code = first_cell_text
+                group_name = ""
+                if len(cells) > 1:
+                    group_name = cells[1].get_text(strip=True)
+                    group_name = re.sub(r"Nhóm các học phần về\s*", "", group_name, flags=re.IGNORECASE).strip()
+                
+                groups[current_group_code] = {
+                    "group_code": current_group_code,
+                    "group_name": group_name,
+                    "subjects": [],
+                    "credits_required": 0
+                }
+                # Try extract credits (e.g., "21/99") in any cell
+                for cell in cells:
+                    txt = cell.get_text(strip=True)
+                    if "/" in txt:
+                        parts = txt.split("/")
+                        if parts[0].isdigit():
+                            groups[current_group_code]["credits_required"] = int(parts[0])
+
+            elif first_cell_text.isdigit() and current_group_code:
+                # Subject Row
+                if len(cells) >= 4:
+                    code = cells[1].get_text(strip=True)
+                    name = cells[2].get_text(strip=True)
+                    try:
+                        creds = int(cells[3].get_text(strip=True))
+                    except: 
+                        creds = 0
+                    
+                    if code and name:
+                        groups[current_group_code]["subjects"].append({
+                            "code": code,
+                            "name": name,
+                            "credits": creds
+                        })
+        
+        # Filter if hint provided
+        if group_hint:
+             norm_hint = normalize_for_match(group_hint)
+             filtered = {}
+             for k, v in groups.items():
+                 if norm_hint in normalize_for_match(k) or norm_hint in normalize_for_match(v["group_name"]):
+                     filtered[k] = v
+             if not filtered and "tự chọn" in norm_hint:
+                  # Return all V.2.x groups if asking for "tự chọn" generally
+                  filtered = {k: v for k, v in groups.items() if k.startswith("V.2")}
+             
+             return json.dumps(filtered, ensure_ascii=False) if filtered else json.dumps({"error": f"No groups found checking '{group_hint}'"}, ensure_ascii=False)
+
+        return json.dumps(groups, ensure_ascii=False)
+
+    except Exception as e:
+        logger.error(f"Error parsing curriculum: {e}")
+        return json.dumps({"error": str(e)})
+
+
 def _extract_subjects_from_text(raw_text: str) -> List[Dict[str, Any]]:
     """
     Parse subject codes and credits from free-form text.
@@ -790,17 +877,29 @@ def analyze_curriculum(program_hint: Optional[str] = None) -> Dict[str, Any]:
 def compute_missing_subjects(transcript_data: Dict[str, Any], curriculum: Dict[str, Any]) -> Dict[str, Any]:
     """
     Compare transcript with curriculum list to find missing courses and low-grade courses.
+    Uses normalized code matching (uppercase, no spaces) for robustness.
     """
     semesters = transcript_data.get("semesters") or []
     completed_map = _build_completed_subjects(semesters)
     curriculum_subjects = curriculum.get("subjects") or []
+
+    # Build normalized completed map for robust matching
+    norm_completed_map: Dict[str, Dict[str, Any]] = {}
+    for code, data in completed_map.items():
+        norm_code = code.upper().replace(" ", "")
+        norm_completed_map[norm_code] = data
 
     missing: List[Dict[str, Any]] = []
     for subj in curriculum_subjects:
         code = subj.get("code")
         if not code:
             continue
-        best = completed_map.get(code)
+        
+        # Normalize curriculum code for comparison
+        norm_code = code.upper().replace(" ", "")
+        best = norm_completed_map.get(norm_code)
+        
+        # Subject is missing if not in transcript OR has grade 0 (F)
         if best is None or (best.get("grade_4") is None) or best.get("grade_4") <= 0:
             missing.append(subj)
 
@@ -808,8 +907,6 @@ def compute_missing_subjects(transcript_data: Dict[str, Any], curriculum: Dict[s
         s for s in completed_map.values()
         if s.get("grade_4") is not None and s.get("grade_4") <= 2.5
     ]
-    low_grades.sort(key=lambda x: (x.get("grade_4") or 0, -(x.get("credits") or 0)))
-
     low_grades.sort(key=lambda x: (x.get("grade_4") or 0, -(x.get("credits") or 0)))
 
     # Compute detailed block analysis if structure is available
@@ -1136,14 +1233,92 @@ def consult_advisor(query: str, file_ids: List[str] | None = None, session_id: s
 
     missing_info = compute_missing_subjects(transcript_data or {}, curriculum) if transcript_data else {"missing": [], "completed_map": {}, "low_grades": []}
     next_semester = _infer_next_semester_code(transcript_data or {}) if transcript_data else None
-    schedule_info = check_course_schedule(missing_info.get("missing") or [], target_semester=next_semester, class_code=program_hint)
+    
+    # --- SMART SUBJECT FILTERING ---
+    # Instead of sending ALL 32 missing subjects to the Agent, we filter to a reasonable recommendation list.
+    # This prevents the Agent from listing every single course.
 
-    # Use precise missing credit analysis if available, otherwise fallback
-    # Use precise missing credit analysis if available, otherwise fallback
-    missing_credits_calc = None
-    if missing_info.get("credit_analysis"):
-        # credit_analysis is a List[dict], not Dict
-        missing_credits_calc = sum(b.get("missing_credits", 0) for b in missing_info["credit_analysis"])
+    all_missing = missing_info.get("missing") or []
+    credit_analysis = missing_info.get("credit_analysis") or []
+    
+    # Compute total missing credits from credit_analysis
+    missing_credits_calc = sum(b.get("missing_credits", 0) for b in credit_analysis) if credit_analysis else None
+    
+    # --- Build "recommended" subject list (limited) ---
+    recommended_subjects: List[Dict[str, Any]] = []
+    elective_suggestions: List[Dict[str, Any]] = []
+    
+    # 1. Collect mandatory missing subjects (required courses from credit_analysis)
+    mandatory_missing: List[Dict[str, Any]] = []
+    elective_missing_candidates: List[Dict[str, Any]] = []
+    
+    if credit_analysis:
+        for block in credit_analysis:
+            block_type = block.get("block_type", "")  # "required" or "elective"
+            block_missing_creds = block.get("missing_credits", 0)
+            candidates = block.get("candidates", [])
+            
+            if block_missing_creds > 0:
+                if "bắt buộc" in block.get("block_name", "").lower() or block_type == "required":
+                    mandatory_missing.extend(candidates)
+                else:
+                    elective_missing_candidates.extend(candidates)
+    else:
+        # Fallback: Use all missing subjects if no credit_analysis
+        mandatory_missing = all_missing
+    
+    # 2. Dedupe elective candidates
+    seen_codes = set()
+    unique_elective_candidates = []
+    for c in elective_missing_candidates:
+        code = c.get("code")
+        if code and code not in seen_codes:
+            unique_elective_candidates.append(c)
+            seen_codes.add(code)
+    
+    # 3. Limit electives based on missing credits
+    # Heuristic: If user needs 5 elective credits, suggest ~5 courses (enough choice)
+    elective_credits_needed = sum(
+        b.get("missing_credits", 0) for b in credit_analysis 
+        if "bắt buộc" not in b.get("block_name", "").lower()
+    ) if credit_analysis else 0
+    
+    elective_limit = max(5, (elective_credits_needed // 2) + 3)  # At least 5, or based on credits
+    
+    # 4. Check schedule for elective candidates and filter by offered
+    if unique_elective_candidates:
+        logger.info(f"[consult_advisor] Checking schedule for {len(unique_elective_candidates)} elective candidates (limit: {elective_limit})...")
+        try:
+            elective_schedule = check_course_schedule(unique_elective_candidates[:30], target_semester=next_semester, class_code=program_hint)
+            offered_electives = [x for x in elective_schedule if x.get("offered")]
+            
+            # Limit and map back to original data
+            cand_map = {c.get("code"): c for c in unique_elective_candidates}
+            for sched in offered_electives[:elective_limit]:
+                code = sched.get("code")
+                orig = cand_map.get(code)
+                if orig:
+                    elective_suggestions.append({
+                        "code": code,
+                        "name": orig.get("name"),
+                        "credits": orig.get("credits"),
+                        "offered": True,
+                        "schedule_snippet": sched.get("snippet", "")[:100]
+                    })
+            logger.info(f"[consult_advisor] Got {len(elective_suggestions)} offered electives (from {len(offered_electives)} total)")
+        except Exception as e:
+            logger.error(f"[consult_advisor] Error checking elective schedules: {e}")
+    
+    # 5. Build recommended_subjects = mandatory + limited electives
+    recommended_subjects = mandatory_missing + [
+        {"code": e["code"], "name": e["name"], "credits": e["credits"]}
+        for e in elective_suggestions
+    ]
+    
+    # 6. Get schedule ONLY for recommended subjects (not all 32)
+    schedule_info = check_course_schedule(recommended_subjects, target_semester=next_semester, class_code=program_hint) if recommended_subjects else []
+    
+    logger.info(f"[consult_advisor] Sending {len(recommended_subjects)} recommended subjects to Agent (mandatory: {len(mandatory_missing)}, electives: {len(elective_suggestions)})")
 
     target_gpa = _extract_target_gpa(query)
     gpa_projection = calculate_gpa_feasibility(
@@ -1162,6 +1337,8 @@ def consult_advisor(query: str, file_ids: List[str] | None = None, session_id: s
     if any(k in norm_query for k in gpa_keywords):
         scenario = "gpa_improvement"
 
+    # --- CONTEXT FOR AGENT ---
+    # Use recommended_subjects instead of all missing, and elective_suggestions for clarity
     advisor_context = {
         "history": history,
         "files": ids,
@@ -1169,9 +1346,15 @@ def consult_advisor(query: str, file_ids: List[str] | None = None, session_id: s
         "transcript_json": transcript_data or transcript,
         "program_hint": program_hint,
         "curriculum": curriculum,
-        "missing_subjects": missing_info,
+        "missing_subjects": {
+            "count": len(all_missing),  # Original count for reference
+            "recommended": recommended_subjects,  # FILTERED list
+            "mandatory_missing": mandatory_missing,
+            "elective_suggestions": elective_suggestions,
+            "credit_analysis": credit_analysis,  # Detailed breakdown
+        },
         "next_semester": next_semester,
-        "schedule_offerings": schedule_info,
+        "schedule_offerings": schedule_info,  # Now limited to recommended only
         "gpa_projection": gpa_projection,
     }
 
