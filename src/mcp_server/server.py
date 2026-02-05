@@ -13,6 +13,13 @@ import logging
 from bs4 import BeautifulSoup
 
 from env_loader import load_env
+
+# Initial Env Load & Conflict Resolution
+load_env()
+if "GEMINI_API_KEY" in os.environ and "GOOGLE_API_KEY" in os.environ:
+    # Always prioritize GEMINI_API_KEY in this project
+    del os.environ["GOOGLE_API_KEY"]
+
 from utils import (
     web_search,
     VietnameseEmbedder,
@@ -198,6 +205,22 @@ def _extract_class_code_from_text(text: str) -> Optional[str]:
     if match:
         return match.group(1).upper().replace(" ", "")
     return None
+
+
+def _normalize_subject_code(code: str) -> str:
+    """
+    Normalize subject code for comparison:
+    - Uppercase, no spaces
+    - Remove trailing 'E' suffix (INT3401E -> INT3401) to handle English/Vietnamese variants
+    """
+    if not code:
+        return ""
+    norm = code.upper().replace(" ", "").strip()
+    # Remove trailing 'E' suffix for comparison (e.g., INT3401E -> INT3401)
+    # But only if it's a digit followed by E (not things like 'INTE')
+    if len(norm) > 1 and norm.endswith("E") and norm[-2].isdigit():
+        return norm[:-1]
+    return norm
 
 
 def _build_completed_subjects(semesters: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
@@ -662,12 +685,30 @@ def get_curriculum_lookup(group_hint: str = None) -> str:
         if group_hint:
              norm_hint = normalize_for_match(group_hint)
              filtered = {}
+             matched_parent_codes = []  # Track parent groups that matched
+             
              for k, v in groups.items():
                  if norm_hint in normalize_for_match(k) or norm_hint in normalize_for_match(v["group_name"]):
                      filtered[k] = v
-             if not filtered and "tự chọn" in norm_hint:
-                  # Return all V.2.x groups if asking for "tự chọn" generally
-                  filtered = {k: v for k, v in groups.items() if k.startswith("V.2")}
+                     # If this is a parent group (e.g., V.2), save code for cascade
+                     if re.match(r"^[IVX]+\.\d+$", k):  # Parent like V.2, not V.2.1
+                         matched_parent_codes.append(k)
+             
+             # Cascade: If a parent matched, also include all its sub-groups
+             for parent_code in matched_parent_codes:
+                 for k, v in groups.items():
+                     if k.startswith(parent_code + ".") and k not in filtered:
+                         filtered[k] = v
+             
+             # Fallback for "tu chon" if still no results with subjects
+             if "tu chon" in norm_hint:
+                  # Ensure we have V.2.x groups included
+                  for k, v in groups.items():
+                      if k.startswith("V.2.") and k not in filtered:
+                          filtered[k] = v
+             
+             # Filter out groups with no subjects (parent groups like V.2)
+             filtered = {k: v for k, v in filtered.items() if len(v.get("subjects", [])) > 0}
              
              return json.dumps(filtered, ensure_ascii=False) if filtered else json.dumps({"error": f"No groups found checking '{group_hint}'"}, ensure_ascii=False)
 
@@ -677,6 +718,118 @@ def get_curriculum_lookup(group_hint: str = None) -> str:
         logger.error(f"Error parsing curriculum: {e}")
         return json.dumps({"error": str(e)})
 
+
+@mcp_tool("get_electives_with_schedule")
+def get_electives_with_schedule(check_schedule: bool = True) -> str:
+    """
+    Lấy danh sách các môn TỰ CHỌN từ Chương trình Đào tạo VÀ kiểm tra xem môn nào đang MỞ trong TKB.
+    
+    Returns:
+        JSON với 2 phần: "opened" (môn đang mở lớp) và "not_opened" (môn chưa mở)
+    """
+    logger.info(f"[get_electives_with_schedule] invoked with check_schedule={check_schedule}")
+    
+    # Step 1: Lấy danh sách môn tự chọn từ CTĐT
+    curriculum_result = get_curriculum_lookup("tu chon")
+    try:
+        curriculum_data = json.loads(curriculum_result)
+    except:
+        return json.dumps({"error": "Không thể parse curriculum data"})
+    
+    if "error" in curriculum_data:
+        return json.dumps(curriculum_data)
+    
+    # Collect all elective subjects
+    all_electives = []
+    for group_code, group_data in curriculum_data.items():
+        group_name = group_data.get("group_name", "")
+        for subj in group_data.get("subjects", []):
+            all_electives.append({
+                "code": subj.get("code"),
+                "name": subj.get("name"),
+                "credits": subj.get("credits"),
+                "group": group_name
+            })
+    
+    logger.info(f"[get_electives_with_schedule] Found {len(all_electives)} elective subjects in curriculum")
+    
+    if not check_schedule:
+        return json.dumps({"all_electives": all_electives, "total": len(all_electives)}, ensure_ascii=False)
+    
+    # Step 2: Load TKB content and check which subjects have classes
+    tkb_path = Path(__file__).resolve().parent.parent.parent / "data" / "resources" / "pdfs"
+    tkb_text = ""
+    
+    try:
+        # Find ALL potential schedule files and use the one with MOST TEXT CONTENT
+        schedule_patterns = ["*TKB*.pdf", "*THỜI KHÓA BIỂU*.pdf", "*thoi khoa bieu*.pdf", "*PHỤ LỤC*.pdf"]
+        all_schedule_files = []
+        
+        from utils import process_pdf
+        
+        for pattern in schedule_patterns:
+            for p in tkb_path.glob(pattern):
+                try:
+                    # Parse and measure actual text content
+                    docs = process_pdf(str(p))
+                    text_length = sum(len(d.page_content) for d in docs)
+                    all_schedule_files.append((p, text_length, docs))
+                    logger.info(f"[get_electives_with_schedule] Found schedule file: {p.name} ({text_length} chars)")
+                except Exception as e:
+                    logger.warning(f"[get_electives_with_schedule] Failed to parse {p.name}: {e}")
+        
+        if all_schedule_files:
+            # Sort by TEXT LENGTH (largest first) and use the one with most content
+            all_schedule_files.sort(key=lambda x: x[1], reverse=True)
+            selected_tkb, text_length, docs = all_schedule_files[0]
+            logger.info(f"[get_electives_with_schedule] Selected TKB file: {selected_tkb.name} ({text_length} chars - LARGEST TEXT)")
+            
+            tkb_text = "\n".join([d.page_content for d in docs])
+        
+    except Exception as e:
+        logger.warning(f"[get_electives_with_schedule] Could not load TKB: {e}")
+        # Fallback: return all electives without schedule info
+        return json.dumps({
+            "all_electives": all_electives,
+            "total": len(all_electives),
+            "schedule_error": str(e)
+        }, ensure_ascii=False)
+    
+    # Step 3: Check each subject against TKB
+    opened = []
+    not_opened = []
+    
+    for subj in all_electives:
+        code = subj.get("code", "")
+        # Normalize code for comparison - check both with and without E suffix
+        code_variants = [code.upper()]
+        if code.upper().endswith("E"):
+            code_variants.append(code.upper()[:-1])  # Without E
+        else:
+            code_variants.append(code.upper() + "E")  # With E
+        
+        found = False
+        for variant in code_variants:
+            if variant in tkb_text.upper():
+                found = True
+                break
+        
+        if found:
+            opened.append(subj)
+        else:
+            not_opened.append(subj)
+    
+    result = {
+        "opened": opened,
+        "opened_count": len(opened),
+        "not_opened": not_opened,
+        "not_opened_count": len(not_opened),
+        "total_electives": len(all_electives)
+    }
+    
+    logger.info(f"[get_electives_with_schedule] Result: {len(opened)} opened, {len(not_opened)} not opened")
+    
+    return json.dumps(result, ensure_ascii=False)
 
 def _extract_subjects_from_text(raw_text: str) -> List[Dict[str, Any]]:
     """
@@ -886,7 +1039,7 @@ def compute_missing_subjects(transcript_data: Dict[str, Any], curriculum: Dict[s
     # Build normalized completed map for robust matching
     norm_completed_map: Dict[str, Dict[str, Any]] = {}
     for code, data in completed_map.items():
-        norm_code = code.upper().replace(" ", "")
+        norm_code = _normalize_subject_code(code)
         norm_completed_map[norm_code] = data
 
     missing: List[Dict[str, Any]] = []
@@ -896,7 +1049,7 @@ def compute_missing_subjects(transcript_data: Dict[str, Any], curriculum: Dict[s
             continue
         
         # Normalize curriculum code for comparison
-        norm_code = code.upper().replace(" ", "")
+        norm_code = _normalize_subject_code(code)
         best = norm_completed_map.get(norm_code)
         
         # Subject is missing if not in transcript OR has grade 0 (F)
@@ -1106,7 +1259,15 @@ def check_course_schedule(
         code = subj.get("code")
         if not code:
             continue
-        query_parts = [code]
+        
+        # Generate code variants (with/without E suffix) for better matching
+        code_variants = [code]
+        if code.upper().endswith("E"):
+            code_variants.append(code[:-1])  # Without E: INT3404E -> INT3404
+        else:
+            code_variants.append(code + "E")  # With E: INT3404 -> INT3404E
+        
+        query_parts = code_variants  # Include both variants in search
         if target_semester:
             query_parts.append(f"hoc ky {target_semester}")
             # Heuristic expansion for HK2 / HKII
@@ -1119,48 +1280,107 @@ def check_course_schedule(
         if class_code:
             query_parts.append(class_code)
         query = " ".join(query_parts)
+
         
-        # CRITICAL FIX: Ensure global Schedule PDF is in scope!
-        # The file_scope passed usually only has transcript IDs.
-        # We need to find the Schedule PDF ID from resources if not already present.
+        # --- NEW LOGIC: DIRECT TEXT SEARCH IN TKB ---
+        # Retrieval is unreliable for codes. We use direct text search on the large TKB file.
         
-        search_scope = list(file_scope) if file_scope else []
+        context_text = ""
+        found_in_text = False
+        selected_file_name = "Unknown Schedule PDF"  # Track source file
         
         try:
+            # 1. Load TKB Text (using logic shared with get_electives)
             from pathlib import Path
             resource_dir = Path(__file__).resolve().parent.parent.parent / "data" / "resources" / "pdfs"
+            
+            # Find largest TKB file
+            schedule_patterns = ["*TKB*.pdf", "*THỜI KHÓA BIỂU*.pdf", "*PHỤ LỤC*.pdf"]
+            all_schedule_files = []
             if resource_dir.exists():
-                for p in resource_dir.glob("*TKB*.pdf"):
-                    pid = p.name
-                    if pid not in search_scope:
-                        search_scope.append(pid)
-        except Exception as e:
-            logger.warning(f"Failed to auto-add Schedule PDF to scope: {e}")
+                search_scope = [] # Reset scope logic as we search files directly
+                for pattern in schedule_patterns:
+                    for p in resource_dir.glob(pattern):
+                        try:
+                            file_size = p.stat().st_size # Start with size for speed
+                            all_schedule_files.append((p, file_size))
+                        except: pass
+            
+            tkb_full_text = ""
+            tkb_full_text = ""
+            sorted_candidates = []
+            
+            # 1b. Parse ALL candidates to find the one with REAL TEXT CONTENT
+            # (File size is misleading for scanned PDFs vs Text PDFs)
+            from utils import process_pdf
+            
+            if all_schedule_files:
+                for fpath, fsize in all_schedule_files:
+                    try:
+                        docs = process_pdf(str(fpath))
+                        text = "\n".join([d.page_content for d in docs])
+                        text_len = len(text)
+                        sorted_candidates.append((fpath, text_len, text))
+                    except Exception as e:
+                        logger.warning(f"Error parse TKB candidate {fpath.name}: {e}")
 
-        # Increase Top-K to 10 for schedule queries
-        chunks = _store.retrieve(query, top_k=10, file_ids=search_scope if search_scope else None) if _store else []
-        if not chunks:
-             # Fallback: Try global search (no scope)
-             chunks = _store.retrieve(query, top_k=10) if _store else []
+                # Sort by text length (descending)
+                sorted_candidates.sort(key=lambda x: x[1], reverse=True)
+                
+                if sorted_candidates:
+                    # Pick the largest text content file
+                    best_fpath, best_len, best_text = sorted_candidates[0]
+                    if best_len > 2000: # Threshold
+                         tkb_full_text = best_text
+                         selected_file_name = best_fpath.name
+                         logger.info(f"[check_course_schedule] Selected BEST TKB file: {selected_file_name} ({best_len} chars text)")
+
+
+            
+            # 2. Search for Code Variants in Text
+            if tkb_full_text:
+                related_lines = []
+                lines = tkb_full_text.split('\n')
+                
+                # We interpret table rows. A row usually contains the code.
+                # We capture the line with the code, plus header context if possible.
+                
+                for i, line in enumerate(lines):
+                    line_upper = line.upper()
+                    # Check if any variant is in this line
+                    for v in code_variants:
+                        # Improved check: Code should be bounded or distinct
+                        # Check exact token matching to avoid partials (e.g. INT3404 vs INT34041)
+                        if v in line_upper:
+                             related_lines.append(line)
+                             break
+                
+                if related_lines:
+                    found_in_text = True
+                    # Take top 50 lines matching (limits context size)
+                    context_text = "DỮ LIỆU TÌM THẤY TRONG TKB:\n" + "\n".join(related_lines[:50])
+                else:
+                    context_text = "Không tìm thấy mã môn này trong văn bản TKB."
+            else:
+                context_text = "Không thể đọc nội dung file TKB."
+
+        except Exception as e:
+            logger.error(f"[check_course_schedule] Direct search failed: {e}")
+            context_text = "Lỗi khi tìm kiếm dữ liệu TKB."
+
+        # Fallback to retrieval only if direct search failed completely (no TKB file found)
+        # But honestly, direct search is better.
         
-        context_text = "\n\n".join([c.page_content for c in chunks[:5]]) # Use top 5 chunks context
-        
-        # Enhanced Prompt with Column Legend for precise extraction
         prompt = f"""
         Bạn là trợ lý tra cứu lịch học.
-        Nhiệm vụ: Tìm tất cả các lớp mở cho môn học "{code}" từ dữ liệu dưới đây.
+        Nhiệm vụ: Tìm tất cả các lớp mở cho môn học "{code}".
+        Các mã biến thể có thể xuất hiện: {', '.join(code_variants)}.
         
-        QUY TẮC ĐỌC BẢNG (PDF Table Structure):
-        - Cột "Thứ": Ngày học (2,3,4,5,6,7).
-        - Cột "Ca": Ca học (1,2,3,4).
-        - Cột "GĐ": Giảng đường (Ví dụ: 301-G2, 203-A).
-        - Cột "Lớp" / "Mã LHP": Mã lớp học phần (Ví dụ: INT3301 1).
+        QUAN TRỌNG - KIỂM TRA MÃ MÔN:
+        1. Mã yêu cầu chính xác là: "{code}".
+        2. Nếu bạn tìm thấy lớp có mã KHÁC mã yêu cầu (ví dụ tìm thấy 'INT3404' khi yêu cầu 'INT3404E'): BẮT BUỘC phải thêm cảnh báo vào đầu kết quả: "[CẢNH BÁO: Tìm thấy mã ..., khác mã yêu cầu ...]".
         
-        YÊU CẦU TRẢ LỜI:
-        - Nếu tìm thấy: Liệt kê chi tiết từng lớp (Mã lớp - Thứ - Ca - Phòng - Giảng viên).
-        - Nếu không tìm thấy: Ghi "Không tìm thấy lịch mở lớp cho học kỳ này".
-        
-        DỮ LIỆU ĐẦU VÀO (Markdown Table Chunks):
+        DỮ LIỆU ĐẦU VÀO (Các dòng trích xuất từ TKB):
         {context_text}
         """
 
@@ -1184,10 +1404,46 @@ def check_course_schedule(
             "code": code,
             "offered": "không tìm thấy" not in extracted_info.lower(),
             "snippet": extracted_info,
-            "file_id": chunks[0].metadata.get("file_id"),
+            "file_id": selected_file_name,
             "query": query,
         })
 
+    return results
+
+def _identify_priority_subjects(query: str, history: str, all_curriculum_subjects: List[Dict]) -> Set[str]:
+    """Identify subject codes that user is specifically asking about to prioritize schedule check."""
+    priority_codes = set()
+    
+    # 1. Direct Regex Search in Query (INTxxxx)
+    import re
+    code_pattern = r"(INT\d{4}[A-Z]?)"
+    matches = re.findall(code_pattern, query.upper())
+    for m in matches:
+        priority_codes.add(m)
+        
+    # 2. Fuzzy Name Search in Query
+    # If query mentions a specific name like "Xử lý ảnh", map it to code.
+    norm_query = normalize_for_match(query)
+    # Identify simple name matches (heuristic: if a subject name (normalized) is a substring of query)
+    if all_curriculum_subjects:
+        for subj in all_curriculum_subjects:
+            s_name = normalize_for_match(subj.get("name", ""))
+            if len(s_name) > 6 and s_name in norm_query: # Len > 6 to avoid short noise names
+                 priority_codes.add(subj.get("code"))
+
+    # 3. Context Reference ("môn này", "môn đó", "it")
+    # If query implies reference, OR even if not, scanning recent history is helpful context.
+    # Scan history for the LAST mentioned code
+    hist_matches = re.findall(code_pattern, history.upper())
+    if hist_matches:
+        # Take the last 3 unique codes mentioned recently
+        seen = set()
+        for code in reversed(hist_matches):
+            if code not in seen and len(seen) < 3:
+                 priority_codes.add(code)
+                 seen.add(code)
+                     
+    return priority_codes
 
 @mcp_tool("consult_advisor")
 def consult_advisor(query: str, file_ids: List[str] | None = None, session_id: str = "default") -> str:
@@ -1276,6 +1532,15 @@ def consult_advisor(query: str, file_ids: List[str] | None = None, session_id: s
             unique_elective_candidates.append(c)
             seen_codes.add(code)
     
+    # --- PRIORITY SORT ---
+    # Promote subjects relevant to the user query (or history refs) to the TOP of the list.
+    # This ensures they are checked for schedule even if we limit the count later.
+    priority_codes = _identify_priority_subjects(query, str(history), curriculum.get("subjects") or [])
+    if priority_codes:
+        logger.info(f"[consult_advisor] Promoting subjects: {priority_codes}")
+        # Sort key: False (0) comes before True (1). So we want (code NOT in priority)
+        unique_elective_candidates.sort(key=lambda x: x.get("code") not in priority_codes)
+    
     # 3. Limit electives based on missing credits
     # Heuristic: If user needs 5 elective credits, suggest ~5 courses (enough choice)
     elective_credits_needed = sum(
@@ -1286,28 +1551,81 @@ def consult_advisor(query: str, file_ids: List[str] | None = None, session_id: s
     elective_limit = max(5, (elective_credits_needed // 2) + 3)  # At least 5, or based on credits
     
     # 4. Check schedule for elective candidates and filter by offered
-    if unique_elective_candidates:
+    offered_electives = []
+    
+    # Logic fallback: Nếu không tìm thấy elective candidates từ creditAnalysis (do parse lỗi hoặc PDF),
+    # hãy thử gọi get_electives_with_schedule để lấy danh sách môn tự chọn.
+    if not unique_elective_candidates:
+        logger.info("[consult_advisor] No elective candidates found from curriculum analysis. Trying fallback to get_electives_with_schedule...")
+        try:
+            # Gọi hàm trực tiếp (không qua string JSON nếu có thể, nhưng hàm trả về JSON string)
+            # check_schedule=False vì ta sẽ check sau hoặc dùng info của nó
+            raw_sched = get_electives_with_schedule(check_schedule=True)
+            sched_data = json.loads(raw_sched)
+            
+            # Lấy list "opened" (đã check schedule sẵn)
+            opened_fallback = sched_data.get("opened", [])
+            
+            # Filter các môn đã học
+            completed_codes = set()
+            if transcript_data:
+                for sem in transcript_data.get("semesters", []):
+                    for subj in sem.get("subjects", []):
+                        c = subj.get("code", "")
+                        if c: completed_codes.add(_normalize_subject_code(c))
+            
+            for item in opened_fallback:
+                # Normalization check
+                norm_c = _normalize_subject_code(item.get("code"))
+                if norm_c not in completed_codes:
+                    # Add to offered_electives
+                    offered_electives.append({
+                        "code": item.get("code"),
+                        "name": item.get("name"),
+                        "credits": item.get("credits"),
+                        "offered": True,
+                        "snippet": f"Môn tự chọn nhóm {item.get('group')} đang mở lớp."
+                    })
+            
+            logger.info(f"[consult_advisor] Fallback found {len(offered_electives)} opened electives.")
+            
+        except Exception as e:
+            logger.warning(f"[consult_advisor] Fallback electives failed: {e}")
+
+    elif unique_elective_candidates:
         logger.info(f"[consult_advisor] Checking schedule for {len(unique_elective_candidates)} elective candidates (limit: {elective_limit})...")
         try:
             elective_schedule = check_course_schedule(unique_elective_candidates[:30], target_semester=next_semester, class_code=program_hint)
             offered_electives = [x for x in elective_schedule if x.get("offered")]
-            
-            # Limit and map back to original data
-            cand_map = {c.get("code"): c for c in unique_elective_candidates}
-            for sched in offered_electives[:elective_limit]:
-                code = sched.get("code")
-                orig = cand_map.get(code)
-                if orig:
-                    elective_suggestions.append({
-                        "code": code,
-                        "name": orig.get("name"),
-                        "credits": orig.get("credits"),
-                        "offered": True,
-                        "schedule_snippet": sched.get("snippet", "")[:100]
-                    })
-            logger.info(f"[consult_advisor] Got {len(elective_suggestions)} offered electives (from {len(offered_electives)} total)")
         except Exception as e:
             logger.error(f"[consult_advisor] Error checking elective schedules: {e}")
+            
+    # Map back for output
+    cand_map = {c.get("code"): c for c in unique_elective_candidates}
+    
+    # Nếu có unique_elective_candidates (logic cũ)
+    if unique_elective_candidates:
+        for sched in offered_electives[:elective_limit]:
+            code = sched.get("code")
+            orig = cand_map.get(code)
+            if orig:
+                elective_suggestions.append({
+                    "code": code,
+                    "name": orig.get("name"),
+                    "credits": orig.get("credits"),
+                    "offered": True,
+                    "schedule_snippet": sched.get("snippet", "")[:100]
+                })
+    else:
+        # Logic fallback (đã có offered_electives đầy đủ info)
+        for sched in offered_electives[:elective_limit]:
+             elective_suggestions.append({
+                "code": sched.get("code"),
+                "name": sched.get("name"),
+                "credits": sched.get("credits"),
+                "offered": True,
+                "schedule_snippet": sched.get("snippet", "")[:100]
+            })
     
     # 5. Build recommended_subjects = mandatory + limited electives
     recommended_subjects = mandatory_missing + [

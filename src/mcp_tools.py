@@ -134,3 +134,35 @@ def tool_get_schedule(subject_codes: List[str], client: MCPClient | None = None)
     result: Any = mcp.invoke("get_schedule", {"subject_codes": subject_codes})
     # JSON string is returned from server, so we just pass it through/ensure string
     return str(result)
+
+
+def tool_get_curriculum_lookup(group_hint: str = None, client: MCPClient | None = None) -> str:
+    """
+    Tra cuu danh sach cac mon hoc trong chuong trinh dao tao.
+    Dung khi nguoi dung hoi ve: hoc phan tu chon, mon nao con thieu, yeu cau tot nghiep, danh sach mon hoc trong CTDT.
+    
+    Args:
+        group_hint: Vi du 'V.2.1', 'tu chon', 'Phan mem' de loc nhom mon. 
+                    Neu None, tra ve tat ca nhom mon.
+    Returns:
+        JSON chua danh sach nhom mon va cac mon hoc tuong ung.
+    """
+    mcp = _get_client(client)
+    result: Any = mcp.invoke("get_curriculum_lookup", {"group_hint": group_hint})
+    return str(result)
+
+
+def tool_get_electives_with_schedule(check_schedule: bool = True, client: MCPClient | None = None) -> str:
+    """
+    Lấy danh sách các môn TỰ CHỌN từ Chương trình Đào tạo VÀ kiểm tra xem môn nào đang MỞ trong TKB.
+    Dùng khi nguoi dung hoi ve: 'hoc phan tu chon nao dang mo', 'mon tu chon trong ky nay', 
+    'lua chon nao dang co lop', 'dang ky mon tu chon'.
+    
+    Args:
+        check_schedule: True để kiểm tra TKB, False chỉ lấy danh sách từ CTĐT.
+    Returns:
+        JSON với "opened" (môn đang mở lớp) và "not_opened" (môn chưa mở)
+    """
+    mcp = _get_client(client)
+    result: Any = mcp.invoke("get_electives_with_schedule", {"check_schedule": check_schedule})
+    return str(result)

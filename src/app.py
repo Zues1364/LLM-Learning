@@ -18,6 +18,16 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from agents import AnswerGeneratorAgent, get_mcp_planner_agent, get_rag_agent
 from env_loader import load_env
+
+# Initial Env Load & Conflict Resolution
+load_env()
+if "GEMINI_API_KEY" in os.environ and "GOOGLE_API_KEY" in os.environ:
+    # Google GenAI library prioritizes GOOGLE_API_KEY, but if it's invalid/duplicate, it fails.
+    # We force using GEMINI_API_KEY by removing the other one.
+    import logging
+    logging.warning("Conflict detected: Both GOOGLE_API_KEY and GEMINI_API_KEY set. Unsetting GOOGLE_API_KEY to force GEMINI_API_KEY usage.")
+    del os.environ["GOOGLE_API_KEY"]
+
 from mcp_client.client import MCPClient
 from persistent_memory import PersistentMemory
 # resource_loader import NOT needed here if we delegate to scan_resources via MCP? 
