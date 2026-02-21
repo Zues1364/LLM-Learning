@@ -47,11 +47,17 @@ async function uploadPdfs(files) {
   return res.json();
 }
 
-async function askQuestionWithFiles(query, allowWebSearch, sessionId, fileIds) {
+async function askQuestionWithFiles(query, allowWebSearch, sessionId, fileIds, programId) {
   const res = await fetch(`${API_BASE}/ask`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, allow_web_search: allowWebSearch, session_id: sessionId, file_ids: fileIds || [] }),
+    body: JSON.stringify({
+      query,
+      allow_web_search: allowWebSearch,
+      session_id: sessionId,
+      file_ids: fileIds || [],
+      program_id: programId || null,
+    }),
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
@@ -82,6 +88,13 @@ async function deleteSessionApi(sessionId) {
 // --- Resource API ---
 async function fetchResources() {
   const res = await fetch(`${API_BASE}/api/resources`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function fetchPrograms(refresh = false) {
+  const url = refresh ? `${API_BASE}/api/programs?refresh=true` : `${API_BASE}/api/programs`;
+  const res = await fetch(url);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -124,6 +137,9 @@ export default function App() {
   const storedSessions = readJson("sessions", null);
   const storedMessages = readJson("messagesBySession", null);
   const storedCurrentSession = readJson("currentSession", null);
+  const storedSelectedPrograms = readJson("selectedProgramBySession", null);
+  const storedPendingPrograms = readJson("pendingProgramBySession", null);
+  const storedSelectedFiles = readJson("selectedFilesBySession", null);
 
   const [sessions, setSessions] = useState(() =>
     Array.isArray(storedSessions) && storedSessions.length
@@ -146,7 +162,16 @@ export default function App() {
   const [historyList, setHistoryList] = useState([]);
   const [uploadedFile, setUploadedFile] = useState(null);
   const [files, setFiles] = useState([]);
-  const [selectedFileIds, setSelectedFileIds] = useState([]);
+  const [selectedFilesBySession, setSelectedFilesBySession] = useState(() => {
+    if (
+      storedSelectedFiles &&
+      typeof storedSelectedFiles === "object" &&
+      !Array.isArray(storedSelectedFiles)
+    ) {
+      return storedSelectedFiles;
+    }
+    return {};
+  });
   const [processingPdf, setProcessingPdf] = useState(false);
   const [processingLabel, setProcessingLabel] = useState("");
 
@@ -155,6 +180,28 @@ export default function App() {
   const [showResourcePanel, setShowResourcePanel] = useState(false);
   const [resourceUrl, setResourceUrl] = useState("");
   const [resourceLoading, setResourceLoading] = useState(false);
+  const [programs, setPrograms] = useState([]);
+  const [programsLoading, setProgramsLoading] = useState(false);
+  const [selectedProgramBySession, setSelectedProgramBySession] = useState(() => {
+    if (
+      storedSelectedPrograms &&
+      typeof storedSelectedPrograms === "object" &&
+      !Array.isArray(storedSelectedPrograms)
+    ) {
+      return storedSelectedPrograms;
+    }
+    return {};
+  });
+  const [pendingProgramBySession, setPendingProgramBySession] = useState(() => {
+    if (
+      storedPendingPrograms &&
+      typeof storedPendingPrograms === "object" &&
+      !Array.isArray(storedPendingPrograms)
+    ) {
+      return storedPendingPrograms;
+    }
+    return {};
+  });
 
   const fileInputRef = useRef(null);
   const resourceFileInputRef = useRef(null);
@@ -162,21 +209,39 @@ export default function App() {
   const chatEndRef = useRef(null);
   const filesRef = useRef([]);
 
+  const normalizeFileIds = useCallback((ids) => Array.from(new Set((ids || []).filter(Boolean))), []);
+
   const currentMessages = messagesBySession[currentSession] || [];
+  const selectedFileIds = selectedFilesBySession[currentSession] || [];
   const selectedNames = files.filter((f) => selectedFileIds.includes(f.file_id)).map((f) => f.file_name);
-  const visibleFiles = selectedFileIds.length
-    ? files.filter((f) => selectedFileIds.includes(f.file_id))
-    : [];
-  const handleSelectAllFiles = () => setSelectedFileIds(files.map((f) => f.file_id));
+  const visibleFiles = files;
+  const currentSelectedProgramId = selectedProgramBySession[currentSession] || "";
+  const currentPendingProgramId =
+    pendingProgramBySession[currentSession] || currentSelectedProgramId || programs[0]?.id || "";
+  const currentProgramDisplayName =
+    programs.find((p) => p.id === currentSelectedProgramId)?.display_name || currentSelectedProgramId || "";
+
+  const updateSelectedFiles = useCallback((sessionId, updater) => {
+    setSelectedFilesBySession((prev) => {
+      const existing = prev[sessionId] || [];
+      const nextRaw = typeof updater === "function" ? updater(existing) : updater;
+      return { ...prev, [sessionId]: normalizeFileIds(nextRaw) };
+    });
+  }, [normalizeFileIds]);
+
+  const handleSelectAllFiles = () => updateSelectedFiles(currentSession, files.map((f) => f.file_id));
 
   const refreshFiles = useCallback(async () => {
     try {
       const data = await fetchFiles();
       filesRef.current = data;
       setFiles(data);
-      setSelectedFileIds((prev) => {
-        const prevSet = new Set(prev || []);
-        const next = data.filter((f) => prevSet.has(f.file_id)).map((f) => f.file_id);
+      const validIds = new Set(data.map((f) => f.file_id));
+      setSelectedFilesBySession((prev) => {
+        const next = {};
+        Object.entries(prev || {}).forEach(([sessionId, ids]) => {
+          next[sessionId] = (ids || []).filter((id) => validIds.has(id));
+        });
         return next;
       });
     } catch (err) {
@@ -190,6 +255,20 @@ export default function App() {
       setResources(data);
     } catch (err) {
       console.error("Fetch resources failed", err);
+    }
+  }, []);
+
+  const refreshPrograms = useCallback(async (refresh = false) => {
+    try {
+      setProgramsLoading(true);
+      const data = await fetchPrograms(refresh);
+      const list = Array.isArray(data?.programs) ? data.programs : [];
+      setPrograms(list);
+    } catch (err) {
+      console.error("Fetch programs failed", err);
+      setPrograms([]);
+    } finally {
+      setProgramsLoading(false);
     }
   }, []);
 
@@ -211,6 +290,9 @@ export default function App() {
   useEffect(() => writeJson("sessions", sessions), [sessions]);
   useEffect(() => writeJson("currentSession", currentSession), [currentSession]);
   useEffect(() => writeJson("messagesBySession", messagesBySession), [messagesBySession]);
+  useEffect(() => writeJson("selectedProgramBySession", selectedProgramBySession), [selectedProgramBySession]);
+  useEffect(() => writeJson("pendingProgramBySession", pendingProgramBySession), [pendingProgramBySession]);
+  useEffect(() => writeJson("selectedFilesBySession", selectedFilesBySession), [selectedFilesBySession]);
 
   useEffect(() => {
     fetchHistory(currentSession).then(setHistoryList).catch(console.error);
@@ -219,7 +301,8 @@ export default function App() {
   useEffect(() => {
     refreshFiles();
     refreshResources();
-  }, [refreshFiles, refreshResources]);
+    refreshPrograms(false);
+  }, [refreshFiles, refreshResources, refreshPrograms]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -231,9 +314,10 @@ export default function App() {
     setSessions((prev) => [...prev, { id: newId, title: newTitle }]);
     setCurrentSession(newId);
     setMessagesBySession((prev) => ({ ...prev, [newId]: [] }));
+    setSelectedFilesBySession((prev) => ({ ...prev, [newId]: [] }));
+    setPendingProgramBySession((prev) => ({ ...prev, [newId]: programs[0]?.id || "" }));
     setHistoryList([]);
     setUploadedFile(null);
-    setSelectedFileIds([]);
     setProcessingPdf(false);
     setProcessingLabel("");
     setInputStr("");
@@ -243,16 +327,18 @@ export default function App() {
     setCurrentSession(sessionId);
     setInputStr("");
     setUploadedFile(null);
-    setSelectedFileIds([]);
     setProcessingPdf(false);
     setProcessingLabel("");
     if (!messagesBySession[sessionId]) {
       setMessagesBySession((prev) => ({ ...prev, [sessionId]: [] }));
     }
+    if (!pendingProgramBySession[sessionId] && !selectedProgramBySession[sessionId] && programs[0]?.id) {
+      setPendingProgramBySession((prev) => ({ ...prev, [sessionId]: programs[0].id }));
+    }
   };
 
   const handleToggleFile = (fileId) => {
-    setSelectedFileIds((prev) => {
+    updateSelectedFiles(currentSession, (prev) => {
       const set = new Set(prev || []);
       if (set.has(fileId)) {
         set.delete(fileId);
@@ -275,6 +361,21 @@ export default function App() {
       const next = { ...prev };
       delete next[sessionId];
       return Object.keys(next).length ? next : { [initialSessionId]: [] };
+    });
+    setSelectedProgramBySession((prev) => {
+      const next = { ...prev };
+      delete next[sessionId];
+      return next;
+    });
+    setSelectedFilesBySession((prev) => {
+      const next = { ...prev };
+      delete next[sessionId];
+      return next;
+    });
+    setPendingProgramBySession((prev) => {
+      const next = { ...prev };
+      delete next[sessionId];
+      return next;
     });
 
     if (currentSession === sessionId) {
@@ -306,7 +407,7 @@ export default function App() {
       if (selected.length === 1) {
         const file = selected[0];
         const resp = await uploadPdf(file);
-        setSelectedFileIds((prev) => {
+        updateSelectedFiles(sessionId, (prev) => {
           const set = new Set(prev || []);
           set.add(resp.file_id);
           return Array.from(set);
@@ -317,7 +418,7 @@ export default function App() {
         const names = resp.uploaded?.map((f) => f.file_name).join(", ");
         const newIds = resp.uploaded?.map((f) => f.file_id).filter(Boolean) || [];
         setUploadedFile(names || `${selected.length} files`);
-        setSelectedFileIds((prev) => {
+        updateSelectedFiles(sessionId, (prev) => {
           const set = new Set(prev || []);
           newIds.forEach((id) => set.add(id));
           return Array.from(set);
@@ -389,11 +490,59 @@ export default function App() {
     }
   };
 
+  const handleProgramChange = (sessionId, programId) => {
+    setPendingProgramBySession((prev) => ({ ...prev, [sessionId]: programId }));
+  };
+
+  const handleConfirmProgram = () => {
+    const selected = currentPendingProgramId;
+    if (!selected) {
+      updateMessages(currentSession, (prev) => [
+        ...prev,
+        { type: "system", text: "Vui lòng chọn chương trình đào tạo trước khi xác nhận." },
+      ]);
+      return;
+    }
+    setSelectedProgramBySession((prev) => ({ ...prev, [currentSession]: selected }));
+    setPendingProgramBySession((prev) => ({ ...prev, [currentSession]: selected }));
+    const selectedName = programs.find((p) => p.id === selected)?.display_name || selected;
+    updateMessages(currentSession, (prev) => [
+      ...prev,
+      { type: "system", text: `Đã chọn chương trình đào tạo: ${selectedName}` },
+    ]);
+  };
+
   const handleSendMessage = async () => {
+    if (loading) return;
     if (!inputStr.trim()) return;
 
-    const query = inputStr;
     const sessionId = currentSession;
+    const selectedProgramId = selectedProgramBySession[sessionId] || "";
+    if (!selectedProgramId) {
+      updateMessages(sessionId, (prev) => [
+        ...prev,
+        {
+          type: "system",
+          text: "Bạn chưa chọn chương trình đào tạo. Vui lòng chọn CTĐT/QH và bấm Xác nhận trước khi gửi câu hỏi.",
+        },
+      ]);
+      return;
+    }
+
+    const query = inputStr;
+
+    const transcriptNeedPattern = /(bang diem|tin chi|gpa|lap lich|lich hoc|mon con thieu|thieu mon|hoc ky sau)/i;
+    if (!selectedFileIds.length && transcriptNeedPattern.test(query)) {
+      updateMessages(sessionId, (prev) => [
+        ...prev,
+        {
+          type: "system",
+          text: "Bạn chưa chọn file bảng điểm cho phiên này. Vui lòng tick các file trong mục 'File đã tải lên' rồi gửi lại.",
+        },
+      ]);
+      return;
+    }
+
     setInputStr("");
 
     if (selectedFileIds.length) {
@@ -406,7 +555,45 @@ export default function App() {
     setLoading(true);
 
     try {
-      const { answer } = await askQuestionWithFiles(query, allowWeb, sessionId, selectedFileIds);
+      const response = await askQuestionWithFiles(
+        query,
+        allowWeb,
+        sessionId,
+        selectedFileIds,
+        selectedProgramId
+      );
+
+      if (response?.requires_program_selection) {
+        const incomingPrograms = Array.isArray(response?.programs) ? response.programs : [];
+        setPrograms(incomingPrograms);
+        setPendingProgramBySession((prev) => ({
+          ...prev,
+          [sessionId]: incomingPrograms[0]?.id || "",
+        }));
+        setSelectedProgramBySession((prev) => {
+          const next = { ...prev };
+          delete next[sessionId];
+          return next;
+        });
+        updateMessages(sessionId, (prev) => [
+          ...prev,
+          {
+            type: "system",
+            text:
+              response?.answer ||
+              "Vui lòng chọn lại chương trình đào tạo trước khi tiếp tục.",
+          },
+        ]);
+        return;
+      }
+
+      if (response?.selected_program_id) {
+        const resolvedProgramId = response.selected_program_id;
+        setSelectedProgramBySession((prev) => ({ ...prev, [sessionId]: resolvedProgramId }));
+        setPendingProgramBySession((prev) => ({ ...prev, [sessionId]: resolvedProgramId }));
+      }
+
+      const answer = typeof response?.answer === "string" ? response.answer : "Không có phản hồi.";
       updateMessages(sessionId, (prev) => [...prev, { type: "bot", text: answer }]);
       const updatedHist = await fetchHistory(sessionId);
       setHistoryList(updatedHist);
@@ -420,6 +607,7 @@ export default function App() {
   };
 
   const handleKeyDown = (e) => {
+    if (loading) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSendMessage();
@@ -653,6 +841,59 @@ export default function App() {
 
         <div className="input-region">
           <div className="input-container">
+            <div className={`program-selector ${currentSelectedProgramId ? "has-selection" : "required-selection"}`}>
+              <div className="program-selector-header">
+                <div className="program-selector-title">
+                  <i className="fas fa-graduation-cap"></i>
+                  <span>
+                    {currentSelectedProgramId
+                      ? "Chương trình đào tạo hiện tại"
+                      : "Chọn chương trình đào tạo/QH (bắt buộc)"}
+                  </span>
+                </div>
+                <button
+                  className="chip-btn"
+                  onClick={() => refreshPrograms(true)}
+                  disabled={programsLoading}
+                  title="Làm mới danh sách chương trình"
+                >
+                  <i className={`fas ${programsLoading ? "fa-circle-notch fa-spin" : "fa-sync-alt"}`}></i>
+                </button>
+              </div>
+              <div className="program-selector-controls">
+                <select
+                  value={currentPendingProgramId}
+                  onChange={(e) => handleProgramChange(currentSession, e.target.value)}
+                  disabled={programsLoading || !programs.length}
+                >
+                  {!programs.length && (
+                    <option value="">
+                      {programsLoading ? "Đang tải chương trình..." : "Không có chương trình khả dụng"}
+                    </option>
+                  )}
+                  {programs.map((program) => (
+                    <option key={program.id} value={program.id}>
+                      {program.display_name || program.name || program.id}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="chip-btn program-confirm-btn"
+                  onClick={handleConfirmProgram}
+                  disabled={programsLoading || !currentPendingProgramId}
+                >
+                  Xác nhận
+                </button>
+              </div>
+              {currentProgramDisplayName ? (
+                <div className="program-selector-hint">Đang dùng: {currentProgramDisplayName}</div>
+              ) : (
+                <div className="program-selector-hint">
+                  Hệ thống chỉ xử lý câu hỏi sau khi bạn xác nhận CTĐT/QH.
+                </div>
+              )}
+            </div>
+
             {processingPdf && (
               <div className="processing-banner">
                 <i className="fas fa-circle-notch fa-spin"></i> {processingLabel || "Đang xử lý PDF..."}
@@ -709,7 +950,7 @@ export default function App() {
                   style={{ cursor: "pointer", marginLeft: 5 }}
                   onClick={() => {
                     setUploadedFile(null);
-                    setSelectedFileIds([]);
+                    updateSelectedFiles(currentSession, []);
                   }}
                 ></i>
               </div>
@@ -741,13 +982,14 @@ export default function App() {
                 value={inputStr}
                 onChange={handleInput}
                 onKeyDown={handleKeyDown}
+                disabled={loading}
               ></textarea>
 
               <button
                 className="icon-btn"
-                style={{ color: inputStr ? "#3b82f6" : "inherit" }}
+                style={{ color: inputStr && currentSelectedProgramId ? "#3b82f6" : "inherit" }}
                 onClick={handleSendMessage}
-                disabled={loading || !inputStr.trim()}
+                disabled={loading || !inputStr.trim() || !currentSelectedProgramId}
               >
                 <i className="fas fa-paper-plane"></i>
               </button>

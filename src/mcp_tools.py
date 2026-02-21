@@ -107,6 +107,7 @@ def tool_consult_advisor(
     query: str,
     file_ids: List[str] | None = None,
     session_id: str = "default",
+    program_id: str | None = None,
     client: MCPClient | None = None,
 ) -> str:
     """
@@ -119,6 +120,7 @@ def tool_consult_advisor(
             "query": query,
             "file_ids": file_ids or [],
             "session_id": session_id,
+            "program_id": program_id,
         },
     )
     return str(result)
@@ -136,7 +138,22 @@ def tool_get_schedule(subject_codes: List[str], client: MCPClient | None = None)
     return str(result)
 
 
-def tool_get_curriculum_lookup(group_hint: str = None, client: MCPClient | None = None) -> str:
+def tool_get_available_programs(refresh: bool = False, client: MCPClient | None = None) -> str:
+    """
+    Lay danh sach cac chuong trinh dao tao co san trong he thong.
+    He thong tu dong quet va nhan dien tu noi dung file HTML.
+    
+    Args:
+        refresh: True de quet lai thu muc, False de dung cache.
+    Returns:
+        JSON danh sach [{id, name, year, display_name}]
+    """
+    mcp = _get_client(client)
+    result: Any = mcp.invoke("get_available_programs", {"refresh": refresh})
+    return str(result)
+
+
+def tool_get_curriculum_lookup(group_hint: str = None, program_id: str = None, client: MCPClient | None = None) -> str:
     """
     Tra cuu danh sach cac mon hoc trong chuong trinh dao tao.
     Dung khi nguoi dung hoi ve: hoc phan tu chon, mon nao con thieu, yeu cau tot nghiep, danh sach mon hoc trong CTDT.
@@ -144,15 +161,16 @@ def tool_get_curriculum_lookup(group_hint: str = None, client: MCPClient | None 
     Args:
         group_hint: Vi du 'V.2.1', 'tu chon', 'Phan mem' de loc nhom mon. 
                     Neu None, tra ve tat ca nhom mon.
+        program_id: Ma chuong trinh dao tao (vd: 'it_2025', 'cs_2022'). Neu None, dung chuong trinh mac dinh.
     Returns:
         JSON chua danh sach nhom mon va cac mon hoc tuong ung.
     """
     mcp = _get_client(client)
-    result: Any = mcp.invoke("get_curriculum_lookup", {"group_hint": group_hint})
+    result: Any = mcp.invoke("get_curriculum_lookup", {"group_hint": group_hint, "program_id": program_id})
     return str(result)
 
 
-def tool_get_electives_with_schedule(check_schedule: bool = True, client: MCPClient | None = None) -> str:
+def tool_get_electives_with_schedule(check_schedule: bool = True, program_id: str = None, client: MCPClient | None = None) -> str:
     """
     Lấy danh sách các môn TỰ CHỌN từ Chương trình Đào tạo VÀ kiểm tra xem môn nào đang MỞ trong TKB.
     Dùng khi nguoi dung hoi ve: 'hoc phan tu chon nao dang mo', 'mon tu chon trong ky nay', 
@@ -160,9 +178,10 @@ def tool_get_electives_with_schedule(check_schedule: bool = True, client: MCPCli
     
     Args:
         check_schedule: True để kiểm tra TKB, False chỉ lấy danh sách từ CTĐT.
+        program_id: Ma chuong trinh dao tao (vd: 'it_2025', 'cs_2022'). Neu None, dung chuong trinh mac dinh.
     Returns:
         JSON với "opened" (môn đang mở lớp) và "not_opened" (môn chưa mở)
     """
     mcp = _get_client(client)
-    result: Any = mcp.invoke("get_electives_with_schedule", {"check_schedule": check_schedule})
+    result: Any = mcp.invoke("get_electives_with_schedule", {"check_schedule": check_schedule, "program_id": program_id})
     return str(result)

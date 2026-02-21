@@ -1,7 +1,8 @@
-import sys
+﻿import sys
 import os
 import json
 import re
+import hashlib
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -16,9 +17,16 @@ from env_loader import load_env
 
 # Initial Env Load & Conflict Resolution
 load_env()
-if "GEMINI_API_KEY" in os.environ and "GOOGLE_API_KEY" in os.environ:
-    # Always prioritize GEMINI_API_KEY in this project
-    del os.environ["GOOGLE_API_KEY"]
+gemini_key = os.getenv("GEMINI_API_KEY")
+google_key = os.getenv("GOOGLE_API_KEY")
+if gemini_key:
+    if google_key and google_key != gemini_key:
+        logging.warning(
+            "Conflict detected: GOOGLE_API_KEY and GEMINI_API_KEY differ. "
+            "Overriding GOOGLE_API_KEY with GEMINI_API_KEY."
+        )
+    os.environ["GOOGLE_API_KEY"] = gemini_key
+    os.environ.pop("GEMINI_API_KEY", None)
 
 from utils import (
     web_search,
@@ -103,13 +111,28 @@ CURRICULUM_HTML_DIR = RESOURCE_DIR / "html"
 CURRICULUM_PDF_DIR = RESOURCE_DIR / "pdfs"
 MEMORY_DB = BASE_DIR / "data" / "memory.db"
 
-load_env()
-if os.getenv("GEMINI_API_KEY") and not os.getenv("GOOGLE_API_KEY"):
-    os.environ["GOOGLE_API_KEY"] = os.getenv("GEMINI_API_KEY")
-
 _embedder: Optional[VietnameseEmbedder] = None
 _store: Optional[FAISSVectorStore] = None  
 _loaded_files: Set[str] = set()
+SCHEDULE_NAME_HINTS: Tuple[str, ...] = (
+    "tkb",
+    "thoi khoa bieu",
+    "thoi khoa",
+    "phu luc",
+    "lich hoc",
+    "hoc ky",
+)
+_SCHEDULE_TEXT_CACHE: Dict[str, Any] = {
+    "signature": None,
+    "file_name": None,
+    "text": "",
+}
+_SCHEDULE_TIME_SLOT_CACHE: Dict[str, Any] = {
+    "signature": None,
+    "source_file": None,
+    "slot_map": {},
+    "checksum": None,
+}
 
 # Initialize global embedder/store early if possible
 def _init_vector_store():
@@ -122,6 +145,463 @@ def _init_vector_store():
         resource_loader.set_vector_store(_store)
         # triggers initial load
         resource_loader.load_resources()
+
+
+def _looks_like_schedule_pdf(path: Path) -> bool:
+    norm_name = normalize_for_match(path.name)
+    if "tkb" in norm_name:
+        return True
+    if "thoi khoa bieu" in norm_name:
+        return True
+    if "phu luc" in norm_name and ("thoi khoa" in norm_name or "hoc ky" in norm_name):
+        return True
+    return any(hint in norm_name for hint in SCHEDULE_NAME_HINTS)
+
+
+def _collect_schedule_files(resource_dir: Path) -> List[Path]:
+    files: Dict[str, Path] = {}
+    scan_dirs = [resource_dir, PDF_DIR]
+    for folder in scan_dirs:
+        if not folder.exists():
+            continue
+        for path in folder.glob("*.pdf"):
+            if not _looks_like_schedule_pdf(path):
+                continue
+            try:
+                files[str(path.resolve())] = path
+            except Exception:
+                files[str(path)] = path
+    return list(files.values())
+
+
+def _build_schedule_signature(files: List[Path]) -> Tuple[Tuple[str, int, int], ...]:
+    signature: List[Tuple[str, int, int]] = []
+    for path in files:
+        try:
+            stat = path.stat()
+            signature.append((str(path.resolve()), int(stat.st_mtime_ns), int(stat.st_size)))
+        except Exception:
+            continue
+    signature.sort()
+    return tuple(signature)
+
+
+def _load_best_schedule_text(force_refresh: bool = False) -> Tuple[str, str]:
+    """
+    Load and cache the best schedule (TKB) text based on extracted text length.
+    Cache invalidates automatically when candidate files change.
+    """
+    global _SCHEDULE_TEXT_CACHE
+
+    resource_dir = BASE_DIR / "data" / "resources" / "pdfs"
+    candidates = _collect_schedule_files(resource_dir)
+    if not candidates:
+        return "", ""
+
+    signature = _build_schedule_signature(candidates)
+    if (
+        not force_refresh
+        and _SCHEDULE_TEXT_CACHE.get("signature") == signature
+        and _SCHEDULE_TEXT_CACHE.get("text")
+    ):
+        return str(_SCHEDULE_TEXT_CACHE.get("text") or ""), str(_SCHEDULE_TEXT_CACHE.get("file_name") or "")
+
+    ranked: List[Tuple[Path, int, str]] = []
+    for path in candidates:
+        try:
+            docs = process_pdf(str(path))
+            text = "\n".join(d.page_content for d in docs)
+            ranked.append((path, len(text), text))
+        except Exception as e:
+            logger.warning("[schedule] Failed to parse candidate %s: %s", path.name, e)
+
+    if not ranked:
+        _SCHEDULE_TEXT_CACHE = {"signature": signature, "file_name": None, "text": ""}
+        return "", ""
+
+    ranked.sort(key=lambda item: item[1], reverse=True)
+    best_path, best_len, best_text = ranked[0]
+    if best_len <= 2000:
+        _SCHEDULE_TEXT_CACHE = {"signature": signature, "file_name": None, "text": ""}
+        return "", ""
+
+    _SCHEDULE_TEXT_CACHE = {
+        "signature": signature,
+        "file_name": best_path.name,
+        "text": best_text,
+    }
+    logger.info("[schedule] Selected BEST TKB file: %s (%s chars text)", best_path.name, best_len)
+    return best_text, best_path.name
+
+
+def _format_hhmm(raw: str) -> str:
+    parts = (raw or "").split(":")
+    if len(parts) != 2:
+        return raw
+    try:
+        hour = int(parts[0])
+        minute = int(parts[1])
+        return f"{hour:02d}:{minute:02d}"
+    except Exception:
+        return raw
+
+
+def _extract_time_slot_map(text: str) -> Dict[str, Dict[str, str]]:
+    """
+    Extract a canonical time-slot map from schedule docs (table or OCR text).
+    Returns: {"1": {"session": "...", "period": "...", "time_range": "HH:MM – HH:MM"}, ...}
+    """
+    slot_candidates: Dict[str, Dict[str, Any]] = {}
+    time_re = re.compile(r"(\d{1,2}:\d{2})\s*[-–—]\s*(\d{1,2}:\d{2})")
+    period_norm_re = re.compile(r"\btiet\s*(\d+\s*-\s*\d+)\b")
+    period_raw_re = re.compile(r"(?i)(ti[eế]t\s*\d+\s*-\s*\d+)")
+    explicit_ca_re = re.compile(r"\bca\s*([1-9])\b")
+    leading_ca_re = re.compile(r"^\s*([1-9])\s+tiet\s*\d")
+
+    def _build_candidate(
+        ca: str,
+        session: Optional[str],
+        period: Optional[str],
+        time_range: str,
+    ) -> Dict[str, Any]:
+        return {
+            "session": (session or "").strip(),
+            "period": (period or "").strip(),
+            "time_range": time_range.strip(),
+            "_score": (2 if session else 0) + (2 if period else 0) + 1,
+        }
+
+    for raw_line in (text or "").splitlines():
+        line = (raw_line or "").strip()
+        if not line:
+            continue
+
+        time_match = time_re.search(line)
+        if not time_match:
+            continue
+
+        norm_line = normalize_for_match(line)
+
+        ca: Optional[str] = None
+        session = ""
+        period = ""
+
+        if line.startswith("|"):
+            cols = [c.strip() for c in line.strip("|").split("|")]
+            if len(cols) >= 4:
+                ca_norm = normalize_for_match(cols[1])
+                if ca_norm.isdigit():
+                    ca = ca_norm
+                session_norm = normalize_for_match(cols[0])
+                if "sang" in session_norm:
+                    session = "Sang"
+                elif "chieu" in session_norm:
+                    session = "Chieu"
+                elif "toi" in session_norm:
+                    session = "Toi"
+                period = cols[2].strip()
+
+        if not ca:
+            m_ca = explicit_ca_re.search(norm_line)
+            if m_ca:
+                ca = m_ca.group(1)
+        if not ca:
+            m_leading = leading_ca_re.search(norm_line)
+            if m_leading:
+                ca = m_leading.group(1)
+
+        if not ca and "nghi" in norm_line:
+            continue
+
+        if not period:
+            raw_period = period_raw_re.search(line)
+            if raw_period:
+                period = raw_period.group(1).strip()
+            else:
+                norm_period = period_norm_re.search(norm_line)
+                if norm_period:
+                    period = f"Tiet {norm_period.group(1).replace(' ', '')}"
+
+        if not session:
+            if "sang" in norm_line:
+                session = "Sang"
+            elif "chieu" in norm_line:
+                session = "Chieu"
+            elif "toi" in norm_line:
+                session = "Toi"
+
+        if not ca or not ca.isdigit():
+            continue
+        if int(ca) < 1 or int(ca) > 9:
+            continue
+
+        start_time = _format_hhmm(time_match.group(1))
+        end_time = _format_hhmm(time_match.group(2))
+        time_range = f"{start_time} – {end_time}"
+        candidate = _build_candidate(ca, session, period, time_range)
+
+        existing = slot_candidates.get(ca)
+        if existing is None or candidate["_score"] > int(existing.get("_score", 0)):
+            slot_candidates[ca] = candidate
+            continue
+        if candidate["_score"] == int(existing.get("_score", 0)):
+            # Prefer records that carry less OCR noise in period text.
+            if len(candidate.get("period", "")) > len(existing.get("period", "")):
+                slot_candidates[ca] = candidate
+
+    result: Dict[str, Dict[str, str]] = {}
+    for ca in sorted(slot_candidates.keys(), key=lambda x: int(x)):
+        record = slot_candidates[ca]
+        result[ca] = {
+            "session": str(record.get("session") or ""),
+            "period": str(record.get("period") or ""),
+            "time_range": str(record.get("time_range") or ""),
+        }
+    return result
+
+
+def _format_time_slot_map_text(slot_map: Dict[str, Dict[str, str]]) -> str:
+    if not slot_map:
+        return ""
+    lines = ["[CONTEXT TIME TABLE DETECTED IN PDF]"]
+    for ca in sorted(slot_map.keys(), key=lambda x: int(x)):
+        row = slot_map.get(ca) or {}
+        period = row.get("period") or ""
+        time_range = row.get("time_range") or ""
+        session = row.get("session") or ""
+        chunk = f"Ca {ca}"
+        if session:
+            chunk += f" ({session})"
+        if period:
+            chunk += f" - {period}"
+        if time_range:
+            chunk += f": {time_range}"
+        lines.append(chunk)
+    return "\n".join(lines)
+
+
+def _load_schedule_time_slot_map(force_refresh: bool = False) -> Tuple[Dict[str, Dict[str, str]], str]:
+    """
+    Load and cache canonical time slots from all schedule files.
+    Priority: official CV-like file and files that contain full slot definitions.
+    """
+    global _SCHEDULE_TIME_SLOT_CACHE
+
+    resource_dir = BASE_DIR / "data" / "resources" / "pdfs"
+    candidates = _collect_schedule_files(resource_dir)
+    if not candidates:
+        logger.warning("[schedule] Time-slot map: no schedule candidates found.")
+        return {}, ""
+
+    signature = _build_schedule_signature(candidates)
+    if (
+        not force_refresh
+        and _SCHEDULE_TIME_SLOT_CACHE.get("signature") == signature
+        and _SCHEDULE_TIME_SLOT_CACHE.get("slot_map")
+    ):
+        return (
+            dict(_SCHEDULE_TIME_SLOT_CACHE.get("slot_map") or {}),
+            str(_SCHEDULE_TIME_SLOT_CACHE.get("source_file") or ""),
+        )
+
+    ranked: List[Tuple[int, int, Path, Dict[str, Dict[str, str]]]] = []
+    for path in candidates:
+        try:
+            docs = process_pdf(str(path))
+            text = "\n".join(d.page_content for d in docs)
+            slot_map = _extract_time_slot_map(text)
+            if not slot_map:
+                continue
+
+            norm_name = normalize_for_match(path.name)
+            score = len(slot_map) * 10
+            if len(slot_map) >= 4:
+                score += 40
+            if "cv" in norm_name and "tkb" in norm_name:
+                score += 50
+            if "chinh thuc" in norm_name:
+                score += 30
+            if "thoi gian hoc tap va giang day" in normalize_for_match(text):
+                score += 20
+            ranked.append((score, len(slot_map), path, slot_map))
+        except Exception as e:
+            logger.warning("[schedule] Failed to build time-slot map from %s: %s", path.name, e)
+
+    if not ranked:
+        _SCHEDULE_TIME_SLOT_CACHE = {
+            "signature": signature,
+            "source_file": None,
+            "slot_map": {},
+            "checksum": None,
+        }
+        logger.warning("[schedule] Time-slot map empty after scanning %s candidates.", len(candidates))
+        return {}, ""
+
+    ranked.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    _, slot_count, best_path, best_map = ranked[0]
+
+    checksum = hashlib.sha1(
+        json.dumps(best_map, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:12]
+    signature_hash = hashlib.sha1(str(signature).encode("utf-8")).hexdigest()[:10]
+
+    _SCHEDULE_TIME_SLOT_CACHE = {
+        "signature": signature,
+        "source_file": best_path.name,
+        "slot_map": best_map,
+        "checksum": checksum,
+    }
+    logger.info(
+        "[schedule] Loaded time-slot map: slots=%s source=%s checksum=%s signature=%s",
+        slot_count,
+        best_path.name,
+        checksum,
+        signature_hash,
+    )
+    return best_map, best_path.name
+
+
+def _detect_schedule_slot_from_line(line: str) -> Optional[str]:
+    norm = normalize_for_match(line)
+    explicit = re.search(r"\bca\s*([1-9])\b", norm)
+    if explicit:
+        return explicit.group(1)
+
+    # Pattern from sheet-like rows: ... | LT | <thu> | <ca> | ...
+    sheet_like = re.search(
+        r"\|\s*(?:lt\+th|lt|th|onl)\s*\|\s*\d+\s*\|\s*(\d+)\s*\|",
+        line,
+        flags=re.IGNORECASE,
+    )
+    if sheet_like:
+        return sheet_like.group(1)
+
+    plain_sheet = re.search(
+        r"\b(?:lt\+th|lt|th|onl)\b\s+(\d+)\s+(\d+)\b",
+        norm,
+    )
+    if plain_sheet:
+        return plain_sheet.group(2)
+
+    return None
+
+
+def _detect_schedule_day_from_line(line: str) -> Optional[str]:
+    norm = normalize_for_match(line)
+
+    def _to_label(day_index: str) -> Optional[str]:
+        idx = str(day_index or "").strip()
+        if idx in {"2", "3", "4", "5", "6", "7"}:
+            return f"Thứ {idx}"
+        if idx == "8":
+            return "Chủ nhật"
+        return None
+
+    explicit = re.search(r"\bthu\s*([2-8])\b", norm)
+    if explicit:
+        return _to_label(explicit.group(1))
+
+    # Pattern from sheet-like rows: ... | LT | <thu> | <ca> | ...
+    sheet_like = re.search(
+        r"\|\s*(?:lt\+th|lt|th|onl)\s*\|\s*(\d+)\s*\|\s*\d+\s*\|",
+        line,
+        flags=re.IGNORECASE,
+    )
+    if sheet_like:
+        return _to_label(sheet_like.group(1))
+
+    plain_sheet = re.search(
+        r"\b(?:lt\+th|lt|th|onl)\b\s+(\d+)\s+(\d+)\b",
+        norm,
+    )
+    if plain_sheet:
+        return _to_label(plain_sheet.group(1))
+
+    return None
+
+
+def _build_schedule_table_rows(
+    schedule_items: List[Dict[str, Any]],
+    recommended_subjects: List[Dict[str, Any]],
+    default_time_slot_map: Dict[str, Dict[str, str]],
+) -> List[Dict[str, Any]]:
+    recommended_by_norm: Dict[str, Dict[str, Any]] = {}
+    for subj in recommended_subjects or []:
+        code = str(subj.get("code") or "").strip()
+        if not code:
+            continue
+        recommended_by_norm[_normalize_subject_code(code)] = subj
+
+    rows: List[Dict[str, Any]] = []
+    for item in schedule_items or []:
+        if not item.get("offered"):
+            continue
+
+        code = str(item.get("code") or "").strip()
+        if not code:
+            continue
+
+        norm_code = _normalize_subject_code(code)
+        subj = recommended_by_norm.get(norm_code) or {}
+
+        slot = str(item.get("resolved_slot") or "").strip()
+        day_label = str(item.get("resolved_day") or "").strip() or "Chưa xác định"
+        ca_hoc = f"Ca {slot}" if slot else "Chưa xác định"
+
+        slot_map = item.get("time_slot_map")
+        if not isinstance(slot_map, dict):
+            slot_map = default_time_slot_map or {}
+        slot_info = (slot_map.get(slot) or {}) if slot else {}
+
+        period = str(slot_info.get("period") or "").strip()
+        time_range = str(item.get("resolved_time_range") or slot_info.get("time_range") or "").strip()
+        if period and time_range:
+            period_time = f"{period} ({time_range})"
+        elif time_range:
+            period_time = time_range
+        elif period:
+            period_time = period
+        else:
+            period_time = "Chưa xác định từ TKB nguồn"
+
+        subject_name = str(subj.get("name") or item.get("name") or "").strip()
+        credits = subj.get("credits", item.get("credits"))
+
+        class_note = ""
+        snippet = str(item.get("snippet") or "")
+        class_match = re.search(rf"\b{re.escape(code)}\s*(\d{{1,3}})\b", snippet, flags=re.IGNORECASE)
+        if class_match:
+            class_note = f"Lớp {code} {class_match.group(1)}"
+
+        rows.append(
+            {
+                "day": day_label,
+                "ca_hoc": ca_hoc,
+                "period_time": period_time,
+                "subject_code": code,
+                "subject_name": subject_name,
+                "credits": credits,
+                "class_note": class_note,
+            }
+        )
+
+    def _day_order(label: str) -> int:
+        norm = normalize_for_match(label or "")
+        if "chu nhat" in norm:
+            return 8
+        m = re.search(r"\bthu\s*([2-8])\b", norm)
+        if m:
+            return int(m.group(1))
+        return 9
+
+    def _slot_order(value: str) -> int:
+        m = re.search(r"\b(\d+)\b", value or "")
+        if m:
+            return int(m.group(1))
+        return 99
+
+    rows.sort(key=lambda row: (_day_order(str(row.get("day") or "")), _slot_order(str(row.get("ca_hoc") or ""))))
+    return rows
 
 # On Startup (using FastAPI event)
 @app.on_event("startup")
@@ -189,7 +669,7 @@ def _ensure_file_loaded(file_id: str) -> str:
 
 
 def _extract_class_code_from_text(text: str) -> Optional[str]:
-    """Best-effort extraction of 'Lớp quản lý' / class code from raw transcript text."""
+    """Best-effort extraction of 'Lá»›p quáº£n lÃ½' / class code from raw transcript text."""
     norm = normalize_for_match(text)
     if not norm:
         return None
@@ -210,17 +690,34 @@ def _extract_class_code_from_text(text: str) -> Optional[str]:
 def _normalize_subject_code(code: str) -> str:
     """
     Normalize subject code for comparison:
-    - Uppercase, no spaces
-    - Remove trailing 'E' suffix (INT3401E -> INT3401) to handle English/Vietnamese variants
+    - Uppercase
+    - Remove all spaces
+    - Keep suffixes (e.g. E) as-is. INT3404 and INT3404E are different courses.
     """
     if not code:
         return ""
-    norm = code.upper().replace(" ", "").strip()
-    # Remove trailing 'E' suffix for comparison (e.g., INT3401E -> INT3401)
-    # But only if it's a digit followed by E (not things like 'INTE')
-    if len(norm) > 1 and norm.endswith("E") and norm[-2].isdigit():
-        return norm[:-1]
-    return norm
+    return code.upper().replace(" ", "").strip()
+
+
+def _build_subject_code_variants(code: str, allow_dot_alias: bool = True) -> List[str]:
+    """
+    Build strict code variants for schedule matching.
+    - Exact code is always required.
+    - Optional alias for prefixed codes (e.g. UET.INT3404E -> INT3404E).
+    - Never add/remove suffix 'E'.
+    """
+    norm_code = _normalize_subject_code(code)
+    if not norm_code:
+        return []
+
+    variants = [norm_code]
+    if allow_dot_alias and "." in norm_code:
+        short_code = norm_code.split(".")[-1].strip()
+        if short_code:
+            variants.append(short_code)
+
+    # Dedupe, preserve order
+    return list(dict.fromkeys([v for v in variants if v]))
 
 
 def _build_completed_subjects(semesters: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
@@ -248,6 +745,24 @@ def _build_completed_subjects(semesters: List[Dict[str, Any]]) -> Dict[str, Dict
                     "semester": sem_code,
                 }
     return best
+
+
+def _is_transcript_usable(payload: Dict[str, Any] | None) -> bool:
+    """
+    A transcript is usable when extraction succeeded and contains at least one subject.
+    """
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("error"):
+        return False
+    completed = payload.get("completed_subjects") or []
+    if isinstance(completed, list) and completed:
+        return True
+    semesters = payload.get("semesters") or []
+    for sem in semesters:
+        if (sem.get("subjects") or []):
+            return True
+    return False
 
 
 @mcp_tool("analyze_transcript")
@@ -342,6 +857,61 @@ def analyze_transcript(file_ids: str | List[str]) -> str:
         "A+=4.0, A=3.7, B+=3.5, B=3.0, C+=2.5, C=2.0, D+=1.5, D=1.0, F=0.0."
     )
 
+    def _chunk_large_segment(segment_text: str, max_chars: int = 7000) -> List[str]:
+        segment_text = (segment_text or "").strip()
+        if not segment_text:
+            return []
+        if len(segment_text) <= max_chars:
+            return [segment_text]
+
+        parts: List[str] = []
+        lines = segment_text.splitlines()
+        buf: List[str] = []
+        cur_len = 0
+        for line in lines:
+            add_len = len(line) + 1
+            if buf and cur_len + add_len > max_chars:
+                parts.append("\n".join(buf).strip())
+                buf = [line]
+                cur_len = add_len
+            else:
+                buf.append(line)
+                cur_len += add_len
+        if buf:
+            parts.append("\n".join(buf).strip())
+        return [p for p in parts if p]
+
+    def _split_transcript_segments(text: str, max_chars: int = 7000) -> List[str]:
+        """
+        Split transcript text into manageable pieces.
+        Prefer semester headers, fallback to fixed-size line chunks.
+        """
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return []
+
+        lines = cleaned.splitlines()
+        header_idxs: List[int] = []
+        for idx, line in enumerate(lines):
+            norm = normalize_for_match(line)
+            if "hoc ky" not in norm:
+                continue
+            has_sem_code = bool(re.search(r"\b\d{3}\b", norm))
+            if "ma hoc ky" in norm or "nam hoc" in norm or has_sem_code:
+                header_idxs.append(idx)
+
+        segments: List[str] = []
+        if header_idxs:
+            for i, start in enumerate(header_idxs):
+                end = header_idxs[i + 1] if i + 1 < len(header_idxs) else len(lines)
+                piece = "\n".join(lines[start:end]).strip()
+                if piece:
+                    segments.extend(_chunk_large_segment(piece, max_chars=max_chars))
+        else:
+            segments.extend(_chunk_large_segment(cleaned, max_chars=max_chars))
+
+        return [s for s in segments if s]
+
     def _to_float(value):
         if value is None: return None
         if isinstance(value, (int, float)): return float(value)
@@ -405,45 +975,62 @@ def analyze_transcript(file_ids: str | List[str]) -> str:
         return data
 
     def _parse_raw_json(raw_text):
-        cleaned = raw_text.strip()
-        if "```" in cleaned: cleaned = cleaned.replace("```json", "").replace("```", "").strip()
-        try: return json.loads(cleaned)
-        except: 
-            s, e = cleaned.find("{"), cleaned.rfind("}")
-            if s!=-1 and e!=-1: 
-                try: return json.loads(cleaned[s:e+1])
-                except: return None
+        cleaned = (raw_text or "").strip()
+        if not cleaned:
             return None
+
+        if "```" in cleaned:
+            cleaned = re.sub(r"^\s*```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+            cleaned = re.sub(r"\s*```\s*$", "", cleaned, flags=re.IGNORECASE)
+            cleaned = cleaned.strip()
+
+        try:
+            parsed = json.loads(cleaned)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+
+        # Try raw_decode from any JSON object start.
+        decoder = json.JSONDecoder()
+        for idx, ch in enumerate(cleaned):
+            if ch not in "{[":
+                continue
+            try:
+                parsed, _ = decoder.raw_decode(cleaned[idx:])
+            except Exception:
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+        return None
 
     merged = {"student_info": None, "semesters": [], "overview": {}}
     errors = []
-    semester_pattern = re.compile(r"(?:HỌC KỲ|HOC KY|H\s*¯OC\s*K\s*¯ý)[^\\n]*(?:MÃ HỌC KỲ|MA HOC KY|MAŸ\s*H\s*¯OC\s*K\s*¯ý)[^\\n]*", re.IGNORECASE)
+    semester_pattern = re.compile(r"(?:Há»ŒC Ká»²|HOC KY|H\s*Â¯OC\s*K\s*Â¯Ã½)[^\\n]*(?:MÃƒ Há»ŒC Ká»²|MA HOC KY|MAÅ¸\s*H\s*Â¯OC\s*K\s*Â¯Ã½)[^\\n]*", re.IGNORECASE)
 
     for entry in texts:
         text = entry["text"]
         if not text: continue
-        segments = []
-        positions = list(semester_pattern.finditer(text))
-        if positions:
-            for idx, match in enumerate(positions):
-                start = match.start()
-                end = positions[idx + 1].start() if idx + 1 < len(positions) else len(text)
-                segments.append(text[start:end].strip())
-        else:
-            segments.append(text.strip())
+        segments = _split_transcript_segments(text, max_chars=7000)
+        if not segments:
+            segments = [text.strip()]
 
         for seg_idx, segment in enumerate(segments):
             label = f"{entry['file_id']}#seg{seg_idx+1}"
             try:
                 genai.configure(api_key=api_key)
                 model = genai.GenerativeModel("gemini-2.5-flash")
-                response = model.generate_content(f"{prompt}\n\nDATA ({label}):\n{segment}", generation_config={"max_output_tokens": 4000, "response_mime_type": "application/json"})
+                response = model.generate_content(
+                    f"{prompt}\n\nDATA ({label}):\n{segment}",
+                    generation_config={"max_output_tokens": 8000, "response_mime_type": "application/json"},
+                )
                 raw = getattr(response, "text", "") or ""
                 if not raw:
                     errors.append(f"{label}: empty")
                     continue
                 data = _parse_raw_json(raw)
                 if not data:
+                    logger.warning("[analyze_transcript] invalid json from %s (len=%s, preview=%s)", label, len(raw), raw[:200].replace("\n", "\\n"))
                     errors.append(f"{label}: invalid json")
                     continue
                 
@@ -503,97 +1090,83 @@ def analyze_transcript(file_ids: str | List[str]) -> str:
 def get_schedule(subject_codes: List[str]) -> str:
     """
     Deterministically retrieve schedule info for specific subjects from the Global TKB PDF.
-    Scans ALL available TKB-related PDFs to find both class data and time definitions.
+    Scans ALL available TKB-related PDFs to find class data and canonical time definitions.
     """
     logger.info(f"get_schedule invoked for: {subject_codes}")
-    
-    # 1. Locate Schedule Files
-    tkb_candidates = []
-    # Check resources/pdfs
-    if CURRICULUM_PDF_DIR.exists():
-        tkb_candidates.extend(CURRICULUM_PDF_DIR.glob("*TKB*.pdf"))
-        tkb_candidates.extend(CURRICULUM_PDF_DIR.glob("*Schedu*.pdf"))
-    
-    # Check data/pdfs (uploaded files)
-    tkb_candidates.extend(PDF_DIR.glob("*TKB*.pdf"))
-    
-    # Deduplicate by path
-    tkb_candidates = list(dict.fromkeys(tkb_candidates)) # keeps order
-    
+
+    resource_dir = BASE_DIR / "data" / "resources" / "pdfs"
+    tkb_candidates = _collect_schedule_files(resource_dir)
     if not tkb_candidates:
         return json.dumps({"error": "Global Schedule file (TKB) not found."}, ensure_ascii=False)
-        
-    logger.info(f"Found {len(tkb_candidates)} TKB candidates: {[p.name for p in tkb_candidates]}")
-    
-    combined_results = {} # code -> {lines: [], notes: []}
-    time_table_context = ""
-    
-    # Initialize results map
-    for code in subject_codes:
-        combined_results[code.upper().strip()] = {"schedule_lines": [], "note": ""}
 
-    # 2. Iterate ALL candidates
+    logger.info("Found %s TKB candidates: %s", len(tkb_candidates), [p.name for p in tkb_candidates])
+
+    time_slot_map, time_source_file = _load_schedule_time_slot_map()
+    time_definitions_text = _format_time_slot_map_text(time_slot_map)
+
+    combined_results: Dict[str, Dict[str, Any]] = {}
+    for code in subject_codes:
+        norm_code = _normalize_subject_code(code)
+        if not norm_code:
+            continue
+        combined_results[norm_code] = {"schedule_lines": [], "note": ""}
+
     for target_pdf in tkb_candidates:
         try:
-            logger.info(f"Scanning TKB Candidate: {target_pdf.name}")
+            logger.info("Scanning TKB Candidate: %s", target_pdf.name)
             docs = process_pdf(str(target_pdf))
             full_text = "\n".join([d.page_content for d in docs])
-            
-            # A. Scan for Time Context (Accumulate/Overwrite if better found?)
-            # Heuristic: Prefer context with "07:00" explicitly
-            if not time_table_context or "07:00" not in time_table_context:
-                current_time_lines = []
-                for line in full_text.splitlines():
-                    if re.search(r"(Tiết|Ca)\s+\d+.*(\d{1,2}:\d{2})", line, re.IGNORECASE):
-                        current_time_lines.append(line.strip())
-                
-                if current_time_lines:
-                    # Dedupe
-                    unique_lines = list(set(current_time_lines))
-                    # Join
-                    ctx = "\n[CONTEXT TIME TABLE DETECTED IN PDF]:\n" + "\n".join(unique_lines[:15])
-                    # If this context looks "richer" (has actual timestamps), use it
-                    if "07:00" in ctx or "16:20" in ctx:
-                        time_table_context = ctx
-            
-            # B. Scan for Subject Lines
-            for code in subject_codes:
-                norm_code = code.upper().strip()
-                matches = []
-                for line in full_text.splitlines():
-                    if norm_code in line.upper():
+            full_lines = full_text.splitlines()
+
+            for raw_code in subject_codes:
+                norm_code = _normalize_subject_code(raw_code)
+                if not norm_code:
+                    continue
+                code_variants = _build_subject_code_variants(norm_code)
+
+                matches: List[str] = []
+                for line in full_lines:
+                    line_upper = line.upper()
+                    if any(
+                        re.search(rf"(?<![A-Z0-9]){re.escape(variant)}(?![A-Z0-9])", line_upper)
+                        for variant in code_variants
+                    ):
                         matches.append(line.strip())
-                
                 if matches:
                     combined_results[norm_code]["schedule_lines"].extend(matches)
-        
+
         except Exception as e:
-            logger.error(f"Error processing matching PDF {target_pdf.name}: {e}")
+            logger.error("Error processing matching PDF %s: %s", target_pdf.name, e)
             continue
 
-    # 3. Format Output
-    final_output = []
-    for code in subject_codes:
-        norm_code = code.upper().strip()
+    final_output: List[Dict[str, Any]] = []
+    for raw_code in subject_codes:
+        norm_code = _normalize_subject_code(raw_code)
+        if not norm_code:
+            continue
         data = combined_results[norm_code]
-        
-        # Unique lines to avoid dupes across files
-        unique_lines = list(set(data["schedule_lines"]))
-        
+        unique_lines = list(dict.fromkeys([line for line in data["schedule_lines"] if line]))
         if unique_lines:
-            item = {
+            item: Dict[str, Any] = {
                 "subject_code": norm_code,
-                "schedule_lines": unique_lines
+                "schedule_lines": unique_lines,
             }
-            if time_table_context:
-                item["time_definitions"] = time_table_context
+            if time_definitions_text:
+                item["time_definitions"] = time_definitions_text
+            if time_slot_map:
+                item["time_slot_map"] = time_slot_map
+                item["time_source_file"] = time_source_file
             final_output.append(item)
         else:
-             final_output.append({
+            fallback_item: Dict[str, Any] = {
                 "subject_code": norm_code,
-                "note": "Not found in TKB."
-            })
-            
+                "note": "Not found in TKB.",
+            }
+            if time_slot_map:
+                fallback_item["time_slot_map"] = time_slot_map
+                fallback_item["time_source_file"] = time_source_file
+            final_output.append(fallback_item)
+
     return json.dumps(final_output, ensure_ascii=False)
 
 @mcp_tool("math_eval")
@@ -603,6 +1176,253 @@ def math_eval(expression: str) -> str:
     if not re.fullmatch(r"[0-9.+-/*()\s]+", clean): return f"Error: Unsafe {expression}"
     try: return str(eval(clean, {"__builtins__": {}}, {}))
     except Exception as e: return f"Error: {e}"
+
+
+# ============ MULTI-CURRICULUM SUPPORT ============
+# Cache for discovered programs: {program_id: {id, name, year, file_path}}
+_PROGRAM_REGISTRY: Dict[str, Dict[str, Any]] = {}
+
+
+def _analyze_html_metadata(file_path: Path) -> Optional[Dict[str, Any]]:
+    """
+    Analyze HTML curriculum file to extract program metadata.
+    Returns: {id, name, year, file_path} or None if not a valid curriculum file.
+    """
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        soup = BeautifulSoup(content, "html.parser")
+
+        # Skip non-curriculum files (usually no subject table).
+        table_rows = soup.find_all("tr")
+        if len(table_rows) < 20:
+            logger.debug("Skipping %s: only %s table rows (likely intro file)", file_path.name, len(table_rows))
+            return None
+
+        title = ""
+        title_tag = soup.find("title")
+        if title_tag:
+            title = title_tag.get_text(strip=True)
+        if not title:
+            h1 = soup.find("h1") or soup.find("h2")
+            if h1:
+                title = h1.get_text(strip=True)
+
+        signal_text = f"{title} {file_path.stem} {content[:5000]}"
+        signal_norm = normalize_for_match(signal_text)
+
+        major_map: List[Tuple[str, str, str]] = [
+            ("cong nghe thong tin", "Công nghệ thông tin", "it"),
+            ("khoa hoc may tinh", "Khoa học máy tính", "cs"),
+            ("ky thuat phan mem", "Kỹ thuật phần mềm", "se"),
+            ("he thong thong tin", "Hệ thống thông tin", "is"),
+            ("tri tue nhan tao", "Trí tuệ nhân tạo", "ai"),
+            ("mang may tinh va truyen thong du lieu", "Mạng máy tính và truyền thông dữ liệu", "network"),
+            ("an toan thong tin", "An toàn thông tin", "security"),
+            ("khoa hoc du lieu", "Khoa học dữ liệu", "ds"),
+        ]
+
+        major_name = None
+        abbr = None
+        for token, label, pid in major_map:
+            if token in signal_norm:
+                major_name = label
+                abbr = pid
+                break
+
+        if not major_name:
+            # Fallback from filename/title.
+            major_name = title.strip() or file_path.stem.strip()
+            major_name = re.sub(r"\s+", " ", major_name)[:120]
+            words = [w for w in normalize_for_match(major_name).split() if w]
+            abbr = "".join(w[0] for w in words)[:6] or "prog"
+
+        year = None
+        year_end = None
+        year_range_match = re.search(r"qh[\s\-]?(\d{4})[\s\-]+(\d{4})", signal_norm)
+        if year_range_match:
+            year = year_range_match.group(1)
+            year_end = year_range_match.group(2)
+        else:
+            year_match = re.search(r"qh[\s\-]?(\d{4})", signal_norm)
+            if not year_match:
+                year_match = re.search(r"khoa\s+(\d{4})", signal_norm)
+            if not year_match:
+                year_match = re.search(r"\b(20\d{2})\b", normalize_for_match(file_path.stem))
+            if year_match:
+                year = year_match.group(1)
+
+        if not year and "tt23" in normalize_for_match(file_path.stem):
+            year = "2025"
+
+        program_id = f"{abbr}_{year}" if year else abbr
+
+        if year and year_end:
+            year_display = f"QH-{year}-{year_end}"
+        elif year:
+            year_display = f"QH-{year}"
+        else:
+            year_display = None
+
+        return {
+            "id": program_id,
+            "name": major_name,
+            "year": year,
+            "year_end": year_end,
+            "display_name": f"{major_name} ({year_display})" if year_display else major_name,
+            "file_path": str(file_path),
+            "file_name": file_path.name,
+        }
+
+    except Exception as e:
+        logger.warning(f"Failed to analyze {file_path.name}: {e}")
+        return None
+
+
+def _scan_curriculum_programs(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
+    """
+    Scan HTML directory and build program registry.
+    Uses cache unless force_refresh=True.
+    """
+    global _PROGRAM_REGISTRY
+    
+    if _PROGRAM_REGISTRY and not force_refresh:
+        return _PROGRAM_REGISTRY
+    
+    logger.info("Scanning curriculum HTML files for program discovery...")
+    _PROGRAM_REGISTRY = {}
+    
+    if not CURRICULUM_HTML_DIR.exists():
+        logger.warning(f"Curriculum HTML directory not found: {CURRICULUM_HTML_DIR}")
+        return _PROGRAM_REGISTRY
+    
+    # Find main curriculum files via normalized name matching to avoid encoding issues.
+    main_file_patterns = ["chuong trinh dao tao", "noi dung chuong trinh"]
+    skip_file_patterns = ["gioi thieu", "huong dan", "chuan dau ra"]
+    
+    for html_file in CURRICULUM_HTML_DIR.glob("*.html"):
+        # Check if this is a main curriculum file
+        name_norm = normalize_for_match(html_file.name)
+        is_main = any(p in name_norm for p in main_file_patterns)
+        is_secondary = any(p in name_norm for p in skip_file_patterns)
+        if is_secondary:
+            continue
+        if not is_main:
+            continue
+        
+        metadata = _analyze_html_metadata(html_file)
+        if metadata:
+            pid = metadata["id"]
+            # Handle duplicates by preferring "noi dung" over generic "chuong trinh".
+            if pid in _PROGRAM_REGISTRY:
+                if "noi dung" in name_norm:
+                    _PROGRAM_REGISTRY[pid] = metadata
+            else:
+                _PROGRAM_REGISTRY[pid] = metadata
+            logger.info(f"Discovered program: {metadata['display_name']} ({pid})")
+    
+    logger.info(f"Total programs discovered: {len(_PROGRAM_REGISTRY)}")
+    return _PROGRAM_REGISTRY
+
+
+def _resolve_program_entry(program_hint: Optional[str], programs: Optional[Dict[str, Dict[str, Any]]] = None) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+    """
+    Resolve a program hint/id to a canonical registry entry.
+    Matching order:
+    1) exact id
+    2) normalized id
+    3) normalized display/name contains hint
+    """
+    registry = programs or _scan_curriculum_programs()
+    if not registry:
+        return None, None
+
+    if not program_hint:
+        return None, None
+
+    raw = str(program_hint).strip()
+    if not raw:
+        return None, None
+
+    if raw in registry:
+        return raw, registry[raw]
+
+    norm = normalize_for_match(raw)
+    for pid, entry in registry.items():
+        if normalize_for_match(pid) == norm:
+            return pid, entry
+
+    for pid, entry in registry.items():
+        haystacks = [
+            normalize_for_match(entry.get("display_name", "")),
+            normalize_for_match(entry.get("name", "")),
+            normalize_for_match(entry.get("file_name", "")),
+        ]
+        if any(norm and norm in h for h in haystacks):
+            return pid, entry
+
+    return None, None
+
+
+def _load_session_file_ids(session_id: str) -> List[str]:
+    """
+    Recover selected transcript file_ids from app session cache.
+    This protects consult_advisor when planner forgets to pass file_ids.
+    """
+    sid = str(session_id or "").strip()
+    if not sid:
+        return []
+
+    meta_path = BASE_DIR / "data" / "session_cache" / sid / "meta.json"
+    if not meta_path.exists():
+        return []
+
+    try:
+        payload = json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.warning("[consult_advisor] Failed to read session cache %s: %s", meta_path, e)
+        return []
+
+    ids = payload.get("file_ids", [])
+    if not isinstance(ids, list):
+        return []
+
+    cleaned: List[str] = []
+    for fid in ids:
+        text = str(fid or "").strip()
+        if text and text not in cleaned:
+            cleaned.append(text)
+    return cleaned
+
+
+@mcp_tool("get_available_programs")
+def get_available_programs(refresh: bool = False) -> str:
+    """
+    Tráº£ vá» danh sÃ¡ch cÃ¡c chÆ°Æ¡ng trÃ¬nh Ä‘Ã o táº¡o cÃ³ sáºµn trong há»‡ thá»‘ng.
+    Há»‡ thá»‘ng tá»± quÃ©t vÃ  nháº­n diá»‡n tá»« ná»™i dung file HTML.
+    
+    Args:
+        refresh: True Ä‘á»ƒ quÃ©t láº¡i thÆ° má»¥c, False Ä‘á»ƒ dÃ¹ng cache.
+    Returns:
+        JSON danh sÃ¡ch [{id, name, year, display_name}]
+    """
+    programs = _scan_curriculum_programs(force_refresh=refresh)
+    
+    if not programs:
+        return json.dumps({"error": "KhÃ´ng tÃ¬m tháº¥y chÆ°Æ¡ng trÃ¬nh Ä‘Ã o táº¡o nÃ o.", "programs": []}, ensure_ascii=False)
+    
+    # Return simplified list for agent
+    result = [
+        {
+            "id": p["id"],
+            "name": p["name"],
+            "year": p["year"],
+            "display_name": p["display_name"],
+        }
+        for p in programs.values()
+    ]
+    return json.dumps({"programs": result}, ensure_ascii=False)
 
 
 def _list_curriculum_candidates() -> List[Path]:
@@ -615,17 +1435,35 @@ def _list_curriculum_candidates() -> List[Path]:
 
 
 @mcp_tool("get_curriculum_lookup")
-def get_curriculum_lookup(group_hint: str = None) -> str:
+def get_curriculum_lookup(group_hint: str = None, program_id: str = None) -> str:
     """
     Parses the Curriculum HTML to return a structure of Module Groups and their Subjects.
     Useful for finding list of electives when a specific subject is not found in schedule.
     args:
-        group_hint: Optional text to filter groups (e.g. "V.2.1" or "Phần mềm"). If None, returns all.
+        group_hint: Optional text to filter groups (e.g. "V.2.1" or "Pháº§n má»m"). If None, returns all.
+        program_id: Optional program identifier (e.g. "it_2025", "cs_2022"). If None, uses default/first available.
     """
-    logger.info(f"get_curriculum_lookup invoked with hint: {group_hint}")
-    html_path = CURRICULUM_HTML_DIR / "Chương trình đào tạo ngành Khoa học máy tính - Trường Đại học Công nghệ, ĐHQGHN - Univeristy of Engineering and Technology.html"
+    logger.info(f"get_curriculum_lookup invoked with hint: {group_hint}, program_id: {program_id}")
     
-    if not html_path.exists():
+    # Resolve HTML path from program registry
+    programs = _scan_curriculum_programs()
+    html_path = None
+
+    resolved_pid, resolved_entry = _resolve_program_entry(program_id, programs)
+    if resolved_entry:
+        html_path = Path(resolved_entry["file_path"])
+        if resolved_pid != program_id:
+            logger.info("Resolved program hint '%s' -> '%s'", program_id, resolved_pid)
+    elif programs:
+        # Fallback: use first available program
+        first_program = next(iter(programs.values()))
+        html_path = Path(first_program["file_path"])
+        logger.info(f"No program_id specified, using default: {first_program['id']}")
+    else:
+        # Legacy fallback: try hardcoded path for backward compatibility
+        html_path = CURRICULUM_HTML_DIR / "ChÆ°Æ¡ng trÃ¬nh Ä‘Ã o táº¡o ngÃ nh Khoa há»c mÃ¡y tÃ­nh - TrÆ°á»ng Äáº¡i há»c CÃ´ng nghá»‡, ÄHQGHN - Univeristy of Engineering and Technology.html"
+
+    if not html_path or not html_path.exists():
         return json.dumps({"error": "Curriculum HTML file not found."})
 
     try:
@@ -642,27 +1480,36 @@ def get_curriculum_lookup(group_hint: str = None) -> str:
             
             first_cell_text = cells[0].get_text(strip=True)
             
-            # Detect Group Header (e.g., V.2.1)
-            if re.match(r"^[IVX]+\.\d+(\.\d+)?$", first_cell_text):
+            # Detect Group Header (e.g., V.2.1, I.1, II, II.1.2)
+            if re.match(r"^[IVX]+\.?\d*(\.\d+)*$", first_cell_text):
                 current_group_code = first_cell_text
                 group_name = ""
-                if len(cells) > 1:
-                    group_name = cells[1].get_text(strip=True)
-                    group_name = re.sub(r"Nhóm các học phần về\s*", "", group_name, flags=re.IGNORECASE).strip()
+                credits_required = 0
                 
-                groups[current_group_code] = {
-                    "group_code": current_group_code,
-                    "group_name": group_name,
-                    "subjects": [],
-                    "credits_required": 0
-                }
-                # Try extract credits (e.g., "21/99") in any cell
+                # Find group name: first non-empty non-numeric cell after group code
+                for idx, cell in enumerate(cells[1:], start=1):
+                    cell_text = cell.get_text(strip=True)
+                    if cell_text and not cell_text.isdigit() and "/" not in cell_text:
+                        group_name = re.sub(r"NhÃ³m cÃ¡c há»c pháº§n vá»\s*", "", cell_text, flags=re.IGNORECASE).strip()
+                        break
+                
+                # Try extract credits from cells
                 for cell in cells:
                     txt = cell.get_text(strip=True)
                     if "/" in txt:
                         parts = txt.split("/")
                         if parts[0].isdigit():
-                            groups[current_group_code]["credits_required"] = int(parts[0])
+                            credits_required = int(parts[0])
+                            break
+                    elif txt.isdigit() and int(txt) < 200:
+                        credits_required = int(txt)
+                
+                groups[current_group_code] = {
+                    "group_code": current_group_code,
+                    "group_name": group_name,
+                    "subjects": [],
+                    "credits_required": credits_required
+                }
 
             elif first_cell_text.isdigit() and current_group_code:
                 # Subject Row
@@ -681,6 +1528,13 @@ def get_curriculum_lookup(group_hint: str = None) -> str:
                             "credits": creds
                         })
         
+        top_level_pattern = re.compile(r"^[IVX]+$")
+        total_credits_required = sum(
+            int(v.get("credits_required") or 0)
+            for k, v in groups.items()
+            if top_level_pattern.fullmatch(k)
+        )
+
         # Filter if hint provided
         if group_hint:
              norm_hint = normalize_for_match(group_hint)
@@ -710,9 +1564,24 @@ def get_curriculum_lookup(group_hint: str = None) -> str:
              # Filter out groups with no subjects (parent groups like V.2)
              filtered = {k: v for k, v in filtered.items() if len(v.get("subjects", [])) > 0}
              
-             return json.dumps(filtered, ensure_ascii=False) if filtered else json.dumps({"error": f"No groups found checking '{group_hint}'"}, ensure_ascii=False)
+             if not filtered:
+                 return json.dumps({"error": f"No groups found checking '{group_hint}'"}, ensure_ascii=False)
 
-        return json.dumps(groups, ensure_ascii=False)
+             return json.dumps(
+                 {
+                     "total_credits_required": total_credits_required,
+                     "groups": filtered,
+                 },
+                 ensure_ascii=False,
+             )
+
+        return json.dumps(
+            {
+                "total_credits_required": total_credits_required,
+                "groups": groups,
+            },
+            ensure_ascii=False,
+        )
 
     except Exception as e:
         logger.error(f"Error parsing curriculum: {e}")
@@ -720,115 +1589,113 @@ def get_curriculum_lookup(group_hint: str = None) -> str:
 
 
 @mcp_tool("get_electives_with_schedule")
-def get_electives_with_schedule(check_schedule: bool = True) -> str:
+def get_electives_with_schedule(check_schedule: bool = True, program_id: str = None) -> str:
     """
-    Lấy danh sách các môn TỰ CHỌN từ Chương trình Đào tạo VÀ kiểm tra xem môn nào đang MỞ trong TKB.
-    
+    Lay danh sach mon tu chon tu CTDT va kiem tra mon nao dang mo trong TKB.
+
+    Args:
+        check_schedule: True de kiem tra TKB, False chi lay danh sach.
+        program_id: Ma chuong trinh (vd: "it_2025", "cs_2022").
     Returns:
-        JSON với 2 phần: "opened" (môn đang mở lớp) và "not_opened" (môn chưa mở)
+        JSON voi 2 phan: "opened" va "not_opened".
     """
-    logger.info(f"[get_electives_with_schedule] invoked with check_schedule={check_schedule}")
-    
-    # Step 1: Lấy danh sách môn tự chọn từ CTĐT
-    curriculum_result = get_curriculum_lookup("tu chon")
+    logger.info(f"[get_electives_with_schedule] invoked with check_schedule={check_schedule}, program_id={program_id}")
+
+    curriculum_result = get_curriculum_lookup("tu chon", program_id=program_id)
     try:
         curriculum_data = json.loads(curriculum_result)
-    except:
-        return json.dumps({"error": "Không thể parse curriculum data"})
-    
+    except Exception:
+        return json.dumps({"error": "Khong the parse curriculum data"})
+
     if "error" in curriculum_data:
         return json.dumps(curriculum_data)
-    
-    # Collect all elective subjects
+
+    groups_data = curriculum_data.get("groups")
+    if not isinstance(groups_data, dict):
+        # Backward compatibility: legacy shape was a flat dict of groups
+        groups_data = {
+            k: v
+            for k, v in curriculum_data.items()
+            if isinstance(v, dict) and "subjects" in v
+        }
+
     all_electives = []
-    for group_code, group_data in curriculum_data.items():
+    for _group_code, group_data in groups_data.items():
         group_name = group_data.get("group_name", "")
         for subj in group_data.get("subjects", []):
-            all_electives.append({
-                "code": subj.get("code"),
-                "name": subj.get("name"),
-                "credits": subj.get("credits"),
-                "group": group_name
-            })
-    
-    logger.info(f"[get_electives_with_schedule] Found {len(all_electives)} elective subjects in curriculum")
-    
+            all_electives.append(
+                {
+                    "code": subj.get("code"),
+                    "name": subj.get("name"),
+                    "credits": subj.get("credits"),
+                    "group": group_name,
+                }
+            )
+
+    logger.info("[get_electives_with_schedule] Found %s elective subjects in curriculum", len(all_electives))
+
     if not check_schedule:
         return json.dumps({"all_electives": all_electives, "total": len(all_electives)}, ensure_ascii=False)
-    
-    # Step 2: Load TKB content and check which subjects have classes
-    tkb_path = Path(__file__).resolve().parent.parent.parent / "data" / "resources" / "pdfs"
-    tkb_text = ""
-    
+
     try:
-        # Find ALL potential schedule files and use the one with MOST TEXT CONTENT
-        schedule_patterns = ["*TKB*.pdf", "*THỜI KHÓA BIỂU*.pdf", "*thoi khoa bieu*.pdf", "*PHỤ LỤC*.pdf"]
-        all_schedule_files = []
-        
-        from utils import process_pdf
-        
-        for pattern in schedule_patterns:
-            for p in tkb_path.glob(pattern):
-                try:
-                    # Parse and measure actual text content
-                    docs = process_pdf(str(p))
-                    text_length = sum(len(d.page_content) for d in docs)
-                    all_schedule_files.append((p, text_length, docs))
-                    logger.info(f"[get_electives_with_schedule] Found schedule file: {p.name} ({text_length} chars)")
-                except Exception as e:
-                    logger.warning(f"[get_electives_with_schedule] Failed to parse {p.name}: {e}")
-        
-        if all_schedule_files:
-            # Sort by TEXT LENGTH (largest first) and use the one with most content
-            all_schedule_files.sort(key=lambda x: x[1], reverse=True)
-            selected_tkb, text_length, docs = all_schedule_files[0]
-            logger.info(f"[get_electives_with_schedule] Selected TKB file: {selected_tkb.name} ({text_length} chars - LARGEST TEXT)")
-            
-            tkb_text = "\n".join([d.page_content for d in docs])
-        
+        tkb_text, selected_tkb_name = _load_best_schedule_text()
     except Exception as e:
-        logger.warning(f"[get_electives_with_schedule] Could not load TKB: {e}")
-        # Fallback: return all electives without schedule info
-        return json.dumps({
-            "all_electives": all_electives,
-            "total": len(all_electives),
-            "schedule_error": str(e)
-        }, ensure_ascii=False)
-    
-    # Step 3: Check each subject against TKB
+        logger.warning("[get_electives_with_schedule] Could not load TKB: %s", e)
+        return json.dumps(
+            {
+                "all_electives": all_electives,
+                "total": len(all_electives),
+                "schedule_error": str(e),
+            },
+            ensure_ascii=False,
+        )
+
+    if not tkb_text:
+        return json.dumps(
+            {
+                "all_electives": all_electives,
+                "total": len(all_electives),
+                "schedule_error": "Khong tim thay du lieu TKB hop le.",
+            },
+            ensure_ascii=False,
+        )
+
+    if selected_tkb_name:
+        logger.debug("[get_electives_with_schedule] Using cached TKB file: %s", selected_tkb_name)
+
     opened = []
     not_opened = []
-    
+    tkb_upper = tkb_text.upper()
+
     for subj in all_electives:
-        code = subj.get("code", "")
-        # Normalize code for comparison - check both with and without E suffix
-        code_variants = [code.upper()]
-        if code.upper().endswith("E"):
-            code_variants.append(code.upper()[:-1])  # Without E
-        else:
-            code_variants.append(code.upper() + "E")  # With E
-        
+        code = str(subj.get("code") or "")
+        if not code:
+            not_opened.append(subj)
+            continue
+
+        code_variants = _build_subject_code_variants(code)
+
         found = False
         for variant in code_variants:
-            if variant in tkb_text.upper():
+            if re.search(rf"(?<![A-Z0-9]){re.escape(variant)}(?![A-Z0-9])", tkb_upper):
                 found = True
                 break
-        
+
         if found:
             opened.append(subj)
         else:
             not_opened.append(subj)
-    
+
     result = {
         "opened": opened,
         "opened_count": len(opened),
         "not_opened": not_opened,
         "not_opened_count": len(not_opened),
-        "total_electives": len(all_electives)
+        "total_electives": len(all_electives),
     }
-    
-    logger.info(f"[get_electives_with_schedule] Result: {len(opened)} opened, {len(not_opened)} not opened")
-    
+
+    logger.info("[get_electives_with_schedule] Result: %s opened, %s not opened", len(opened), len(not_opened))
+
     return json.dumps(result, ensure_ascii=False)
 
 def _extract_subjects_from_text(raw_text: str) -> List[Dict[str, Any]]:
@@ -936,7 +1803,165 @@ def analyze_curriculum(program_hint: Optional[str] = None) -> Dict[str, Any]:
             "notes": "Khong tim thay file chuong trinh dao tao trong resources.",
         }
 
-    hint_norm = normalize_for_match(program_hint or "")
+    hint_raw = str(program_hint).strip() if program_hint else ""
+    hint_norm = normalize_for_match(hint_raw)
+    programs = _scan_curriculum_programs()
+
+    resolved_program_id: Optional[str] = None
+    preferred_path: Optional[Path] = None
+    resolved_program_id, resolved_entry = _resolve_program_entry(hint_raw, programs)
+    if resolved_program_id:
+        preferred_path = Path((resolved_entry or programs[resolved_program_id])["file_path"])
+        logger.info(
+            "analyze_curriculum: matched program_id '%s' -> %s",
+            resolved_program_id,
+            preferred_path.name,
+        )
+
+    # Fast-path for explicit program_id: reuse deterministic curriculum lookup data.
+    if resolved_program_id:
+        try:
+            lookup_data = json.loads(get_curriculum_lookup(program_id=resolved_program_id))
+            if isinstance(lookup_data, dict) and "error" not in lookup_data:
+                groups_lookup = lookup_data.get("groups")
+                if isinstance(groups_lookup, dict) and groups_lookup:
+                    subjects: List[Dict[str, Any]] = []
+                    seen_codes: Set[str] = set()
+                    for group_data in groups_lookup.values():
+                        for subj in group_data.get("subjects", []):
+                            code = str(subj.get("code") or "").strip()
+                            if not code:
+                                continue
+                            norm_code = _normalize_subject_code(code)
+                            if norm_code in seen_codes:
+                                continue
+                            seen_codes.add(norm_code)
+                            subjects.append(
+                                {
+                                    "code": code,
+                                    "name": subj.get("name", ""),
+                                    "credits": int(subj.get("credits") or 0),
+                                }
+                            )
+
+                    # Build minimal hierarchy from group codes for credit analysis.
+                    structure: List[Dict[str, Any]] = []
+                    main_blocks: Dict[str, Dict[str, Any]] = {}
+                    for group_code, group_data in groups_lookup.items():
+                        group_credits = int(group_data.get("credits_required") or 0)
+                        group_subjects = []
+                        for subj in group_data.get("subjects", []):
+                            code = str(subj.get("code") or "").strip()
+                            if not code:
+                                continue
+                            group_subjects.append(
+                                {
+                                    "code": code,
+                                    "name": subj.get("name", ""),
+                                    "credits": int(subj.get("credits") or 0),
+                                }
+                            )
+
+                        if "." not in group_code:
+                            block = main_blocks.get(group_code)
+                            if not block:
+                                block = {
+                                    "id": group_code,
+                                    "name": group_data.get("group_name", ""),
+                                    "required_credits": group_credits,
+                                    "type": "main",
+                                    "subjects": group_subjects,
+                                    "sub_blocks": [],
+                                }
+                                main_blocks[group_code] = block
+                                structure.append(block)
+                            else:
+                                block["required_credits"] = group_credits or block.get("required_credits", 0)
+                                if group_subjects:
+                                    block["subjects"] = group_subjects
+                        else:
+                            parent_code = group_code.split(".", 1)[0]
+                            parent_block = main_blocks.get(parent_code)
+                            if not parent_block:
+                                parent_block = {
+                                    "id": parent_code,
+                                    "name": (groups_lookup.get(parent_code) or {}).get("group_name", ""),
+                                    "required_credits": int(
+                                        ((groups_lookup.get(parent_code) or {}).get("credits_required")) or 0
+                                    ),
+                                    "type": "main",
+                                    "subjects": [],
+                                    "sub_blocks": [],
+                                }
+                                main_blocks[parent_code] = parent_block
+                                structure.append(parent_block)
+
+                            parent_block["sub_blocks"].append(
+                                {
+                                    "id": group_code,
+                                    "name": group_data.get("group_name", ""),
+                                    "required_credits": group_credits,
+                                    "type": "sub",
+                                    "subjects": group_subjects,
+                                    "sub_blocks": [],
+                                }
+                            )
+
+                    # Merge parser-derived notes (e.g., open-group notes in CS_2022 row 72)
+                    try:
+                        notes_by_id: Dict[str, List[Any]] = {}
+                        html_path = Path(programs[resolved_program_id]["file_path"])
+                        if html_path.exists() and html_path.suffix.lower() in {".html", ".htm"}:
+                            raw_html = html_path.read_text(encoding="utf-8", errors="ignore")
+                            parsed_structure = parse_curriculum_from_html_content(raw_html)
+                            for parsed_block in parsed_structure or []:
+                                block_id = str(parsed_block.get("id") or "").strip()
+                                block_notes = parsed_block.get("notes") or []
+                                if block_id and block_notes:
+                                    notes_by_id[block_id] = block_notes
+                                for parsed_sub in parsed_block.get("sub_blocks") or []:
+                                    sub_id = str(parsed_sub.get("id") or "").strip()
+                                    sub_notes = parsed_sub.get("notes") or []
+                                    if sub_id and sub_notes:
+                                        notes_by_id[sub_id] = sub_notes
+
+                        if notes_by_id:
+                            for block in structure:
+                                block_id = str(block.get("id") or "").strip()
+                                if block_id in notes_by_id:
+                                    block["notes"] = notes_by_id[block_id]
+                                for sub_block in block.get("sub_blocks") or []:
+                                    sub_id = str(sub_block.get("id") or "").strip()
+                                    if sub_id in notes_by_id:
+                                        sub_block["notes"] = notes_by_id[sub_id]
+                    except Exception as e:
+                        logger.warning("Failed to merge parser notes into curriculum structure: %s", e)
+
+                    if subjects:
+                        total_credits = lookup_data.get("total_credits_required")
+                        if total_credits is None:
+                            total_credits = sum(
+                                int(v.get("credits_required") or 0)
+                                for k, v in groups_lookup.items()
+                                if re.fullmatch(r"^[IVX]+$", k)
+                            )
+                        return {
+                            "program_name": resolved_program_id,
+                            "subjects": subjects,
+                            "structure": structure,
+                            "total_credits": int(total_credits or 0) or None,
+                            "source_path": programs[resolved_program_id]["file_path"],
+                            "notes": (
+                                f"Du lieu chuong trinh dao tao: {Path(programs[resolved_program_id]['file_path']).name}. "
+                                f"Tim thay {len(subjects)} mon hoc tu curriculum lookup."
+                            ),
+                        }
+        except Exception as e:
+            logger.warning(
+                "analyze_curriculum: fallback to heuristic parsing for '%s' due to: %s",
+                resolved_program_id,
+                e,
+            )
 
     def _score(path: Path) -> float:
         name_norm = normalize_for_match(path.stem)
@@ -950,6 +1975,18 @@ def analyze_curriculum(program_hint: Optional[str] = None) -> Dict[str, Any]:
 
     # Sort candidates by score descending
     candidates.sort(key=_score, reverse=True)
+    if preferred_path:
+        try:
+            preferred_resolved = preferred_path.resolve()
+            prioritized = [p for p in candidates if p.resolve() == preferred_resolved]
+            others = [p for p in candidates if p.resolve() != preferred_resolved]
+            if not prioritized and preferred_path.exists():
+                prioritized = [preferred_path]
+            if prioritized:
+                candidates = prioritized + others
+        except Exception:
+            if preferred_path.exists():
+                candidates = [preferred_path] + [p for p in candidates if p != preferred_path]
 
     final_result = {
         "program_name": program_hint,
@@ -996,7 +2033,7 @@ def analyze_curriculum(program_hint: Optional[str] = None) -> Dict[str, Any]:
         # Extract Total Credits from text
         if text_content:
             norm_text = re.sub(r"\s+", " ", text_content)
-            match = re.search(r"Tổng số tín chỉ[^:0-9]*:?\s*(\d{2,3})", norm_text, re.IGNORECASE)
+            match = re.search(r"Tá»•ng sá»‘ tÃ­n chá»‰[^:0-9]*:?\s*(\d{2,3})", norm_text, re.IGNORECASE)
             if match:
                 try:
                     total_credits = int(match.group(1))
@@ -1062,16 +2099,68 @@ def compute_missing_subjects(transcript_data: Dict[str, Any], curriculum: Dict[s
     ]
     low_grades.sort(key=lambda x: (x.get("grade_4") or 0, -(x.get("credits") or 0)))
 
+    def _sum_required_from_structure(structure: List[Dict[str, Any]]) -> int:
+        total = 0
+        for block in structure or []:
+            sub_blocks = block.get("sub_blocks") or []
+            if not sub_blocks:
+                total += int(block.get("required_credits") or 0)
+                continue
+            for sub in sub_blocks:
+                req = int(sub.get("required_credits") or 0)
+                if req > 0:
+                    total += req
+        return total
+
     # Compute detailed block analysis if structure is available
     credit_analysis = []
     if curriculum.get("structure"):
         credit_analysis = compute_curriculum_missing_credits(curriculum["structure"], completed_map)
+
+    missing_credits_total = sum(int(item.get("missing_credits") or 0) for item in credit_analysis)
+
+    transcript_total_credits = int(
+        (transcript_data.get("overview") or {}).get("total_credits_accumulated") or 0
+    )
+    curriculum_total_credits = int(curriculum.get("total_credits") or 0)
+    if curriculum_total_credits <= 0:
+        curriculum_total_credits = _sum_required_from_structure(curriculum.get("structure") or [])
+
+    curriculum_applicable_credits = 0
+    if curriculum_total_credits > 0:
+        curriculum_applicable_credits = max(curriculum_total_credits - missing_credits_total, 0)
+    else:
+        curriculum_applicable_credits = transcript_total_credits
+
+    external_applied_map: Dict[str, Dict[str, Any]] = {}
+    for block in credit_analysis:
+        for ext in block.get("applied_external_subjects") or []:
+            code = _normalize_subject_code(ext.get("code"))
+            if not code:
+                continue
+            if code not in external_applied_map:
+                external_applied_map[code] = {
+                    "code": code,
+                    "name": ext.get("name"),
+                    "credits": int(ext.get("credits") or 0),
+                    "counted_credits": 0,
+                }
+            external_applied_map[code]["counted_credits"] += int(ext.get("counted_credits") or 0)
+
+    credit_summary = {
+        "transcript_total_credits": transcript_total_credits,
+        "total_required_credits": curriculum_total_credits,
+        "total_completed_applicable_credits": curriculum_applicable_credits,
+        "total_missing_credits": missing_credits_total,
+        "external_credits_applied": list(external_applied_map.values()),
+    }
 
     return {
         "completed_map": completed_map,
         "missing": missing,
         "low_grades": low_grades,
         "credit_analysis": credit_analysis,
+        "credit_summary": credit_summary,
     }
 
 
@@ -1102,7 +2191,7 @@ def _extract_target_gpa(query: str) -> Optional[float]:
     """
     if not query:
         return None
-    match = re.search(r"(?:gpa|diem|điểm)[^0-9]{0,5}([0-4](?:[.,]\\d{1,2})?)", query, re.IGNORECASE)
+    match = re.search(r"(?:gpa|diem|Ä‘iá»ƒm)[^0-9]{0,5}([0-4](?:[.,]\\d{1,2})?)", query, re.IGNORECASE)
     if match:
         try:
             return float(match.group(1).replace(",", "."))
@@ -1239,7 +2328,8 @@ def check_course_schedule(
     class_code: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Use the handbook (global resources) to see if subjects appear in the upcoming schedule.
+    Check if subject codes appear in current schedule documents.
+    The heavy schedule text extraction is cached process-wide.
     """
     if not subjects:
         return []
@@ -1247,166 +2337,114 @@ def check_course_schedule(
     _init_vector_store()
     if _store is None:
         return []
-    # Ensure global resources are present
+
     resource_loader.set_vector_store(_store)
     if not resource_loader.loaded_resources:
         resource_loader.load_resources()
 
-    file_scope = list(resource_loader.loaded_resources) if resource_loader.loaded_resources else None
+    tkb_full_text, selected_file_name = _load_best_schedule_text()
+    time_slot_map, time_source_file = _load_schedule_time_slot_map()
+    tkb_upper = tkb_full_text.upper() if tkb_full_text else ""
+
     results: List[Dict[str, Any]] = []
 
+    sem_hint_tokens: List[str] = []
+    if target_semester:
+        sem_text = str(target_semester).strip()
+        if sem_text.endswith("1"):
+            sem_hint_tokens = ["hki", "hoc ky i", "hoc ky 1", "semester 1", "hk1"]
+        elif sem_text.endswith("2"):
+            sem_hint_tokens = ["hkii", "hoc ky ii", "hoc ky 2", "semester 2", "hk2"]
+
+    class_hint_norm = normalize_for_match(class_code or "") if class_code else ""
+
     for subj in subjects:
-        code = subj.get("code")
+        code = str(subj.get("code") or "").strip()
         if not code:
             continue
-        
-        # Generate code variants (with/without E suffix) for better matching
-        code_variants = [code]
-        if code.upper().endswith("E"):
-            code_variants.append(code[:-1])  # Without E: INT3404E -> INT3404
-        else:
-            code_variants.append(code + "E")  # With E: INT3404 -> INT3404E
-        
-        query_parts = code_variants  # Include both variants in search
+
+        # Strict code matching: E-suffix is part of the canonical course code.
+        code_variants = _build_subject_code_variants(code)
+        if not code_variants:
+            continue
+
+        query_parts = list(code_variants)
         if target_semester:
             query_parts.append(f"hoc ky {target_semester}")
-            # Heuristic expansion for HK2 / HKII
             if str(target_semester).endswith("2"):
-                query_parts.append("HKII")
-                query_parts.append("Học kỳ 2")
-                query_parts.append("Học kỳ II")
-                query_parts.append("Semester 2")
-
+                query_parts.extend(["HKII", "Hoc ky 2", "Hoc ky II", "Semester 2"])
         if class_code:
             query_parts.append(class_code)
         query = " ".join(query_parts)
 
-        
-        # --- NEW LOGIC: DIRECT TEXT SEARCH IN TKB ---
-        # Retrieval is unreliable for codes. We use direct text search on the large TKB file.
-        
-        context_text = ""
-        found_in_text = False
-        selected_file_name = "Unknown Schedule PDF"  # Track source file
-        
-        try:
-            # 1. Load TKB Text (using logic shared with get_electives)
-            from pathlib import Path
-            resource_dir = Path(__file__).resolve().parent.parent.parent / "data" / "resources" / "pdfs"
-            
-            # Find largest TKB file
-            schedule_patterns = ["*TKB*.pdf", "*THỜI KHÓA BIỂU*.pdf", "*PHỤ LỤC*.pdf"]
-            all_schedule_files = []
-            if resource_dir.exists():
-                search_scope = [] # Reset scope logic as we search files directly
-                for pattern in schedule_patterns:
-                    for p in resource_dir.glob(pattern):
-                        try:
-                            file_size = p.stat().st_size # Start with size for speed
-                            all_schedule_files.append((p, file_size))
-                        except: pass
-            
-            tkb_full_text = ""
-            tkb_full_text = ""
-            sorted_candidates = []
-            
-            # 1b. Parse ALL candidates to find the one with REAL TEXT CONTENT
-            # (File size is misleading for scanned PDFs vs Text PDFs)
-            from utils import process_pdf
-            
-            if all_schedule_files:
-                for fpath, fsize in all_schedule_files:
-                    try:
-                        docs = process_pdf(str(fpath))
-                        text = "\n".join([d.page_content for d in docs])
-                        text_len = len(text)
-                        sorted_candidates.append((fpath, text_len, text))
-                    except Exception as e:
-                        logger.warning(f"Error parse TKB candidate {fpath.name}: {e}")
+        related_lines: List[str] = []
+        if tkb_upper:
+            for line in tkb_full_text.splitlines():
+                line_upper = line.upper()
+                for variant in code_variants:
+                    if re.search(rf"(?<![A-Z0-9]){re.escape(variant)}(?![A-Z0-9])", line_upper):
+                        related_lines.append(line)
+                        break
 
-                # Sort by text length (descending)
-                sorted_candidates.sort(key=lambda x: x[1], reverse=True)
-                
-                if sorted_candidates:
-                    # Pick the largest text content file
-                    best_fpath, best_len, best_text = sorted_candidates[0]
-                    if best_len > 2000: # Threshold
-                         tkb_full_text = best_text
-                         selected_file_name = best_fpath.name
-                         logger.info(f"[check_course_schedule] Selected BEST TKB file: {selected_file_name} ({best_len} chars text)")
+        match_lines = related_lines
+        if sem_hint_tokens and related_lines:
+            sem_filtered = [
+                line for line in related_lines
+                if any(token in normalize_for_match(line) for token in sem_hint_tokens)
+            ]
+            if sem_filtered:
+                match_lines = sem_filtered
 
+        if class_hint_norm and match_lines:
+            class_filtered = [
+                line for line in match_lines
+                if class_hint_norm in normalize_for_match(line)
+            ]
+            if class_filtered:
+                match_lines = class_filtered
 
-            
-            # 2. Search for Code Variants in Text
-            if tkb_full_text:
-                related_lines = []
-                lines = tkb_full_text.split('\n')
-                
-                # We interpret table rows. A row usually contains the code.
-                # We capture the line with the code, plus header context if possible.
-                
-                for i, line in enumerate(lines):
-                    line_upper = line.upper()
-                    # Check if any variant is in this line
-                    for v in code_variants:
-                        # Improved check: Code should be bounded or distinct
-                        # Check exact token matching to avoid partials (e.g. INT3404 vs INT34041)
-                        if v in line_upper:
-                             related_lines.append(line)
-                             break
-                
-                if related_lines:
-                    found_in_text = True
-                    # Take top 50 lines matching (limits context size)
-                    context_text = "DỮ LIỆU TÌM THẤY TRONG TKB:\n" + "\n".join(related_lines[:50])
-                else:
-                    context_text = "Không tìm thấy mã môn này trong văn bản TKB."
-            else:
-                context_text = "Không thể đọc nội dung file TKB."
+        offered = bool(match_lines)
+        resolved_day: Optional[str] = None
+        resolved_slot: Optional[str] = None
+        resolved_time_range: Optional[str] = None
+        if match_lines:
+            for line in match_lines:
+                if not resolved_day:
+                    day_candidate = _detect_schedule_day_from_line(line)
+                    if day_candidate:
+                        resolved_day = day_candidate
+                if not resolved_slot and time_slot_map:
+                    slot_candidate = _detect_schedule_slot_from_line(line)
+                    if slot_candidate and slot_candidate in time_slot_map:
+                        resolved_slot = slot_candidate
+                        resolved_time_range = (time_slot_map.get(slot_candidate) or {}).get("time_range")
+                if resolved_day and resolved_slot:
+                    break
 
-        except Exception as e:
-            logger.error(f"[check_course_schedule] Direct search failed: {e}")
-            context_text = "Lỗi khi tìm kiếm dữ liệu TKB."
+        if match_lines:
+            extracted_info = "DU LIEU TIM THAY TRONG TKB:\n" + "\n".join(match_lines[:30])
+        elif related_lines:
+            extracted_info = (
+                "TIM THAY MA MON NHUNG KHONG KHOP BO LOC HOC KY/LOP QUAN LY. "
+                "DU LIEU GAN NHAT:\n" + "\n".join(related_lines[:15])
+            )
+        else:
+            extracted_info = "Khong tim thay ma mon nay trong van ban TKB."
 
-        # Fallback to retrieval only if direct search failed completely (no TKB file found)
-        # But honestly, direct search is better.
-        
-        prompt = f"""
-        Bạn là trợ lý tra cứu lịch học.
-        Nhiệm vụ: Tìm tất cả các lớp mở cho môn học "{code}".
-        Các mã biến thể có thể xuất hiện: {', '.join(code_variants)}.
-        
-        QUAN TRỌNG - KIỂM TRA MÃ MÔN:
-        1. Mã yêu cầu chính xác là: "{code}".
-        2. Nếu bạn tìm thấy lớp có mã KHÁC mã yêu cầu (ví dụ tìm thấy 'INT3404' khi yêu cầu 'INT3404E'): BẮT BUỘC phải thêm cảnh báo vào đầu kết quả: "[CẢNH BÁO: Tìm thấy mã ..., khác mã yêu cầu ...]".
-        
-        DỮ LIỆU ĐẦU VÀO (Các dòng trích xuất từ TKB):
-        {context_text}
-        """
-
-        extracted_info = "Không thể đọc dữ liệu"
-        try:
-             import google.generativeai as genai
-             # Ensure API key is set safely
-             api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
-             if api_key:
-                 genai.configure(api_key=api_key)
-                 model = genai.GenerativeModel("gemini-2.5-flash")
-                 resp = model.generate_content(prompt)
-                 extracted_info = resp.text.strip()
-             else:
-                 extracted_info = context_text[:1000] + "... (Missing API Key for parsing)"
-        except Exception as e:
-             logger.error(f"LLM extraction failed: {e}")
-             extracted_info = f"Lỗi trích xuất: {e}. Dữ liệu thô: {context_text[:200]}"
-
-        results.append({
-            "code": code,
-            "offered": "không tìm thấy" not in extracted_info.lower(),
-            "snippet": extracted_info,
-            "file_id": selected_file_name,
-            "query": query,
-        })
+        results.append(
+            {
+                "code": code,
+                "offered": offered,
+                "snippet": extracted_info,
+                "file_id": selected_file_name or "Unknown Schedule PDF",
+                "query": query,
+                "time_slot_map": time_slot_map,
+                "time_source_file": time_source_file or None,
+                "resolved_day": resolved_day,
+                "resolved_slot": resolved_slot,
+                "resolved_time_range": resolved_time_range,
+            }
+        )
 
     return results
 
@@ -1422,7 +2460,7 @@ def _identify_priority_subjects(query: str, history: str, all_curriculum_subject
         priority_codes.add(m)
         
     # 2. Fuzzy Name Search in Query
-    # If query mentions a specific name like "Xử lý ảnh", map it to code.
+    # If query mentions a specific name like "Xá»­ lÃ½ áº£nh", map it to code.
     norm_query = normalize_for_match(query)
     # Identify simple name matches (heuristic: if a subject name (normalized) is a substring of query)
     if all_curriculum_subjects:
@@ -1431,7 +2469,7 @@ def _identify_priority_subjects(query: str, history: str, all_curriculum_subject
             if len(s_name) > 6 and s_name in norm_query: # Len > 6 to avoid short noise names
                  priority_codes.add(subj.get("code"))
 
-    # 3. Context Reference ("môn này", "môn đó", "it")
+    # 3. Context Reference ("mÃ´n nÃ y", "mÃ´n Ä‘Ã³", "it")
     # If query implies reference, OR even if not, scanning recent history is helpful context.
     # Scan history for the LAST mentioned code
     hist_matches = re.findall(code_pattern, history.upper())
@@ -1446,38 +2484,95 @@ def _identify_priority_subjects(query: str, history: str, all_curriculum_subject
     return priority_codes
 
 @mcp_tool("consult_advisor")
-def consult_advisor(query: str, file_ids: List[str] | None = None, session_id: str = "default") -> str:
+def consult_advisor(
+    query: str,
+    file_ids: List[str] | None = None,
+    session_id: str = "default",
+    program_id: Optional[str] = None,
+) -> str:
     ids = file_ids or []
     if isinstance(ids, str): ids = [p.strip() for p in ids.split(",") if p.strip()]
+    ids = [str(fid or "").strip() for fid in ids if str(fid or "").strip()]
+
+    if not ids:
+        recovered_ids = _load_session_file_ids(session_id)
+        if recovered_ids:
+            ids = recovered_ids
+            logger.info(
+                "[consult_advisor] Recovered %s file_ids from session cache for session=%s",
+                len(ids),
+                session_id,
+            )
+
+    if not ids:
+        logger.warning("[consult_advisor] No file_ids provided and none recovered from session cache.")
+        return (
+            "Mình chưa nhận được bảng điểm để tính môn còn thiếu/GPA/lịch học. "
+            "Bạn hãy chọn lại 2 file bảng điểm trong danh sách 'File đã tải lên' rồi gửi lại câu hỏi."
+        )
+
+    explicit_program_id = str(program_id).strip() if program_id else None
     
     try: history = _memory.get_context("", session_id=session_id, max_rows=5)
     except: history = ""
     
     transcript = ""
     transcript_data: Dict[str, Any] | None = None
-    if ids:
-        logger.info(f"[consult_advisor] Calling analyze_transcript with ids={ids}")
+    logger.info(f"[consult_advisor] Calling analyze_transcript with ids={ids}")
+    try:
+        transcript = analyze_transcript(ids)
+        logger.info(f"[consult_advisor] analyze_transcript result length: {len(transcript)}")
         try:
-            transcript = analyze_transcript(ids)
-            logger.info(f"[consult_advisor] analyze_transcript result length: {len(transcript)}")
-            try:
-                transcript_data = json.loads(transcript)
-            except Exception as e:
-                logger.warning(f"[consult_advisor] Unable to parse transcript JSON: {e}")
-                transcript_data = None
+            transcript_data = json.loads(transcript)
         except Exception as e:
-            logger.error(f"[consult_advisor] Error calling analyze_transcript: {e}")
-            transcript = f"Error: {e}"
-    else:
-        logger.warning("[consult_advisor] No file_ids provided, transcript will be empty.")
+            logger.warning(f"[consult_advisor] Unable to parse transcript JSON: {e}")
+            transcript_data = None
+    except Exception as e:
+        logger.error(f"[consult_advisor] Error calling analyze_transcript: {e}")
+        transcript = f"Error: {e}"
+
+    if not _is_transcript_usable(transcript_data):
+        reason = None
+        if isinstance(transcript_data, dict):
+            reason = transcript_data.get("error")
+        if not reason and isinstance(transcript, str) and transcript.startswith("Error:"):
+            reason = transcript
+        logger.warning(
+            "[consult_advisor] Transcript unusable for session=%s ids=%s reason=%s",
+            session_id,
+            ids,
+            reason,
+        )
+        if reason:
+            return (
+                "Mình chưa đọc được dữ liệu bảng điểm từ file bạn chọn nên không thể xác định chính xác "
+                f"môn còn thiếu/GPA/lịch học. Chi tiết lỗi: {reason}"
+            )
+        return (
+            "Mình chưa đọc được dữ liệu bảng điểm từ file bạn chọn nên không thể xác định chính xác "
+            "môn còn thiếu/GPA/lịch học. Bạn thử gửi lại file hoặc chọn lại đúng 2 file bảng điểm."
+        )
     
-    program_hint = None
+    transcript_program_hint = None
+    schedule_class_hint = None
     if transcript_data:
         # Prioritize major extracted explicitly
-        program_hint = (
+        transcript_program_hint = (
             (transcript_data.get("student_info") or {}).get("major")
             or (transcript_data.get("student_info") or {}).get("program_hint")
             or (transcript_data.get("student_info") or {}).get("class")
+        )
+        schedule_class_hint = (
+            (transcript_data.get("student_info") or {}).get("class")
+            or transcript_program_hint
+        )
+
+    program_hint = explicit_program_id or transcript_program_hint
+    if explicit_program_id and transcript_program_hint and explicit_program_id != transcript_program_hint:
+        logger.info(
+            "[consult_advisor] Manual program_id '%s' overrides transcript hint '%s'.",
+            explicit_program_id,
+            transcript_program_hint,
         )
 
     curriculum = analyze_curriculum(program_hint)
@@ -1487,8 +2582,9 @@ def consult_advisor(query: str, file_ids: List[str] | None = None, session_id: s
         logger.warning(f"[consult_advisor] No curriculum subjects found for program_hint='{program_hint}'")
         curriculum["notes"] = (curriculum.get("notes") or "") + " [WARNING: No curriculum found! Cannot compute missing subjects.]"
 
-    missing_info = compute_missing_subjects(transcript_data or {}, curriculum) if transcript_data else {"missing": [], "completed_map": {}, "low_grades": []}
+    missing_info = compute_missing_subjects(transcript_data or {}, curriculum) if transcript_data else {"missing": [], "completed_map": {}, "low_grades": [], "credit_summary": {}}
     next_semester = _infer_next_semester_code(transcript_data or {}) if transcript_data else None
+    time_slot_definitions, time_source_file = _load_schedule_time_slot_map()
     
     # --- SMART SUBJECT FILTERING ---
     # Instead of sending ALL 32 missing subjects to the Agent, we filter to a reasonable recommendation list.
@@ -1496,9 +2592,26 @@ def consult_advisor(query: str, file_ids: List[str] | None = None, session_id: s
 
     all_missing = missing_info.get("missing") or []
     credit_analysis = missing_info.get("credit_analysis") or []
+    credit_summary = missing_info.get("credit_summary") or {}
+    transcript_total_credits = int(
+        credit_summary.get("transcript_total_credits")
+        or ((transcript_data or {}).get("overview") or {}).get("total_credits_accumulated")
+        or 0
+    )
+    external_credits_applied = credit_summary.get("external_credits_applied") or []
     
     # Compute total missing credits from credit_analysis
-    missing_credits_calc = sum(b.get("missing_credits", 0) for b in credit_analysis) if credit_analysis else None
+    missing_credits_calc = credit_summary.get("total_missing_credits")
+    if missing_credits_calc is None:
+        missing_credits_calc = sum(b.get("missing_credits", 0) for b in credit_analysis) if credit_analysis else None
+
+    curriculum_applicable_credits = credit_summary.get("total_completed_applicable_credits")
+    if curriculum_applicable_credits is None:
+        curriculum_total = int(curriculum.get("total_credits") or 0)
+        if curriculum_total > 0 and missing_credits_calc is not None:
+            curriculum_applicable_credits = max(curriculum_total - int(missing_credits_calc), 0)
+        else:
+            curriculum_applicable_credits = transcript_total_credits
     
     # --- Build "recommended" subject list (limited) ---
     recommended_subjects: List[Dict[str, Any]] = []
@@ -1513,9 +2626,10 @@ def consult_advisor(query: str, file_ids: List[str] | None = None, session_id: s
             block_type = block.get("block_type", "")  # "required" or "elective"
             block_missing_creds = block.get("missing_credits", 0)
             candidates = block.get("candidates", [])
+            block_name_norm = normalize_for_match(block.get("block_name", ""))
             
             if block_missing_creds > 0:
-                if "bắt buộc" in block.get("block_name", "").lower() or block_type == "required":
+                if "bat buoc" in block_name_norm or block_type == "required":
                     mandatory_missing.extend(candidates)
                 else:
                     elective_missing_candidates.extend(candidates)
@@ -1545,96 +2659,153 @@ def consult_advisor(query: str, file_ids: List[str] | None = None, session_id: s
     # Heuristic: If user needs 5 elective credits, suggest ~5 courses (enough choice)
     elective_credits_needed = sum(
         b.get("missing_credits", 0) for b in credit_analysis 
-        if "bắt buộc" not in b.get("block_name", "").lower()
+        if not ("bat buoc" in normalize_for_match(b.get("block_name", "")) or b.get("block_type") == "required")
     ) if credit_analysis else 0
     
     elective_limit = max(5, (elective_credits_needed // 2) + 3)  # At least 5, or based on credits
     
-    # 4. Check schedule for elective candidates and filter by offered
-    offered_electives = []
-    
-    # Logic fallback: Nếu không tìm thấy elective candidates từ creditAnalysis (do parse lỗi hoặc PDF),
-    # hãy thử gọi get_electives_with_schedule để lấy danh sách môn tự chọn.
+    # 4. Build one schedule map (avoid duplicate check_course_schedule calls)
+    offered_electives: List[Dict[str, Any]] = []
+    schedule_by_norm: Dict[str, Dict[str, Any]] = {}
+
+    def _put_schedule_items(items: List[Dict[str, Any]]):
+        for item in items or []:
+            code = str(item.get("code") or "").strip()
+            if not code:
+                continue
+            norm = _normalize_subject_code(code)
+            prev = schedule_by_norm.get(norm)
+            if prev is None or (not prev.get("offered") and item.get("offered")):
+                schedule_by_norm[norm] = item
+
+    schedule_probe_subjects = mandatory_missing + (unique_elective_candidates[:30] if unique_elective_candidates else [])
+    if schedule_probe_subjects:
+        logger.info(
+            "[consult_advisor] Checking schedule once for %s subjects (mandatory+elective candidates).",
+            len(schedule_probe_subjects),
+        )
+        try:
+            schedule_probe_results = check_course_schedule(
+                schedule_probe_subjects,
+                target_semester=next_semester,
+                class_code=schedule_class_hint,
+            )
+            _put_schedule_items(schedule_probe_results)
+        except Exception as e:
+            logger.error(f"[consult_advisor] Error checking schedules: {e}")
+
+    # Fallback when curriculum credit_analysis does not produce elective candidates
     if not unique_elective_candidates:
         logger.info("[consult_advisor] No elective candidates found from curriculum analysis. Trying fallback to get_electives_with_schedule...")
         try:
-            # Gọi hàm trực tiếp (không qua string JSON nếu có thể, nhưng hàm trả về JSON string)
-            # check_schedule=False vì ta sẽ check sau hoặc dùng info của nó
-            raw_sched = get_electives_with_schedule(check_schedule=True)
+            raw_sched = get_electives_with_schedule(check_schedule=True, program_id=program_hint)
             sched_data = json.loads(raw_sched)
-            
-            # Lấy list "opened" (đã check schedule sẵn)
             opened_fallback = sched_data.get("opened", [])
-            
-            # Filter các môn đã học
+
             completed_codes = set()
             if transcript_data:
                 for sem in transcript_data.get("semesters", []):
                     for subj in sem.get("subjects", []):
                         c = subj.get("code", "")
-                        if c: completed_codes.add(_normalize_subject_code(c))
-            
+                        if c:
+                            completed_codes.add(_normalize_subject_code(c))
+
             for item in opened_fallback:
-                # Normalization check
                 norm_c = _normalize_subject_code(item.get("code"))
-                if norm_c not in completed_codes:
-                    # Add to offered_electives
-                    offered_electives.append({
-                        "code": item.get("code"),
-                        "name": item.get("name"),
-                        "credits": item.get("credits"),
-                        "offered": True,
-                        "snippet": f"Môn tự chọn nhóm {item.get('group')} đang mở lớp."
-                    })
-            
+                if norm_c in completed_codes:
+                    continue
+                fallback_item = {
+                    "code": item.get("code"),
+                    "name": item.get("name"),
+                    "credits": item.get("credits"),
+                    "offered": True,
+                    "snippet": f"Mon tu chon nhom {item.get('group')} dang mo lop.",
+                    "time_slot_map": time_slot_definitions,
+                    "time_source_file": time_source_file or None,
+                    "resolved_day": None,
+                    "resolved_slot": None,
+                    "resolved_time_range": None,
+                }
+                offered_electives.append(fallback_item)
+                _put_schedule_items([fallback_item])
+
             logger.info(f"[consult_advisor] Fallback found {len(offered_electives)} opened electives.")
-            
         except Exception as e:
             logger.warning(f"[consult_advisor] Fallback electives failed: {e}")
+    else:
+        for candidate in unique_elective_candidates:
+            code = str(candidate.get("code") or "").strip()
+            if not code:
+                continue
+            sched = schedule_by_norm.get(_normalize_subject_code(code))
+            if sched and sched.get("offered"):
+                offered_electives.append(sched)
 
-    elif unique_elective_candidates:
-        logger.info(f"[consult_advisor] Checking schedule for {len(unique_elective_candidates)} elective candidates (limit: {elective_limit})...")
-        try:
-            elective_schedule = check_course_schedule(unique_elective_candidates[:30], target_semester=next_semester, class_code=program_hint)
-            offered_electives = [x for x in elective_schedule if x.get("offered")]
-        except Exception as e:
-            logger.error(f"[consult_advisor] Error checking elective schedules: {e}")
-            
     # Map back for output
     cand_map = {c.get("code"): c for c in unique_elective_candidates}
-    
-    # Nếu có unique_elective_candidates (logic cũ)
+
     if unique_elective_candidates:
         for sched in offered_electives[:elective_limit]:
             code = sched.get("code")
             orig = cand_map.get(code)
             if orig:
-                elective_suggestions.append({
-                    "code": code,
-                    "name": orig.get("name"),
-                    "credits": orig.get("credits"),
-                    "offered": True,
-                    "schedule_snippet": sched.get("snippet", "")[:100]
-                })
+                elective_suggestions.append(
+                    {
+                        "code": code,
+                        "name": orig.get("name"),
+                        "credits": orig.get("credits"),
+                        "offered": True,
+                        "schedule_snippet": sched.get("snippet", "")[:100],
+                    }
+                )
     else:
-        # Logic fallback (đã có offered_electives đầy đủ info)
         for sched in offered_electives[:elective_limit]:
-             elective_suggestions.append({
-                "code": sched.get("code"),
-                "name": sched.get("name"),
-                "credits": sched.get("credits"),
-                "offered": True,
-                "schedule_snippet": sched.get("snippet", "")[:100]
-            })
-    
+            elective_suggestions.append(
+                {
+                    "code": sched.get("code"),
+                    "name": sched.get("name"),
+                    "credits": sched.get("credits"),
+                    "offered": True,
+                    "schedule_snippet": sched.get("snippet", "")[:100],
+                }
+            )
+
     # 5. Build recommended_subjects = mandatory + limited electives
     recommended_subjects = mandatory_missing + [
         {"code": e["code"], "name": e["name"], "credits": e["credits"]}
         for e in elective_suggestions
     ]
-    
-    # 6. Get schedule ONLY for recommended subjects (not all 32)
-    schedule_info = check_course_schedule(recommended_subjects, target_semester=next_semester, class_code=program_hint) if recommended_subjects else []
+
+    # 6. Build schedule_info from the schedule map (single-flight), only query missing leftovers
+    schedule_info: List[Dict[str, Any]] = []
+    unresolved_subjects: List[Dict[str, Any]] = []
+    for subj in recommended_subjects:
+        code = str(subj.get("code") or "").strip()
+        if not code:
+            continue
+        sched = schedule_by_norm.get(_normalize_subject_code(code))
+        if sched:
+            schedule_info.append(sched)
+        else:
+            unresolved_subjects.append(subj)
+
+    if unresolved_subjects:
+        try:
+            extra_schedule = check_course_schedule(
+                unresolved_subjects,
+                target_semester=next_semester,
+                class_code=schedule_class_hint,
+            )
+            _put_schedule_items(extra_schedule)
+            schedule_info.extend(extra_schedule)
+        except Exception as e:
+            logger.warning("[consult_advisor] Error checking unresolved schedule subjects: %s", e)
+
+    schedule_table_rows = _build_schedule_table_rows(
+        schedule_items=schedule_info,
+        recommended_subjects=recommended_subjects,
+        default_time_slot_map=time_slot_definitions,
+    )
     
     logger.info(f"[consult_advisor] Sending {len(recommended_subjects)} recommended subjects to Agent (mandatory: {len(mandatory_missing)}, electives: {len(elective_suggestions)})")
 
@@ -1647,8 +2818,8 @@ def consult_advisor(query: str, file_ids: List[str] | None = None, session_id: s
     ) if transcript_data else {}
 
     scenario = "general"
-    reg_keywords = ["dang ky", "dk", "ky toi", "hoc ky toi", "mon gi", "thieu mon", "dang ký", "đăng ký", "môn"]
-    gpa_keywords = ["gpa", "tich luy", "tăng điểm", "cải thiện", "diem", "điểm"]
+    reg_keywords = ["dang ky", "dk", "ky toi", "hoc ky toi", "mon gi", "thieu mon", "dang kÃ½", "Ä‘Äƒng kÃ½", "mÃ´n"]
+    gpa_keywords = ["gpa", "tich luy", "tÄƒng Ä‘iá»ƒm", "cáº£i thiá»‡n", "diem", "Ä‘iá»ƒm"]
     norm_query = normalize_for_match(query)
     if any(k in norm_query for k in reg_keywords):
         scenario = "registration"
@@ -1663,7 +2834,15 @@ def consult_advisor(query: str, file_ids: List[str] | None = None, session_id: s
         "scenario": scenario,
         "transcript_json": transcript_data or transcript,
         "program_hint": program_hint,
+        "selected_program_id": explicit_program_id,
         "curriculum": curriculum,
+        "credit_summary": {
+            "transcript_total_credits": transcript_total_credits,
+            "curriculum_applicable_credits": int(curriculum_applicable_credits or 0),
+            "total_required_credits": int(credit_summary.get("total_required_credits") or curriculum.get("total_credits") or 0),
+            "total_missing_credits": int(missing_credits_calc or 0),
+            "external_credits_applied": external_credits_applied,
+        },
         "missing_subjects": {
             "count": len(all_missing),  # Original count for reference
             "recommended": recommended_subjects,  # FILTERED list
@@ -1672,7 +2851,19 @@ def consult_advisor(query: str, file_ids: List[str] | None = None, session_id: s
             "credit_analysis": credit_analysis,  # Detailed breakdown
         },
         "next_semester": next_semester,
+        "time_slot_definitions": time_slot_definitions,
+        "time_source_file": time_source_file or None,
         "schedule_offerings": schedule_info,  # Now limited to recommended only
+        "schedule_table_columns": [
+            "Ngày học",
+            "Ca học",
+            "Tiết + Thời gian",
+            "Mã môn học",
+            "Tên môn học",
+            "Tín chỉ",
+            "Ghi chú về lớp",
+        ],
+        "schedule_table_rows": schedule_table_rows,
         "gpa_projection": gpa_projection,
     }
 
@@ -1796,4 +2987,21 @@ def scan_resources(reset: bool = False) -> str:
         resource_loader.loaded_resources = set()
         
     resource_loader.load_resources()
-    return "Resources scanned and updated."
+    
+    # === NEW: Curriculum Program Discovery ===
+    logger.info("[Curriculum Registry] Scanning for training programs...")
+    programs = _scan_curriculum_programs(force_refresh=True)
+    
+    if programs:
+        program_names = [p.get("display_name", p.get("id")) for p in programs.values()]
+        logger.info(f"[Curriculum Registry] Discovered {len(programs)} program(s): {', '.join(program_names)}")
+    else:
+        logger.warning("[Curriculum Registry] No training programs discovered. Check HTML files in data/resources/html/.")
+    
+    return json.dumps({
+        "status": "Resources scanned and updated.",
+        "programs_discovered": len(programs) if programs else 0,
+        "programs": [{"id": p["id"], "name": p["display_name"]} for p in (programs.values() if programs else [])]
+    }, ensure_ascii=False)
+
+

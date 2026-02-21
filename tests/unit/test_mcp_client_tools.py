@@ -92,6 +92,7 @@ def test_mcp_tools_wrappers_call_invoke(monkeypatch):
     assert mcp_tools.tool_get_file_summaries(["f1"], client=dummy) == "get_file_summaries-ok"
     assert mcp_tools.tool_memory_get("s", 5, client=dummy) == "memory_get-ok"
     assert mcp_tools.tool_memory_add("s", "q", "a", 1, client=dummy) == "memory_add-ok"
+    assert mcp_tools.tool_consult_advisor("q", ["f1"], "s", "cs_2022", client=dummy) == "consult_advisor-ok"
     assert mcp_tools.tool_web_search("q", 3, client=dummy) == "web_search_tool-ok"
 
     tools_called = [c[0] for c in calls]
@@ -101,5 +102,9 @@ def test_mcp_tools_wrappers_call_invoke(monkeypatch):
         "get_file_summaries",
         "memory_get",
         "memory_add",
+        "consult_advisor",
         "web_search_tool",
     }
+
+    consult_call = next(c for c in calls if c[0] == "consult_advisor")
+    assert consult_call[1]["program_id"] == "cs_2022"

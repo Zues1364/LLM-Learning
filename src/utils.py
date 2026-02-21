@@ -9,7 +9,7 @@ from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from datetime import datetime
-from typing import List, Tuple, Dict, Any, Optional
+from typing import List, Tuple, Dict, Any, Optional, Set
 import logging
 import urllib.parse
 import requests
@@ -41,6 +41,16 @@ EMB_SUFFIX = "_embeddings.npy"
 EMB_META_SUFFIX = "_embeddings_meta.json"
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+LOG_CHUNK_LOADING = _env_flag("LOG_CHUNK_LOADING", default=False)
+
+
 def normalize_for_match(text: str) -> str:
     """
     Lightweight normalization for lexical matching.
@@ -52,7 +62,7 @@ def normalize_for_match(text: str) -> str:
         return ""
     decomposed = unicodedata.normalize("NFD", text)
     without_accents = "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
-    lowered = without_accents.lower()
+    lowered = without_accents.lower().replace("đ", "d")
     return re.sub(r"\s+", " ", lowered).strip()
 
 
@@ -206,10 +216,16 @@ def process_pdf(file_path: str, chunk_size: int = 1000, chunk_overlap: int = 200
             cached_hash = meta.get("pdf_hash") if isinstance(meta, dict) else meta
             cached_version = meta.get("version") if isinstance(meta, dict) else None
             if cached_hash == pdf_hash and cached_version == CHUNK_CACHE_VERSION:
-                logger.info(f"Loading chunks from cache: {cache_file}")
+                if LOG_CHUNK_LOADING:
+                    logger.info(f"Loading chunks from cache: {cache_file}")
+                else:
+                    logger.debug(f"Loading chunks from cache: {cache_file}")
                 with open(cache_file, "rb") as f:
                     documents = pickle.load(f)
-                logger.info(f"Loaded {len(documents)} cached chunks.")
+                if LOG_CHUNK_LOADING:
+                    logger.info(f"Loaded {len(documents)} cached chunks.")
+                else:
+                    logger.debug(f"Loaded {len(documents)} cached chunks.")
                 return documents
             else:
                 logger.info("PDF changed or cache version bumped, re-processing...")
@@ -769,288 +785,408 @@ def web_search(query: str, num_results=10, api_key="b91e335ef3ef0b0f01dceef77c1c
 
 def parse_curriculum_from_html_content(html_content: str) -> List[dict]:
     """
-    Parses the curriculum HTML content into a structured list of blocks and sub-blocks.
-    Returns a hierarchy of Knowledge Blocks with credit requirements and subjects.
+    Parse curriculum HTML into hierarchical blocks/sub-blocks/subjects.
     """
-    soup = BeautifulSoup(html_content, 'html.parser')
+    soup = BeautifulSoup(html_content, "html.parser")
 
-    # Find the main table - heuristic: tables with "Mã" and "Số tín chỉ"
+    def _parse_credit_token(value: str) -> int:
+        text = (value or "").strip()
+        if not text:
+            return 0
+        match = re.search(r"\b(\d{1,3})(?:\s*/\s*\d{1,3})?\b", text)
+        if not match:
+            return 0
+        try:
+            return int(match.group(1))
+        except Exception:
+            return 0
+
     target_table = None
-    for t in soup.find_all('table'):
-        t_text = t.get_text()
-        if "Mã" in t_text and "học phần" in t_text and "Số tín chỉ" in t_text:
-            target_table = t
+    for table in soup.find_all("table"):
+        table_norm = normalize_for_match(table.get_text(separator=" ", strip=True))
+        if "ma" in table_norm and "hoc phan" in table_norm and "so tin chi" in table_norm:
+            target_table = table
             break
-    
-    if not target_table:
+
+    if target_table is None:
+        best_score = -1
+        for table in soup.find_all("table"):
+            raw_text = table.get_text(separator=" ", strip=True)
+            score = len(re.findall(r"\b[A-Z]{2,6}\d{4}[A-Z]?\b", raw_text.upper()))
+            if score > best_score:
+                best_score = score
+                target_table = table
+
+    if target_table is None:
         logger.warning("[Curriculum Parsing] Could not find curriculum table in HTML.")
         return []
 
-    rows = target_table.find_all('tr')
-    
-    structure = []
-    current_block = None
-    current_sub_block = None
+    rows = target_table.find_all("tr")
 
-    # Regex patterns
-    block_pattern = re.compile(r"^[IVX]+\s*$") # I, II, III...
-    sub_block_pattern = re.compile(r"^[IVX]+\.\d+(\.\d+)?\s*$") # V.1, V.2.1
+    structure: List[dict] = []
+    current_block: dict | None = None
+    current_sub_block: dict | None = None
+
+    block_pattern = re.compile(r"^[IVX]+\s*$")
+    sub_block_pattern = re.compile(r"^[IVX]+\.\d+(?:\.\d+)?\s*$")
+    subject_code_pattern = re.compile(r"^[A-Z]{2,6}\d{4}[A-Z]?$")
+    note_tokens = (
+        "nhom nganh",
+        "tu chon",
+        "bo tro",
+        "dien tu",
+        "vien thong",
+        "kinh te",
+        "luat",
+    )
 
     for row in rows:
-        cols = row.find_all('td')
-        if not cols: continue
-        
-        col_texts = [c.get_text(separator=" ", strip=True) for c in cols]
-        
-        # Skip header rows
-        if len(col_texts) > 3 and "Số tín chỉ" in col_texts[3]:
+        cols = row.find_all("td")
+        if not cols:
             continue
 
-        first_col = col_texts[0]
-        
-        # 1. Detect Main Block (I, II...)
-        if block_pattern.match(first_col):
+        col_texts = [c.get_text(separator=" ", strip=True) for c in cols]
+        col_norms = [normalize_for_match(text) for text in col_texts]
+        if not col_texts:
+            continue
+
+        if any("so tin chi" in item for item in col_norms):
+            continue
+
+        first_col = col_texts[0].strip()
+        first_col_norm = normalize_for_match(first_col).upper().replace(" ", "")
+
+        if block_pattern.match(first_col_norm):
             block_name = col_texts[1] if len(col_texts) > 1 else ""
             credits = 0
-            for c in col_texts[2:]:
-                if re.match(r"^\d+(/\d+)?$", c):
-                     parts = c.split('/')
-                     credits = int(parts[0])
-                     break
-            
+            for item in col_texts[2:]:
+                parsed = _parse_credit_token(item)
+                if parsed > 0:
+                    credits = parsed
+                    break
+
             current_block = {
-                "id": first_col,
+                "id": first_col_norm,
                 "name": block_name,
                 "required_credits": credits,
                 "type": "main",
                 "subjects": [],
-                "sub_blocks": []
+                "sub_blocks": [],
             }
             structure.append(current_block)
             current_sub_block = None
             continue
 
-        # 2. Detect Sub-Block (V.1, V.2...)
-        if sub_block_pattern.match(first_col):
+        if sub_block_pattern.match(first_col_norm):
             sub_name = col_texts[1] if len(col_texts) > 1 else ""
             credits = 0
-            for c in col_texts[2:]:
-                 if re.match(r"^\d+(/\d+)?$", c):
-                         parts = c.split('/')
-                         credits = int(parts[0])
-                         break
-            
+            for item in col_texts[2:]:
+                parsed = _parse_credit_token(item)
+                if parsed > 0:
+                    credits = parsed
+                    break
+
             current_sub_block = {
-                "id": first_col,
+                "id": first_col_norm,
                 "name": sub_name,
                 "required_credits": credits,
                 "type": "sub",
                 "subjects": [],
-                "sub_blocks": [] 
+                "sub_blocks": [],
             }
             if current_block:
                 current_block["sub_blocks"].append(current_sub_block)
             continue
-            
-        # 3. Detect Subject
-        if len(col_texts) >= 4:
-            code = col_texts[1]
-            name = col_texts[2]
-            credit_text = col_texts[3]
-            
-            if re.match(r"^[A-Z]{3}\d{4}[A-Z]?$", code):
-                try:
-                    creds = int(credit_text)
-                except:
-                    creds = 0
-                
-                subj = {"code": code, "name": name, "credits": creds}
-                
-                if current_sub_block:
-                    current_sub_block["subjects"].append(subj)
-                elif current_block:
-                    current_block["subjects"].append(subj)
+
+        subject_code = ""
+        subject_code_idx = -1
+        for idx, raw in enumerate(col_texts[:5]):
+            candidate = raw.strip().upper().replace(" ", "")
+            if subject_code_pattern.match(candidate):
+                subject_code = candidate
+                subject_code_idx = idx
+                break
+
+        if subject_code:
+            name_idx = subject_code_idx + 1
+            credit_idx = name_idx + 1
+            name = col_texts[name_idx] if 0 <= name_idx < len(col_texts) else ""
+            if not name and len(col_texts) > 2:
+                name = col_texts[2]
+            credits = _parse_credit_token(col_texts[credit_idx]) if 0 <= credit_idx < len(col_texts) else 0
+
+            subject = {"code": subject_code, "name": name, "credits": credits}
+            if current_sub_block:
+                current_sub_block["subjects"].append(subject)
+            elif current_block:
+                current_block["subjects"].append(subject)
             continue
 
-        # 4. Detect Description/Note Row (for open electives like "Các học phần thuộc nhóm ngành...")
-        # Check text in columns 1 or 2 (merged)
         note_text = None
-        for c in col_texts:
-            if len(c) > 15 and ("nhóm ngành" in c.lower() or "tự chọn" in c.lower() or "bổ trợ" in c.lower()):
-                note_text = c
+        note_norm = None
+        for raw, norm in zip(col_texts, col_norms):
+            if len(norm) < 6:
+                continue
+            if any(token in norm for token in note_tokens):
+                note_text = raw
+                note_norm = norm
                 break
-        
+
         if note_text:
-            if current_sub_block:
-                if "notes" not in current_sub_block: current_sub_block["notes"] = []
-                current_sub_block["notes"].append(note_text)
-            elif current_block:
-                if "notes" not in current_block: current_block["notes"] = []
-                current_block["notes"].append(note_text)
-    
+            note_item = {"text": note_text, "norm": note_norm or normalize_for_match(note_text)}
+            target_node = current_sub_block if current_sub_block else current_block
+            if target_node is not None:
+                target_node.setdefault("notes", []).append(note_item)
+
     return structure
 
 
 def compute_curriculum_missing_credits(structure: List[dict], completed_map: Dict[str, Any]) -> List[dict]:
     """
-    Computes missing credits per block based on structure and user transcript.
-    Handles hierarchy by aggregating subjects from children sub-blocks.
-    Supports "Open Electives" via text notes (e.g. "Kinh tế", "Luật").
+    Compute missing credits per curriculum block, including open-group external credits.
+    External credits are only counted when block/sub-block notes explicitly allow them.
     """
-    missing_details = []
-    
-    # Track which transcript codes are "consumed" by explicit matches
-    used_codes = set()
+    missing_details: List[Dict[str, Any]] = []
+    used_codes: Set[str] = set()
 
-    # Create Normalized Map for Robust Matching
-    # Key: Normalized Code (Upper, No Space) -> Value: Transcript Subject Data
-    norm_completed_map = {}
+    norm_completed_map: Dict[str, Dict[str, Any]] = {}
     for code, data in completed_map.items():
-        norm_code = code.upper().replace(" ", "")
-        norm_completed_map[norm_code] = data
-    
-    # First pass: Mark explicit matches
-    for block in structure:
-        # Helper to recurse and mark used
-        def mark_used(b):
-            for s in b.get("subjects", []):
-                s_code = str(s.get("code","")).strip()
-                if not s_code: continue
-                norm_s_code = s_code.upper().replace(" ", "")
-                
-                if norm_s_code in norm_completed_map:
-                    # Mark original transcript code as used
-                    orig_code = norm_completed_map[norm_s_code]["code"]
-                    used_codes.add(orig_code)
-            
-            for sub in b.get("sub_blocks", []):
-                mark_used(sub)
-        mark_used(block)
+        norm_code = str(code or "").upper().replace(" ", "")
+        if norm_code:
+            norm_completed_map[norm_code] = data
 
-    def find_open_electives(keywords: List[str], exclude_codes: set) -> List[dict]:
-        found = []
-        for code, sub in completed_map.items():
-            if code in exclude_codes: continue
-            name_lower = (sub.get("name") or "").lower()
-            code_prefix = code[:3]
-            
-            is_match = False
-            for kw in keywords:
-                if kw in name_lower: is_match = True
-            
-            # Code based matching for common external faculties
-            if "kinh tế" in keywords or "marketing" in keywords:
-                if code_prefix in ["INE", "UEB", "BSA", "MKT", "FIN"]: 
-                    is_match = True
-                if "marketing" in name_lower: is_match = True
-            
-            if "luật" in keywords:
-                if code_prefix in ["JUS", "LAW", "LLM"]: is_match = True
-            
-            if "điện tử" in keywords or "viễn thông" in keywords:
-                if code_prefix in ["ELT", "FET"]: is_match = True
+    external_prefix_map: Dict[str, Set[str]] = {
+        "kinh_te": {"BSA", "INE", "UEB", "MKT", "FIN"},
+        "luat": {"LAW", "JUS", "THL", "LLM"},
+        "dien_tu_vien_thong": {"ELT", "ECE", "FET"},
+    }
 
-            if is_match:
-                found.append(sub)
-        # logger.info(f"Find Open Electives: keys={keywords}, found={len(found)}")
-        return found
+    def _safe_int(value: Any) -> int:
+        try:
+            return int(value)
+        except Exception:
+            return 0
 
-    for block in structure:
-        if not block["sub_blocks"]:
-            # Simple case: Main Block with direct subjects
-            main_accumulated = 0
-            for s in block["subjects"]:
-                s_code = str(s.get("code","")).strip()
-                norm_s_code = s_code.upper().replace(" ", "")
-                if norm_s_code in norm_completed_map:
-                    # Use ACTUAL credits from student transcript, not curriculum default
-                    user_sub = norm_completed_map[norm_s_code]
-                    main_accumulated += (user_sub.get("credits") or s["credits"])
-            
-            missing = block["required_credits"] - main_accumulated
-            if missing > 0:
-                # Filter candidates that are NOT in completed map (normalized check)
-                candidates = []
-                for s in block["subjects"]:
-                    s_code = str(s.get("code","")).strip()
-                    norm_s_code = s_code.upper().replace(" ", "")
-                    if norm_s_code not in norm_completed_map:
-                        candidates.append(s)
+    def _normalize_code(value: str) -> str:
+        return str(value or "").upper().replace(" ", "")
 
-                missing_details.append({
-                    "block_name": block['name'],
-                    "missing_credits": missing,
-                    "candidates": candidates
-                })
-        else:
-            # Complex case: Block has sub-buckets
-            buckets = []
-            current_bucket = None
-            
-            for sub in block["sub_blocks"]:
-                if sub["required_credits"] > 0:
-                    current_bucket = {
-                        "name": sub["name"],
-                        "required_credits": sub["required_credits"],
-                        "subjects": list(sub["subjects"]),
-                        "notes": sub.get("notes", [])
-                    }
-                    buckets.append(current_bucket)
-                else:
-                    if current_bucket:
-                        current_bucket["subjects"].extend(sub["subjects"])
-            
-            # Process each bucket
-            for bucket in buckets:
-                bucket_accumulated = 0
-                bucket_completed_codes = set() # Store original codes
-                
-                # accumulation
-                for s in bucket["subjects"]:
-                    s_code = str(s.get("code","")).strip()
-                    norm_s_code = s_code.upper().replace(" ", "")
-                    
-                    if norm_s_code in norm_completed_map:
-                        user_sub = norm_completed_map[norm_s_code]
-                        orig_code = user_sub["code"]
-                        
-                        if orig_code not in bucket_completed_codes:
-                             bucket_accumulated += (user_sub.get("credits") or s["credits"])
-                             bucket_completed_codes.add(orig_code)
-                
-                bs_missing = bucket["required_credits"] - bucket_accumulated
-                if bs_missing > 0:
-                     # Check for notes
-                     notes = bucket.get("notes", []) + block.get("notes", [])
-                     open_candidates = []
-                     
-                     keywords = []
-                     matches_text = " ".join(notes).lower()
-                     if "kinh tế" in matches_text: keywords.append("kinh tế")
-                     if "luật" in matches_text: keywords.append("luật")
-                     if "điện tử" in matches_text: keywords.append("điện tử")
-                     if "marketing" in matches_text: keywords.append("marketing")
-                     
-                     if keywords:
-                         found_open = find_open_electives(keywords, used_codes | bucket_completed_codes)
-                         for s in found_open:
-                             if bs_missing <= 0: break
-                             bs_missing -= s["credits"]
-                             bucket_accumulated += s["credits"]
-                             used_codes.add(s["code"]) 
-                     
-                     if bs_missing > 0:
-                         candidates = []
-                         for s in bucket["subjects"]:
-                            s_code = str(s.get("code","")).strip()
-                            norm_s_code = s_code.upper().replace(" ", "")
-                            if norm_s_code not in norm_completed_map:
-                                candidates.append(s)
+    def _notes_to_norm(notes: List[Any]) -> str:
+        parts: List[str] = []
+        for note in notes or []:
+            if isinstance(note, dict):
+                part = str(note.get("norm") or normalize_for_match(str(note.get("text") or ""))).strip()
+            else:
+                part = normalize_for_match(str(note))
+            if part:
+                parts.append(part)
+        return " ".join(parts).strip()
 
-                         missing_details.append({
-                            "block_name": f"{block['name']} - {bucket['name']}",
-                            "missing_credits": bs_missing,
-                            "candidates": candidates
-                         })
+    def _classify_block_type(name: str, notes_norm: str = "") -> str:
+        name_norm = normalize_for_match(name)
+        if "tu chon" in name_norm or "bo tro" in name_norm:
+            return "elective"
+        if any(token in notes_norm for token in ("nhom nganh", "kinh te", "luat", "dien tu", "vien thong")):
+            return "elective"
+        return "required"
+
+    def _eligible_external_subjects(notes_norm: str, excluded_codes: Set[str]) -> List[Dict[str, Any]]:
+        families: Set[str] = set()
+        if "kinh te" in notes_norm or "marketing" in notes_norm:
+            families.add("kinh_te")
+        if "luat" in notes_norm:
+            families.add("luat")
+        if "dien tu" in notes_norm or "vien thong" in notes_norm:
+            families.add("dien_tu_vien_thong")
+
+        if not families:
+            return []
+
+        matches: List[Dict[str, Any]] = []
+        for raw_code, subj in completed_map.items():
+            norm_code = _normalize_code(raw_code)
+            if not norm_code or norm_code in excluded_codes:
+                continue
+
+            name_norm = normalize_for_match(str(subj.get("name") or ""))
+            prefix = norm_code[:3]
+            matched = False
+
+            if "kinh_te" in families and (
+                prefix in external_prefix_map["kinh_te"]
+                or "kinh te" in name_norm
+                or "marketing" in name_norm
+            ):
+                matched = True
+
+            if (not matched) and "luat" in families and (
+                prefix in external_prefix_map["luat"]
+                or "luat" in name_norm
+                or "phap luat" in name_norm
+            ):
+                matched = True
+
+            if (not matched) and "dien_tu_vien_thong" in families and (
+                prefix in external_prefix_map["dien_tu_vien_thong"]
+                or "dien tu" in name_norm
+                or "vien thong" in name_norm
+            ):
+                matched = True
+
+            if matched:
+                matches.append(subj)
+
+        matches.sort(key=lambda x: _safe_int(x.get("credits")), reverse=True)
+        return matches
+
+    def _append_result(
+        block_name: str,
+        block_type: str,
+        required_credits: int,
+        completed_credits: int,
+        candidates: List[Dict[str, Any]],
+        applied_external_subjects: List[Dict[str, Any]],
+        block_id: Optional[str] = None,
+        notes_norm: str = "",
+    ):
+        missing_credits = max(required_credits - completed_credits, 0)
+        result = {
+            "block_id": block_id,
+            "block_name": block_name,
+            "block_type": block_type,
+            "required_credits": required_credits,
+            "completed_credits": completed_credits,
+            "missing_credits": missing_credits,
+            "candidates": candidates,
+            "applied_external_subjects": applied_external_subjects,
+            "notes_norm": notes_norm,
+        }
+
+        if missing_credits > 0 or applied_external_subjects:
+            missing_details.append(result)
+
+    for block in structure or []:
+        block_name = str(block.get("name") or "")
+        block_notes_norm = _notes_to_norm(block.get("notes") or [])
+        sub_blocks = block.get("sub_blocks") or []
+
+        if not sub_blocks:
+            required = _safe_int(block.get("required_credits"))
+            completed = 0
+            candidates: List[Dict[str, Any]] = []
+
+            for subj in block.get("subjects") or []:
+                norm_code = _normalize_code(subj.get("code"))
+                if not norm_code:
+                    continue
+
+                user_sub = norm_completed_map.get(norm_code)
+                if user_sub is None:
+                    candidates.append(subj)
+                    continue
+
+                original_code = _normalize_code(user_sub.get("code"))
+                if not original_code or original_code in used_codes:
+                    continue
+
+                gained = _safe_int(user_sub.get("credits")) or _safe_int(subj.get("credits"))
+                completed += gained
+                used_codes.add(original_code)
+
+            _append_result(
+                block_name=block_name,
+                block_type=_classify_block_type(block_name, block_notes_norm),
+                required_credits=required,
+                completed_credits=completed,
+                candidates=candidates,
+                applied_external_subjects=[],
+                block_id=block.get("id"),
+                notes_norm=block_notes_norm,
+            )
+            continue
+
+        buckets: List[Dict[str, Any]] = []
+        current_bucket: Optional[Dict[str, Any]] = None
+
+        for sub in sub_blocks:
+            sub_required = _safe_int(sub.get("required_credits"))
+            if sub_required > 0:
+                current_bucket = {
+                    "id": sub.get("id"),
+                    "name": sub.get("name"),
+                    "required_credits": sub_required,
+                    "subjects": list(sub.get("subjects") or []),
+                    "notes": list(sub.get("notes") or []),
+                }
+                buckets.append(current_bucket)
+            elif current_bucket is not None:
+                current_bucket["subjects"].extend(list(sub.get("subjects") or []))
+                current_bucket["notes"].extend(list(sub.get("notes") or []))
+
+        for bucket in buckets:
+            required = _safe_int(bucket.get("required_credits"))
+            completed = 0
+            candidates: List[Dict[str, Any]] = []
+            bucket_used: Set[str] = set()
+
+            for subj in bucket.get("subjects") or []:
+                norm_code = _normalize_code(subj.get("code"))
+                if not norm_code:
+                    continue
+
+                user_sub = norm_completed_map.get(norm_code)
+                if user_sub is None:
+                    candidates.append(subj)
+                    continue
+
+                original_code = _normalize_code(user_sub.get("code"))
+                if not original_code or original_code in used_codes or original_code in bucket_used:
+                    continue
+
+                gained = _safe_int(user_sub.get("credits")) or _safe_int(subj.get("credits"))
+                completed += gained
+                bucket_used.add(original_code)
+                used_codes.add(original_code)
+
+            bucket_notes_norm = _notes_to_norm(bucket.get("notes") or [])
+            notes_norm = " ".join(p for p in [block_notes_norm, bucket_notes_norm] if p).strip()
+
+            applied_external_subjects: List[Dict[str, Any]] = []
+            if completed < required:
+                external_pool = _eligible_external_subjects(notes_norm, used_codes | bucket_used)
+                for external_subj in external_pool:
+                    remaining = required - completed
+                    if remaining <= 0:
+                        break
+
+                    external_code = _normalize_code(external_subj.get("code"))
+                    external_credits = _safe_int(external_subj.get("credits"))
+                    if not external_code or external_credits <= 0:
+                        continue
+
+                    counted_credits = min(external_credits, remaining)
+                    completed += counted_credits
+                    used_codes.add(external_code)
+
+                    applied_external_subjects.append(
+                        {
+                            "code": external_code,
+                            "name": external_subj.get("name"),
+                            "credits": external_credits,
+                            "counted_credits": counted_credits,
+                        }
+                    )
+
+            bucket_name = str(bucket.get("name") or "")
+            merged_name = f"{block_name} - {bucket_name}" if block_name else bucket_name
+            _append_result(
+                block_name=merged_name,
+                block_type=_classify_block_type(bucket_name, notes_norm),
+                required_credits=required,
+                completed_credits=completed,
+                candidates=candidates,
+                applied_external_subjects=applied_external_subjects,
+                block_id=bucket.get("id"),
+                notes_norm=notes_norm,
+            )
 
     return missing_details
