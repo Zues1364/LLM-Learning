@@ -1,0 +1,23 @@
+<type>(<scope>): <summary>
+
+# Types:
+# - feat: new user-facing behavior
+# - fix: bug fix
+# - refactor: internal code change without behavior change
+# - test: tests only
+# - docs: documentation only
+# - chore: tooling / maintenance
+#
+# Examples:
+# fix(schedule): enforce strict E-suffix course matching
+# feat(app): add session single-flight lock
+#
+# Optional body:
+# Why:
+# -
+#
+# What changed:
+# -
+#
+# Verification:
+# - pytest ...

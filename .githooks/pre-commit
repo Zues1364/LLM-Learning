@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${SKIP_PRECOMMIT_CHECKS:-0}" == "1" ]]; then
+  echo "[pre-commit] SKIP_PRECOMMIT_CHECKS=1 -> skip"
+  exit 0
+fi
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+branch="$(git rev-parse --abbrev-ref HEAD)"
+if [[ "${ALLOW_DIRECT_BRANCH_COMMIT:-0}" != "1" ]]; then
+  if [[ "$branch" == "develop" || "$branch" == "main" || "$branch" == "master" ]]; then
+    echo "[pre-commit] Direct commit to protected branch '$branch' is blocked."
+    echo "Start a task branch first, e.g.:"
+    echo "  powershell -ExecutionPolicy Bypass -File ./scripts/start-task.ps1 -Task \"<task description>\""
+    echo "  or: git newtask \"<task description>\""
+    echo "Override once: ALLOW_DIRECT_BRANCH_COMMIT=1 git commit ..."
+    exit 1
+  fi
+fi
+
+staged_files="$(git diff --cached --name-only --diff-filter=ACM)"
+if [[ -z "${staged_files}" ]]; then
+  exit 0
+fi
+
+if echo "$staged_files" | grep -E '(^|/)(debug_output.*\.txt|test/debug_.*\.py|test/compare_.*\.py|test/demo_.*\.py)$' >/dev/null; then
+  echo "[pre-commit] Found debug/temp files in commit."
+  echo "Please unstage debug artifacts before committing:"
+  echo "$staged_files" | grep -E '(^|/)(debug_output.*\.txt|test/debug_.*\.py|test/compare_.*\.py|test/demo_.*\.py)$' || true
+  exit 1
+fi
+
+echo "[pre-commit] checking whitespace..."
+git diff --cached --check
+
+PYTHON_BIN=""
+if [[ -x "./.venv/Scripts/python.exe" ]]; then
+  PYTHON_BIN="./.venv/Scripts/python.exe"
+elif command -v python >/dev/null 2>&1; then
+  PYTHON_BIN="python"
+elif command -v python3 >/dev/null 2>&1; then
+  PYTHON_BIN="python3"
+fi
+
+if [[ -z "$PYTHON_BIN" ]]; then
+  echo "[pre-commit] python not found, skip py_compile"
+  exit 0
+fi
+
+py_files="$(echo "$staged_files" | grep -E '\.py$' || true)"
+if [[ -z "$py_files" ]]; then
+  echo "[pre-commit] no staged python files"
+else
+  echo "[pre-commit] py_compile staged python files..."
+  while IFS= read -r f; do
+    [[ -z "$f" ]] && continue
+    "$PYTHON_BIN" -m py_compile "$f"
+  done <<< "$py_files"
+fi
+
+run_pytest() {
+  local target="$1"
+  if [[ -f "$target" ]]; then
+    echo "[pre-commit] pytest $target"
+    "$PYTHON_BIN" -m pytest "$target" -q
+  fi
+}
+
+# Strict targeted gates by changed areas
+if echo "$staged_files" | grep -E '^(src/app\.py|tests/integration/test_app_ask\.py)$' >/dev/null; then
+  run_pytest "tests/integration/test_app_ask.py"
+fi
+
+if echo "$staged_files" | grep -E '^(src/mcp_server/server\.py|tests/integration/test_mcp_server_tools\.py)$' >/dev/null; then
+  run_pytest "tests/integration/test_mcp_server_tools.py"
+fi
+
+if echo "$staged_files" | grep -E '^(src/utils\.py|tests/unit/test_open_group_credit_rules\.py)$' >/dev/null; then
+  run_pytest "tests/unit/test_open_group_credit_rules.py"
+fi
+
+echo "[pre-commit] ok"

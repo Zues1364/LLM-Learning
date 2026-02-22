@@ -39,3 +39,7 @@ figures/
 # Docs and architectuire diagrams
 diagram/
 latex/
+
+# Local debug / temporary artifacts
+debug_output*.txt
+tmp/

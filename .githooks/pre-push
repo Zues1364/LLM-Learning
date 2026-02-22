@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${SKIP_PUSH_CHECKS:-0}" == "1" ]]; then
+  echo "[pre-push] SKIP_PUSH_CHECKS=1 -> skip"
+  exit 0
+fi
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+branch="$(git rev-parse --abbrev-ref HEAD)"
+if [[ "${ALLOW_PUSH_PROTECTED_BRANCH:-0}" != "1" ]]; then
+  if [[ "$branch" == "develop" || "$branch" == "main" || "$branch" == "master" ]]; then
+    echo "[pre-push] Direct push to protected branch '$branch' is blocked."
+    echo "Push from a working branch and merge back after review."
+    echo "Override once: ALLOW_PUSH_PROTECTED_BRANCH=1 git push"
+    exit 1
+  fi
+fi
+
+PYTHON_BIN=""
+if [[ -x "./.venv/Scripts/python.exe" ]]; then
+  PYTHON_BIN="./.venv/Scripts/python.exe"
+elif command -v python >/dev/null 2>&1; then
+  PYTHON_BIN="python"
+elif command -v python3 >/dev/null 2>&1; then
+  PYTHON_BIN="python3"
+else
+  echo "[pre-push] python not found"
+  exit 1
+fi
+
+echo "[pre-push] run core regression tests..."
+"$PYTHON_BIN" -m pytest tests/integration/test_planner_parse_resilience.py -q
+"$PYTHON_BIN" -m pytest tests/integration/test_mcp_server_tools.py -q
+"$PYTHON_BIN" -m pytest tests/integration/test_app_ask.py -q
+"$PYTHON_BIN" -m pytest tests/unit/test_mcp_client_tools.py -q
+"$PYTHON_BIN" -m pytest tests/unit/test_open_group_credit_rules.py -q
+
+if [[ -f "frontend/package.json" ]] && command -v npm >/dev/null 2>&1; then
+  if [[ "${SKIP_FRONTEND_CHECKS:-0}" != "1" ]]; then
+    echo "[pre-push] frontend build check..."
+    npm --prefix frontend run build >/dev/null
+  else
+    echo "[pre-push] SKIP_FRONTEND_CHECKS=1 -> skip frontend build"
+  fi
+fi
+
+echo "[pre-push] ok"

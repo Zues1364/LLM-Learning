@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+msg_file="$1"
+first_line="$(head -n 1 "$msg_file" | tr -d '\r')"
+
+# Allow merge/revert commits created by git.
+if [[ "$first_line" =~ ^Merge\  ]] || [[ "$first_line" =~ ^Revert\  ]]; then
+  exit 0
+fi
+
+pattern='^(feat|fix|refactor|test|docs|chore)(\([a-z0-9._/-]+\))?: .{5,}$'
+if [[ ! "$first_line" =~ $pattern ]]; then
+  echo "[commit-msg] Invalid commit title:"
+  echo "  $first_line"
+  echo
+  echo "Use format:"
+  echo "  <type>(<scope>): <summary>"
+  echo
+  echo "Example:"
+  echo "  fix(schedule): enforce strict E-suffix course matching"
+  exit 1
+fi
+
+if [[ "${#first_line}" -gt 90 ]]; then
+  echo "[commit-msg] Title too long (${#first_line} > 90)."
+  echo "Keep commit title concise."
+  exit 1
+fi
+
+if [[ "$first_line" =~ \.$ ]]; then
+  echo "[commit-msg] Avoid trailing '.' in commit title."
+  exit 1
+fi
+
+if [[ "$first_line" =~ ^(feat|fix|refactor|test|docs|chore):[[:space:]]+(update|fix|changes?)$ ]]; then
+  echo "[commit-msg] Title is too generic. Use a meaningful summary."
+  exit 1
+fi
+
+exit 0
