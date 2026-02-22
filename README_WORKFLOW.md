@@ -30,6 +30,13 @@ Fast alias (after setup):
 git newtask "sua loi E suffix"
 ```
 
+Branch naming policy:
+
+- Base branch is `develop` (source branch), not a prefix in branch name.
+- Working branches must be `type/slug` (for example `feat/new-advisor-flow`).
+- Never create plain prefix branches like `feat`, `fix`, `docs`, `test`, `refactor`, `chore`.
+- Plain prefix branches block namespaced branches (`feat/...`) in Git.
+
 Useful variants:
 
 1. Normal run

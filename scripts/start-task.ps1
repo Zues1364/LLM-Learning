@@ -148,6 +148,24 @@ function Test-BranchExists {
     return $false
 }
 
+function Assert-BranchNamespaceAvailable {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RemoteName
+    )
+
+    $reservedPrefixes = @("feat", "fix", "refactor", "test", "docs", "chore")
+
+    foreach ($prefix in $reservedPrefixes) {
+        if (Test-GitRefExists "refs/heads/$prefix") {
+            throw "Branch '$prefix' exists and blocks namespaced branches like '$prefix/<task>'. Rename/delete '$prefix' first."
+        }
+        if (Test-GitRefExists "refs/remotes/$RemoteName/$prefix") {
+            throw "Remote branch '$RemoteName/$prefix' exists and may block namespaced refs '$RemoteName/$prefix/<task>'. Rename/delete remote '$RemoteName/$prefix' first."
+        }
+    }
+}
+
 try {
     $repoRoot = Invoke-Git -Args @("rev-parse", "--show-toplevel") -Capture
     if ([string]::IsNullOrWhiteSpace($repoRoot)) {
@@ -176,6 +194,8 @@ try {
     if (-not $NoPull) {
         Invoke-Git -Args @("pull", "--ff-only", $Remote, $BaseBranch) -Mutating
     }
+
+    Assert-BranchNamespaceAvailable -RemoteName $Remote
 
     $resolvedType = Resolve-TypeFromTask -TaskText $TaskText
     $slug = New-BranchSlug -TaskText $TaskText

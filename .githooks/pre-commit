@@ -16,6 +16,8 @@ if [[ "${ALLOW_DIRECT_BRANCH_COMMIT:-0}" != "1" ]]; then
     echo "Start a task branch first, e.g.:"
     echo "  powershell -ExecutionPolicy Bypass -File ./scripts/start-task.ps1 -Task \"<task description>\""
     echo "  or: git newtask \"<task description>\""
+    echo "Branch format: <type>/<slug> (for example feat/new-feature)."
+    echo "Do not create plain 'feat'/'fix' branches because they block namespaced refs."
     echo "Override once: ALLOW_DIRECT_BRANCH_COMMIT=1 git commit ..."
     exit 1
   fi

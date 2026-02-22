@@ -40,6 +40,12 @@ Behavior:
 - Uses `feat` when type cannot be inferred.
 - Adds `-2`, `-3`, ... if branch name already exists.
 - Blocks when working tree is dirty unless `-AllowDirty`.
+- Rejects plain prefix branches (`feat`, `fix`, `docs`, `test`, `refactor`, `chore`) because they block namespaced branches (`feat/...`) in Git.
+
+Naming policy:
+- `develop` is the source branch to branch from.
+- Task branches are always `type/slug` (for example `feat/schedule-hybrid-parser`).
+- Do not use `develop/feat/...` while `develop` exists as a branch name (Git ref namespace conflict).
 
 ## Commit format
 
