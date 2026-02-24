@@ -77,7 +77,7 @@ def get_file_hash(file_path: str) -> str:
 
 # Helper for Vision
 def describe_image_with_gemini(image) -> str:
-    api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+    api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         logger.warning("[VISION] No API Key found, skipping Vision.")
         return ""
@@ -418,21 +418,36 @@ def load_embeddings_with_cache(file_path: str, embedder: Embeddings, documents: 
     emb_meta = CACHE_DIR / f"{pdf_name}{EMB_META_SUFFIX}"
     pdf_hash = get_file_hash(file_path)
     embedder_name = getattr(embedder, "model_name", embedder.__class__.__name__)
+    expected_dim = int(getattr(embedder, "embedding_dim", 0) or 0)
+    expected_docs = len(documents)
 
     if emb_cache.exists() and emb_meta.exists():
         try:
             meta = json.loads(emb_meta.read_text(encoding="utf-8"))
+            emb_np = np.load(emb_cache)
+            if emb_np.ndim == 1:
+                emb_np = np.expand_dims(emb_np, axis=0)
+
+            dim_ok = (expected_dim <= 0) or (emb_np.shape[1] == expected_dim)
+            docs_ok = (meta.get("docs_count") is None) or (int(meta.get("docs_count")) == expected_docs)
+
             if (
                 meta.get("pdf_hash") == pdf_hash
                 and meta.get("embedder") == embedder_name
                 and meta.get("version") == EMB_CACHE_VERSION
+                and dim_ok
+                and docs_ok
             ):
-                emb_np = np.load(emb_cache)
-                if emb_np.ndim == 1:
-                    emb_np = np.expand_dims(emb_np, axis=0)
                 logger.info(f"Loading cached embeddings for {pdf_name}")
                 return emb_np
             else:
+                if not dim_ok:
+                    logger.warning(
+                        "Embedding cache invalid (dim mismatch) for %s: cached=%s expected=%s. Recomputing...",
+                        pdf_name,
+                        emb_np.shape[1],
+                        expected_dim,
+                    )
                 logger.info("Embedding cache invalid (hash/model changed), recomputing...")
         except Exception as e:
             logger.warning(f"Loi khi doc cache embedding: {e}, recompute...")
@@ -451,7 +466,13 @@ def load_embeddings_with_cache(file_path: str, embedder: Embeddings, documents: 
         np.save(emb_cache, emb_np)
         emb_meta.write_text(
             json.dumps(
-                {"pdf_hash": pdf_hash, "embedder": embedder_name, "version": EMB_CACHE_VERSION},
+                {
+                    "pdf_hash": pdf_hash,
+                    "embedder": embedder_name,
+                    "version": EMB_CACHE_VERSION,
+                    "dim": int(emb_np.shape[1]),
+                    "docs_count": expected_docs,
+                },
                 ensure_ascii=False,
             ),
             encoding="utf-8",
@@ -464,10 +485,10 @@ def load_embeddings_with_cache(file_path: str, embedder: Embeddings, documents: 
 
 
 def generate_summary(text: str) -> str:
-    api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+    api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        logger.warning("GOOGLE_API_KEY/GEMINI_API_KEY not set; cannot generate summary.")
-        return "(Khong the tao tom tat: thieu GOOGLE_API_KEY)"
+        logger.warning("GEMINI_API_KEY not set; cannot generate summary.")
+        return "(Khong the tao tom tat: thieu GEMINI_API_KEY)"
 
     try:
         genai.configure(api_key=api_key)
@@ -497,7 +518,23 @@ class VietnameseEmbedder(Embeddings):
         logger.info(f"Loading Vietnamese Embedding model: {model_name}")
         self.model_name = model_name
         self.model = SentenceTransformer(model_name)
+        self.embedding_dim = self._infer_embedding_dim()
         logger.info("Model loaded.")
+
+    def _infer_embedding_dim(self) -> int:
+        """Resolve embedding width once so cache validation can detect stale/corrupt vectors."""
+        try:
+            dim = int(self.model.get_sentence_embedding_dimension())  # type: ignore[attr-defined]
+            if dim > 0:
+                return dim
+        except Exception:
+            pass
+
+        try:
+            vec = self.model.encode(["dim_probe"], show_progress_bar=False)[0]
+            return int(len(vec))
+        except Exception:
+            return 768
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         try:
@@ -506,7 +543,7 @@ class VietnameseEmbedder(Embeddings):
             return embeddings.tolist()
         except Exception as e:
             logger.error(f"Loi khi tao embeddings cho documents: {e}")
-            return [[0.0] * 768 for _ in texts]
+            return [[0.0] * self.embedding_dim for _ in texts]
 
     def embed_query(self, text: str) -> List[float]:
         try:
@@ -514,7 +551,7 @@ class VietnameseEmbedder(Embeddings):
             return embedding.tolist()
         except Exception as e:
             logger.error(f"Loi khi tao embedding cho query: {e}")
-            return [0.0] * 768
+            return [0.0] * self.embedding_dim
 
 
 # FAISS Vector Store (supports multiple PDFs in one index)

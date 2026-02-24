@@ -20,19 +20,8 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from agents import AnswerGeneratorAgent, get_mcp_planner_agent, get_rag_agent
 from env_loader import load_env
 
-# Initial Env Load & Conflict Resolution
+# Initial Env Load
 load_env()
-gemini_key = os.getenv("GEMINI_API_KEY")
-google_key = os.getenv("GOOGLE_API_KEY")
-if gemini_key:
-    if google_key and google_key != gemini_key:
-        logging.warning(
-            "Conflict detected: GOOGLE_API_KEY and GEMINI_API_KEY differ. "
-            "Overriding GOOGLE_API_KEY with GEMINI_API_KEY."
-        )
-    os.environ["GOOGLE_API_KEY"] = gemini_key
-    # Keep one canonical env var to prevent SDK ambiguity.
-    os.environ.pop("GEMINI_API_KEY", None)
 
 from mcp_client.client import MCPClient
 from persistent_memory import PersistentMemory

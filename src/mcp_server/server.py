@@ -15,18 +15,8 @@ from bs4 import BeautifulSoup
 
 from env_loader import load_env
 
-# Initial Env Load & Conflict Resolution
+# Initial Env Load
 load_env()
-gemini_key = os.getenv("GEMINI_API_KEY")
-google_key = os.getenv("GOOGLE_API_KEY")
-if gemini_key:
-    if google_key and google_key != gemini_key:
-        logging.warning(
-            "Conflict detected: GOOGLE_API_KEY and GEMINI_API_KEY differ. "
-            "Overriding GOOGLE_API_KEY with GEMINI_API_KEY."
-        )
-    os.environ["GOOGLE_API_KEY"] = gemini_key
-    os.environ.pop("GEMINI_API_KEY", None)
 
 from utils import (
     web_search,
@@ -779,9 +769,9 @@ def analyze_transcript(file_ids: str | List[str]) -> str:
     # and use 'multi_replace_file_content' to insert the hook? No, user prefers full rewrite usually for safety.
     # I will paste the full content.
     logger.info("analyze_transcript start: file_ids=%s", file_ids)
-    api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+    api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        logger.error("GOOGLE_API_KEY/GEMINI_API_KEY missing for analyze_transcript")
+        logger.error("GEMINI_API_KEY missing for analyze_transcript")
         raise HTTPException(500, "Missing API KEY")
 
     ids_input = file_ids
