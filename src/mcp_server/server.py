@@ -1183,6 +1183,32 @@ def math_eval(expression: str) -> str:
 _PROGRAM_REGISTRY: Dict[str, Dict[str, Any]] = {}
 
 
+def _clean_program_major_title(raw_text: str) -> str:
+    """Strip common boilerplate around major names in curriculum page titles."""
+    text = re.sub(r"\s+", " ", str(raw_text or "")).strip()
+    if not text:
+        return ""
+
+    # Remove leading boilerplate.
+    text = re.sub(
+        r"^(?:Nội dung\s+)?Chương trình đào tạo ngành\s+",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    # Remove trailing institution/site descriptor chunks.
+    text = re.sub(
+        r"\s*[-–—]\s*(?:Trường|Đại học|DHQGHN|ĐHQGHN|University).*?$",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    # Remove trailing QH marker if present in title itself.
+    text = re.sub(r"\s*\(\s*QH[^)]*\)\s*$", "", text, flags=re.IGNORECASE)
+
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def _analyze_html_metadata(file_path: Path) -> Optional[Dict[str, Any]]:
     """
     Analyze HTML curriculum file to extract program metadata.
@@ -1215,12 +1241,15 @@ def _analyze_html_metadata(file_path: Path) -> Optional[Dict[str, Any]]:
         major_map: List[Tuple[str, str, str]] = [
             ("cong nghe thong tin", "Công nghệ thông tin", "it"),
             ("khoa hoc may tinh", "Khoa học máy tính", "cs"),
+            ("ky thuat may tinh", "Kỹ thuật máy tính", "ce"),
             ("ky thuat phan mem", "Kỹ thuật phần mềm", "se"),
             ("he thong thong tin", "Hệ thống thông tin", "is"),
             ("tri tue nhan tao", "Trí tuệ nhân tạo", "ai"),
             ("mang may tinh va truyen thong du lieu", "Mạng máy tính và truyền thông dữ liệu", "network"),
             ("an toan thong tin", "An toàn thông tin", "security"),
             ("khoa hoc du lieu", "Khoa học dữ liệu", "ds"),
+            ("ky thuat dieu khien va tu dong hoa", "Kỹ thuật điều khiển và tự động hóa", "aut"),
+            ("dieu khien va tu dong hoa", "Kỹ thuật điều khiển và tự động hóa", "aut"),
         ]
 
         major_name = None
@@ -1233,19 +1262,30 @@ def _analyze_html_metadata(file_path: Path) -> Optional[Dict[str, Any]]:
 
         if not major_name:
             # Fallback from filename/title.
-            major_name = title.strip() or file_path.stem.strip()
+            major_name = _clean_program_major_title(title) or _clean_program_major_title(file_path.stem)
+            if not major_name:
+                major_name = title.strip() or file_path.stem.strip()
             major_name = re.sub(r"\s+", " ", major_name)[:120]
             words = [w for w in normalize_for_match(major_name).split() if w]
             abbr = "".join(w[0] for w in words)[:6] or "prog"
 
         year = None
         year_end = None
-        year_range_match = re.search(r"qh[\s\-]?(\d{4})[\s\-]+(\d{4})", signal_norm)
+        title_stem_norm = normalize_for_match(f"{title} {file_path.stem}")
+
+        year_range_match = (
+            re.search(r"qh\s*[\-(]?\s*(20\d{2})\s*[-–—]\s*(20\d{2})", title_stem_norm)
+            or re.search(r"qh\D{0,12}(20\d{2})\D+(20\d{2})", title_stem_norm)
+            or re.search(r"\b(20\d{2})\s*[-–—]\s*(20\d{2})\b", normalize_for_match(file_path.stem))
+        )
         if year_range_match:
-            year = year_range_match.group(1)
-            year_end = year_range_match.group(2)
-        else:
-            year_match = re.search(r"qh[\s\-]?(\d{4})", signal_norm)
+            y1, y2 = year_range_match.group(1), year_range_match.group(2)
+            if y2 >= y1 and (int(y2) - int(y1)) <= 8:
+                year = y1
+                year_end = y2
+
+        if not year:
+            year_match = re.search(r"qh[\s\-]?\(?\s*(20\d{2})\b", title_stem_norm)
             if not year_match:
                 year_match = re.search(r"khoa\s+(\d{4})", signal_norm)
             if not year_match:
@@ -1259,18 +1299,20 @@ def _analyze_html_metadata(file_path: Path) -> Optional[Dict[str, Any]]:
         program_id = f"{abbr}_{year}" if year else abbr
 
         if year and year_end:
-            year_display = f"QH-{year}-{year_end}"
+            qh_label = f"QH-{year}-{year_end}"
         elif year:
-            year_display = f"QH-{year}"
+            qh_label = f"QH-{year}"
         else:
-            year_display = None
+            qh_label = None
 
         return {
             "id": program_id,
             "name": major_name,
+            "group_name": major_name,
             "year": year,
             "year_end": year_end,
-            "display_name": f"{major_name} ({year_display})" if year_display else major_name,
+            "qh_label": qh_label,
+            "display_name": f"{major_name} ({qh_label})" if qh_label else major_name,
             "file_path": str(file_path),
             "file_name": file_path.name,
         }
@@ -1412,15 +1454,34 @@ def get_available_programs(refresh: bool = False) -> str:
     if not programs:
         return json.dumps({"error": "KhÃ´ng tÃ¬m tháº¥y chÆ°Æ¡ng trÃ¬nh Ä‘Ã o táº¡o nÃ o.", "programs": []}, ensure_ascii=False)
     
-    # Return simplified list for agent
+    def _as_year(value: Any) -> int:
+        try:
+            return int(str(value))
+        except Exception:
+            return -1
+
+    sorted_programs = sorted(
+        programs.values(),
+        key=lambda p: (
+            normalize_for_match(str(p.get("group_name") or p.get("name") or "")),
+            -_as_year(p.get("year_end") or p.get("year")),
+            -_as_year(p.get("year")),
+            str(p.get("id") or ""),
+        ),
+    )
+
+    # Return simplified list for agent/UI
     result = [
         {
             "id": p["id"],
             "name": p["name"],
+            "group_name": p.get("group_name") or p.get("name"),
             "year": p["year"],
+            "year_end": p.get("year_end"),
+            "qh_label": p.get("qh_label"),
             "display_name": p["display_name"],
         }
-        for p in programs.values()
+        for p in sorted_programs
     ]
     return json.dumps({"programs": result}, ensure_ascii=False)
 
@@ -2876,8 +2937,15 @@ def consult_advisor(
     return getattr(get_academic_advisor_agent().run(prompt), "content", "")
 
 @mcp_tool("retrieve_chunks")
-def retrieve_chunks(question: str, top_k: int = 20, file_ids: List[str] | None = None) -> List[str]:
-    if top_k < 20: top_k = 20
+def retrieve_chunks(question: str, top_k: int = 15, file_ids: List[str] | None = None) -> List[str]:
+    try:
+        top_k = int(top_k)
+    except Exception:
+        top_k = 15
+    if top_k < 1:
+        top_k = 1
+    if top_k > 50:
+        top_k = 50
     ids_input = file_ids or []
     if isinstance(ids_input, str): ids_input = [p.strip() for p in ids_input.split(",")]
     

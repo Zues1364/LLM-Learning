@@ -699,6 +699,7 @@ class FAISSVectorStore:
                         prev = combined_scores.get(idx, 0.0)
                         # Boost by +3.0 is usually enough to overtake any semantic noise
                         new_score = prev + 3.0
+                        combined_scores[idx] = new_score
                         logger.info(f"[DEBUG] 🚀 SUBJECT CODE BOOST for Chunk {idx + 1}: {code} found -> +3.0 (Score: {new_score:.4f})")
 
         # --- HEURISTIC BOOST FOR DEFINITIONS (HANDBOOK/REGULATIONS) & SCHEDULE PENALTY ---
@@ -710,6 +711,12 @@ class FAISSVectorStore:
             r"ngoại ngữ", r"ielts", r"toeic", r"các loại", r"danh sách", r"cấu trúc"
         ]
         is_general_query = any(re.search(p, query.lower()) for p in definition_patterns)
+        language_patterns = [
+            r"ielts", r"toeic", r"toefl", r"vstep", r"aptis", r"cambridge",
+            r"ngoại ngữ", r"chuan dau ra ngoai ngu", r"chuẩn đầu ra ngoại ngữ",
+            r"\bbac\s*3\b", r"\bbac\s*4\b", r"\bbac\s*5\b", r"knlnn"
+        ]
+        is_language_query = any(re.search(p, query.lower()) for p in language_patterns)
         
         # 2. Check for Schedule Intent (Is the user explicitly asking for Time/Location?)
         schedule_intent_patterns = [r"lịch", r"phòng", r"thứ", r"tiết", r"giờ", r"bao giờ", r"ở đâu", r"thời khóa biểu", r"tkb"]
@@ -744,6 +751,30 @@ class FAISSVectorStore:
                 new_score = prev - penalty
                 combined_scores[idx] = new_score
                 # logger.info(f"[DEBUG] 📉 SCHEDULE PENALTY for Chunk {idx + 1}: -{penalty} (Query not requesting schedule)")
+
+            # C. LANGUAGE MAPPING BOOST (IELTS/TOEFL/TOEIC/VSTEP)
+            if is_language_query:
+                norm_doc = doc.metadata.get("_norm_text") or normalize_for_match(doc.page_content)
+                doc.metadata["_norm_text"] = norm_doc
+
+                has_test_mapping_signal = any(
+                    token in norm_doc for token in [
+                        "ielts", "toeic", "toefl", "vstep", "aptis", "cambridge",
+                        "bang tham chieu", "knlnnvn", "bac 3", "bac 4", "bac 5"
+                    ]
+                )
+                if has_test_mapping_signal:
+                    prev = combined_scores.get(idx, 0.0)
+                    extra = 2.2
+                    if "bang tham chieu" in norm_doc or "knlnnvn" in norm_doc:
+                        extra += 1.0
+                    combined_scores[idx] = prev + extra
+                else:
+                    # Slightly suppress unrelated HTML chunks for language-equivalence questions.
+                    is_html_chunk = source_name.endswith(".HTML") or file_id.endswith(".HTML")
+                    if is_html_chunk and not is_authority:
+                        prev = combined_scores.get(idx, 0.0)
+                        combined_scores[idx] = prev - 0.4
 
         # Re-rank with combined scores
         ranked = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)

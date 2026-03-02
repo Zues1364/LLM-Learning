@@ -445,6 +445,9 @@ def _normalize_program_list(raw: Any) -> List[Dict[str, Any]]:
                 "id": program_id,
                 "name": name or display_name,
                 "year": item.get("year"),
+                "year_end": item.get("year_end"),
+                "qh_label": item.get("qh_label"),
+                "group_name": item.get("group_name") or name or display_name,
                 "display_name": display_name,
             }
         )
@@ -488,6 +491,36 @@ class UrlRequest(BaseModel):
 
 # --- Resource Endpoints ---
 
+def _is_allowed_extension(filename: Optional[str], allowed_exts: Set[str]) -> bool:
+    suffix = Path(filename or "").suffix.lower()
+    return suffix in allowed_exts
+
+
+def _save_resource_batch(files: List[UploadFile], target_dir: Path, allowed_exts: Set[str]) -> Dict[str, Any]:
+    uploaded: List[Dict[str, str]] = []
+    errors: List[Dict[str, str]] = []
+
+    for upload_file in files:
+        original_name = Path(upload_file.filename or "").name or "unnamed"
+        if not _is_allowed_extension(original_name, allowed_exts):
+            errors.append({"name": original_name, "error": "invalid extension"})
+            continue
+
+        target_path = target_dir / original_name
+        try:
+            with open(target_path, "wb") as buffer:
+                shutil.copyfileobj(upload_file.file, buffer)
+            uploaded.append({"name": original_name})
+        except Exception as e:
+            errors.append({"name": original_name, "error": str(e)})
+
+    return {
+        "uploaded": uploaded,
+        "errors": errors,
+        "uploaded_count": len(uploaded),
+        "error_count": len(errors),
+    }
+
 @app.get("/api/resources")
 async def get_resources():
     # Use locally imported resource_loader just to LIST.
@@ -505,12 +538,13 @@ async def get_programs(refresh: bool = False):
 
 @app.post("/api/resources/pdf")
 async def upload_resource_pdf(file: UploadFile = File(...)):
-    if not file.filename.endswith(".pdf"):
+    if not _is_allowed_extension(file.filename, {".pdf"}):
         raise HTTPException(status_code=400, detail="File phai la PDF")
     
     try:
+        file_name = Path(file.filename or "").name or "uploaded.pdf"
         # Save directly to resource dir
-        target_path = RESOURCE_PDF_DIR / file.filename
+        target_path = RESOURCE_PDF_DIR / file_name
         with open(target_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
             
@@ -520,19 +554,20 @@ async def upload_resource_pdf(file: UploadFile = File(...)):
         except Exception as e:
              logger.warning(f"Failed to trigger MCP scan: {e}")
             
-        return {"message": "PDF added to resources successfully", "name": file.filename}
+        return {"message": "PDF added to resources successfully", "name": file_name}
     except Exception as e:
         logger.error(f"Error adding PDF resource: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/resources/html")
 async def upload_resource_html(file: UploadFile = File(...)):
-    if not (file.filename.endswith(".html") or file.filename.endswith(".htm")):
+    if not _is_allowed_extension(file.filename, {".html", ".htm"}):
         raise HTTPException(status_code=400, detail="File phai la HTML")
     
     try:
+        file_name = Path(file.filename or "").name or "uploaded.html"
         # Save directly to resource dir
-        target_path = RESOURCE_HTML_DIR / file.filename
+        target_path = RESOURCE_HTML_DIR / file_name
         with open(target_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
             
@@ -542,10 +577,40 @@ async def upload_resource_html(file: UploadFile = File(...)):
         except Exception as e:
              logger.warning(f"Failed to trigger MCP scan: {e}")
             
-        return {"message": "HTML added to resources successfully", "name": file.filename}
+        return {"message": "HTML added to resources successfully", "name": file_name}
     except Exception as e:
         logger.error(f"Error adding HTML resource: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/resources/pdfs")
+async def upload_resource_pdfs(files: List[UploadFile] = File(...)):
+    if not files:
+        raise HTTPException(status_code=400, detail="Chua chon file PDF")
+
+    result = _save_resource_batch(files, RESOURCE_PDF_DIR, {".pdf"})
+    if result["uploaded_count"] > 0:
+        try:
+            mcp_client.invoke("scan_resources", {})
+        except Exception as e:
+            logger.warning(f"Failed to trigger MCP scan: {e}")
+
+    return result
+
+
+@app.post("/api/resources/htmls")
+async def upload_resource_htmls(files: List[UploadFile] = File(...)):
+    if not files:
+        raise HTTPException(status_code=400, detail="Chua chon file HTML")
+
+    result = _save_resource_batch(files, RESOURCE_HTML_DIR, {".html", ".htm"})
+    if result["uploaded_count"] > 0:
+        try:
+            mcp_client.invoke("scan_resources", {})
+        except Exception as e:
+            logger.warning(f"Failed to trigger MCP scan: {e}")
+
+    return result
 
 @app.post("/api/resources/url")
 async def add_resource_url(req: UrlRequest):

@@ -1,5 +1,5 @@
 ﻿
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import DOMPurify from "dompurify";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -107,10 +107,26 @@ async function uploadResourcePdf(file) {
   return res.json();
 }
 
+async function uploadResourcePdfs(files) {
+  const form = new FormData();
+  files.forEach((f) => form.append("files", f));
+  const res = await fetch(`${API_BASE}/api/resources/pdfs`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 async function uploadResourceHtml(file) {
   const form = new FormData();
   form.append("file", file);
   const res = await fetch(`${API_BASE}/api/resources/html`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function uploadResourceHtmls(files) {
+  const form = new FormData();
+  files.forEach((f) => form.append("files", f));
+  const res = await fetch(`${API_BASE}/api/resources/htmls`, { method: "POST", body: form });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -220,6 +236,36 @@ export default function App() {
     pendingProgramBySession[currentSession] || currentSelectedProgramId || programs[0]?.id || "";
   const currentProgramDisplayName =
     programs.find((p) => p.id === currentSelectedProgramId)?.display_name || currentSelectedProgramId || "";
+  const groupedPrograms = useMemo(() => {
+    const groups = new Map();
+
+    const asYear = (value) => {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : -1;
+    };
+
+    for (const program of programs) {
+      const groupName = String(program?.group_name || program?.name || "Khác").trim() || "Khác";
+      if (!groups.has(groupName)) groups.set(groupName, []);
+      groups.get(groupName).push(program);
+    }
+
+    const collator = new Intl.Collator("vi", { sensitivity: "base" });
+    const sortedGroupNames = Array.from(groups.keys()).sort((a, b) => collator.compare(a, b));
+
+    return sortedGroupNames.map((groupName) => {
+      const items = (groups.get(groupName) || []).slice().sort((a, b) => {
+        const sortYearA = asYear(a?.year_end ?? a?.year);
+        const sortYearB = asYear(b?.year_end ?? b?.year);
+        if (sortYearA !== sortYearB) return sortYearB - sortYearA;
+        const yearA = asYear(a?.year);
+        const yearB = asYear(b?.year);
+        if (yearA !== yearB) return yearB - yearA;
+        return String(a?.id || "").localeCompare(String(b?.id || ""));
+      });
+      return { groupName, items };
+    });
+  }, [programs]);
 
   const updateSelectedFiles = useCallback((sessionId, updater) => {
     setSelectedFilesBySession((prev) => {
@@ -434,11 +480,21 @@ export default function App() {
   };
 
   const handleResourceUpload = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const selected = e.target.files ? Array.from(e.target.files) : [];
+    if (!selected.length) return;
     setResourceLoading(true);
     try {
-      await uploadResourcePdf(file);
+      if (selected.length === 1) {
+        await uploadResourcePdf(selected[0]);
+        alert("Upload PDF thành công: 1 file.");
+      } else {
+        const resp = await uploadResourcePdfs(selected);
+        const uploadedCount = Number(resp?.uploaded_count ?? resp?.uploaded?.length ?? 0);
+        const errorCount = Number(resp?.error_count ?? resp?.errors?.length ?? 0);
+        const topError = resp?.errors?.[0]?.error || "";
+        const suffix = errorCount > 0 && topError ? ` (lỗi đầu: ${topError})` : "";
+        alert(`Upload PDF xong: thành công ${uploadedCount}, lỗi ${errorCount}.${suffix}`);
+      }
       await refreshResources();
     } catch (err) {
       alert(`Lỗi upload resource: ${err.message}`);
@@ -449,11 +505,21 @@ export default function App() {
   };
 
   const handleResourceHtmlUpload = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const selected = e.target.files ? Array.from(e.target.files) : [];
+    if (!selected.length) return;
     setResourceLoading(true);
     try {
-      await uploadResourceHtml(file);
+      if (selected.length === 1) {
+        await uploadResourceHtml(selected[0]);
+        alert("Upload HTML thành công: 1 file.");
+      } else {
+        const resp = await uploadResourceHtmls(selected);
+        const uploadedCount = Number(resp?.uploaded_count ?? resp?.uploaded?.length ?? 0);
+        const errorCount = Number(resp?.error_count ?? resp?.errors?.length ?? 0);
+        const topError = resp?.errors?.[0]?.error || "";
+        const suffix = errorCount > 0 && topError ? ` (lỗi đầu: ${topError})` : "";
+        alert(`Upload HTML xong: thành công ${uploadedCount}, lỗi ${errorCount}.${suffix}`);
+      }
       await refreshResources();
     } catch (err) {
       alert(`Lỗi upload HTML: ${err.message}`);
@@ -743,16 +809,18 @@ export default function App() {
 
             <div style={{ borderTop: "1px solid var(--glass-border)", paddingTop: 15 }}>
               <div style={{ marginBottom: 10, fontSize: 13, fontWeight: "bold" }}>Thêm PDF Sổ tay</div>
-              <input type="file" ref={resourceFileInputRef} accept="application/pdf" style={{ display: "none" }} onChange={handleResourceUpload} />
+              <input type="file" ref={resourceFileInputRef} accept="application/pdf" multiple style={{ display: "none" }} onChange={handleResourceUpload} />
               <button className="chip-btn" onClick={() => resourceFileInputRef.current?.click()} style={{ width: "100%", justifyContent: "center" }}>
                 <i className="fas fa-upload"></i> Upload PDF
               </button>
+              <div style={{ marginTop: 6, color: "#64748b", fontSize: 12 }}>Bạn có thể chọn nhiều file PDF cùng lúc.</div>
 
               <div style={{ marginBottom: 10, marginTop: 15, fontSize: 13, fontWeight: "bold" }}>Thêm HTML Local</div>
-              <input type="file" ref={resourceHtmlInputRef} accept=".html,.htm" style={{ display: "none" }} onChange={handleResourceHtmlUpload} />
+              <input type="file" ref={resourceHtmlInputRef} accept=".html,.htm" multiple style={{ display: "none" }} onChange={handleResourceHtmlUpload} />
               <button className="chip-btn" onClick={() => resourceHtmlInputRef.current?.click()} style={{ width: "100%", justifyContent: "center" }}>
                 <i className="fas fa-code"></i> Upload HTML
               </button>
+              <div style={{ marginTop: 6, color: "#64748b", fontSize: 12 }}>Bạn có thể chọn nhiều file HTML cùng lúc.</div>
 
               <div style={{ marginTop: 15, marginBottom: 10, fontSize: 13, fontWeight: "bold" }}>Thêm Link Quy chế</div>
               <div style={{ display: "flex", gap: 5 }}>
@@ -871,10 +939,14 @@ export default function App() {
                       {programsLoading ? "Đang tải chương trình..." : "Không có chương trình khả dụng"}
                     </option>
                   )}
-                  {programs.map((program) => (
-                    <option key={program.id} value={program.id}>
-                      {program.display_name || program.name || program.id}
-                    </option>
+                  {groupedPrograms.map((group) => (
+                    <optgroup key={group.groupName} label={group.groupName}>
+                      {group.items.map((program) => (
+                        <option key={program.id} value={program.id}>
+                          {program.qh_label || program.display_name || program.name || program.id}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
                 </select>
                 <button
