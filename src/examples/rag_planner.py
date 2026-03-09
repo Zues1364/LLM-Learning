@@ -14,7 +14,6 @@ load_env()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY is not set. Add it to .env or environment variables.")
-os.environ["GOOGLE_API_KEY"] = GEMINI_API_KEY
 genai.configure(api_key=GEMINI_API_KEY)
 
 logger = logging.getLogger(__name__)

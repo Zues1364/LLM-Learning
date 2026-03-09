@@ -34,6 +34,18 @@ from mcp_tools import (
 )
 
 
+def _gemini_model(model_id: str) -> Gemini:
+    """
+    Build Gemini model with explicit GEMINI_API_KEY to avoid agno fallback warnings
+    that hard-check GOOGLE_API_KEY.
+    """
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        logger.warning("GEMINI_API_KEY is not set; Gemini model init may fail.")
+        return Gemini(id=model_id)
+    return Gemini(id=model_id, api_key=api_key)
+
+
 
 
 # Planner Agent (tool-calling, tra JSON)
@@ -89,7 +101,7 @@ def get_mcp_planner_agent(allow_web_search: bool = False) -> Agent:
     )
     return Agent(
         name="MCP Planner Agent",
-        model=Gemini(id="gemini-2.5-pro"),
+        model=_gemini_model("gemini-2.5-pro"),
         tools=tools,
         instructions=instructions,
         markdown=False,
@@ -153,7 +165,7 @@ def get_academic_advisor_agent() -> Agent:
 
     return Agent(
         name="Academic Advisor Agent",
-        model=Gemini(id="gemini-2.5-flash"),
+        model=_gemini_model("gemini-2.5-flash"),
         tools=[safe_math_eval],
         instructions=instructions,
         markdown=True,
@@ -296,7 +308,7 @@ def get_rag_agent() -> Agent:
     try:
         agent = Agent(
             name="Gemini RAG Agent",
-            model=Gemini(id="gemini-2.5-flash"),
+            model=_gemini_model("gemini-2.5-flash"),
             instructions=(
                 "Ban la tro ly RAG, tra loi chinh xac dua tren tai lieu.\n"
                 "Neu thong tin den tu PDF, tra loi chi tiet va neu ro ten file/Chunk neu co metadata file_name.\n"
@@ -401,7 +413,7 @@ def get_scheduler_agent_internal() -> Agent:
     )
     return Agent(
         name="Scheduler Internal Agent",
-        model=Gemini(id="gemini-2.5-flash"),
+        model=_gemini_model("gemini-2.5-flash"),
         instructions=instructions,
         markdown=False,
     )

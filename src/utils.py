@@ -77,7 +77,7 @@ def get_file_hash(file_path: str) -> str:
 
 # Helper for Vision
 def describe_image_with_gemini(image) -> str:
-    api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+    api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         logger.warning("[VISION] No API Key found, skipping Vision.")
         return ""
@@ -418,21 +418,36 @@ def load_embeddings_with_cache(file_path: str, embedder: Embeddings, documents: 
     emb_meta = CACHE_DIR / f"{pdf_name}{EMB_META_SUFFIX}"
     pdf_hash = get_file_hash(file_path)
     embedder_name = getattr(embedder, "model_name", embedder.__class__.__name__)
+    expected_dim = int(getattr(embedder, "embedding_dim", 0) or 0)
+    expected_docs = len(documents)
 
     if emb_cache.exists() and emb_meta.exists():
         try:
             meta = json.loads(emb_meta.read_text(encoding="utf-8"))
+            emb_np = np.load(emb_cache)
+            if emb_np.ndim == 1:
+                emb_np = np.expand_dims(emb_np, axis=0)
+
+            dim_ok = (expected_dim <= 0) or (emb_np.shape[1] == expected_dim)
+            docs_ok = (meta.get("docs_count") is None) or (int(meta.get("docs_count")) == expected_docs)
+
             if (
                 meta.get("pdf_hash") == pdf_hash
                 and meta.get("embedder") == embedder_name
                 and meta.get("version") == EMB_CACHE_VERSION
+                and dim_ok
+                and docs_ok
             ):
-                emb_np = np.load(emb_cache)
-                if emb_np.ndim == 1:
-                    emb_np = np.expand_dims(emb_np, axis=0)
                 logger.info(f"Loading cached embeddings for {pdf_name}")
                 return emb_np
             else:
+                if not dim_ok:
+                    logger.warning(
+                        "Embedding cache invalid (dim mismatch) for %s: cached=%s expected=%s. Recomputing...",
+                        pdf_name,
+                        emb_np.shape[1],
+                        expected_dim,
+                    )
                 logger.info("Embedding cache invalid (hash/model changed), recomputing...")
         except Exception as e:
             logger.warning(f"Loi khi doc cache embedding: {e}, recompute...")
@@ -451,7 +466,13 @@ def load_embeddings_with_cache(file_path: str, embedder: Embeddings, documents: 
         np.save(emb_cache, emb_np)
         emb_meta.write_text(
             json.dumps(
-                {"pdf_hash": pdf_hash, "embedder": embedder_name, "version": EMB_CACHE_VERSION},
+                {
+                    "pdf_hash": pdf_hash,
+                    "embedder": embedder_name,
+                    "version": EMB_CACHE_VERSION,
+                    "dim": int(emb_np.shape[1]),
+                    "docs_count": expected_docs,
+                },
                 ensure_ascii=False,
             ),
             encoding="utf-8",
@@ -464,10 +485,10 @@ def load_embeddings_with_cache(file_path: str, embedder: Embeddings, documents: 
 
 
 def generate_summary(text: str) -> str:
-    api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+    api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        logger.warning("GOOGLE_API_KEY/GEMINI_API_KEY not set; cannot generate summary.")
-        return "(Khong the tao tom tat: thieu GOOGLE_API_KEY)"
+        logger.warning("GEMINI_API_KEY not set; cannot generate summary.")
+        return "(Khong the tao tom tat: thieu GEMINI_API_KEY)"
 
     try:
         genai.configure(api_key=api_key)
@@ -497,7 +518,23 @@ class VietnameseEmbedder(Embeddings):
         logger.info(f"Loading Vietnamese Embedding model: {model_name}")
         self.model_name = model_name
         self.model = SentenceTransformer(model_name)
+        self.embedding_dim = self._infer_embedding_dim()
         logger.info("Model loaded.")
+
+    def _infer_embedding_dim(self) -> int:
+        """Resolve embedding width once so cache validation can detect stale/corrupt vectors."""
+        try:
+            dim = int(self.model.get_sentence_embedding_dimension())  # type: ignore[attr-defined]
+            if dim > 0:
+                return dim
+        except Exception:
+            pass
+
+        try:
+            vec = self.model.encode(["dim_probe"], show_progress_bar=False)[0]
+            return int(len(vec))
+        except Exception:
+            return 768
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         try:
@@ -506,7 +543,7 @@ class VietnameseEmbedder(Embeddings):
             return embeddings.tolist()
         except Exception as e:
             logger.error(f"Loi khi tao embeddings cho documents: {e}")
-            return [[0.0] * 768 for _ in texts]
+            return [[0.0] * self.embedding_dim for _ in texts]
 
     def embed_query(self, text: str) -> List[float]:
         try:
@@ -514,7 +551,7 @@ class VietnameseEmbedder(Embeddings):
             return embedding.tolist()
         except Exception as e:
             logger.error(f"Loi khi tao embedding cho query: {e}")
-            return [0.0] * 768
+            return [0.0] * self.embedding_dim
 
 
 # FAISS Vector Store (supports multiple PDFs in one index)
@@ -699,6 +736,7 @@ class FAISSVectorStore:
                         prev = combined_scores.get(idx, 0.0)
                         # Boost by +3.0 is usually enough to overtake any semantic noise
                         new_score = prev + 3.0
+                        combined_scores[idx] = new_score
                         logger.info(f"[DEBUG] 🚀 SUBJECT CODE BOOST for Chunk {idx + 1}: {code} found -> +3.0 (Score: {new_score:.4f})")
 
         # --- HEURISTIC BOOST FOR DEFINITIONS (HANDBOOK/REGULATIONS) & SCHEDULE PENALTY ---
@@ -710,6 +748,12 @@ class FAISSVectorStore:
             r"ngoại ngữ", r"ielts", r"toeic", r"các loại", r"danh sách", r"cấu trúc"
         ]
         is_general_query = any(re.search(p, query.lower()) for p in definition_patterns)
+        language_patterns = [
+            r"ielts", r"toeic", r"toefl", r"vstep", r"aptis", r"cambridge",
+            r"ngoại ngữ", r"chuan dau ra ngoai ngu", r"chuẩn đầu ra ngoại ngữ",
+            r"\bbac\s*3\b", r"\bbac\s*4\b", r"\bbac\s*5\b", r"knlnn"
+        ]
+        is_language_query = any(re.search(p, query.lower()) for p in language_patterns)
         
         # 2. Check for Schedule Intent (Is the user explicitly asking for Time/Location?)
         schedule_intent_patterns = [r"lịch", r"phòng", r"thứ", r"tiết", r"giờ", r"bao giờ", r"ở đâu", r"thời khóa biểu", r"tkb"]
@@ -744,6 +788,30 @@ class FAISSVectorStore:
                 new_score = prev - penalty
                 combined_scores[idx] = new_score
                 # logger.info(f"[DEBUG] 📉 SCHEDULE PENALTY for Chunk {idx + 1}: -{penalty} (Query not requesting schedule)")
+
+            # C. LANGUAGE MAPPING BOOST (IELTS/TOEFL/TOEIC/VSTEP)
+            if is_language_query:
+                norm_doc = doc.metadata.get("_norm_text") or normalize_for_match(doc.page_content)
+                doc.metadata["_norm_text"] = norm_doc
+
+                has_test_mapping_signal = any(
+                    token in norm_doc for token in [
+                        "ielts", "toeic", "toefl", "vstep", "aptis", "cambridge",
+                        "bang tham chieu", "knlnnvn", "bac 3", "bac 4", "bac 5"
+                    ]
+                )
+                if has_test_mapping_signal:
+                    prev = combined_scores.get(idx, 0.0)
+                    extra = 2.2
+                    if "bang tham chieu" in norm_doc or "knlnnvn" in norm_doc:
+                        extra += 1.0
+                    combined_scores[idx] = prev + extra
+                else:
+                    # Slightly suppress unrelated HTML chunks for language-equivalence questions.
+                    is_html_chunk = source_name.endswith(".HTML") or file_id.endswith(".HTML")
+                    if is_html_chunk and not is_authority:
+                        prev = combined_scores.get(idx, 0.0)
+                        combined_scores[idx] = prev - 0.4
 
         # Re-rank with combined scores
         ranked = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)
@@ -793,13 +861,42 @@ def parse_curriculum_from_html_content(html_content: str) -> List[dict]:
         text = (value or "").strip()
         if not text:
             return 0
-        match = re.search(r"\b(\d{1,3})(?:\s*/\s*\d{1,3})?\b", text)
+        norm = normalize_for_match(text)
+
+        # Only accept dedicated credit-cell formats to avoid false positives from names
+        # like "(... từ 11 đến 14)" in block descriptions.
+        if not (
+            re.fullmatch(r"\d{1,3}(?:\s*/\s*\d{1,3})?", text)
+            or re.fullmatch(r"\d{1,3}\s*tin\s*chi", norm)
+        ):
+            return 0
+
+        match = re.search(r"\b(\d{1,3})\b", text)
         if not match:
             return 0
         try:
             return int(match.group(1))
         except Exception:
             return 0
+
+    def _extract_block_name(values: List[str], start_idx: int = 1) -> str:
+        for raw in values[start_idx:]:
+            text = (raw or "").strip()
+            if not text:
+                continue
+            if text in {"+", "-"}:
+                continue
+            if _parse_credit_token(text) > 0:
+                continue
+            return text
+        return ""
+
+    def _extract_required_credits(values: List[str], start_idx: int = 2) -> int:
+        for raw in values[start_idx:]:
+            parsed = _parse_credit_token(raw)
+            if parsed > 0:
+                return parsed
+        return 0
 
     target_table = None
     for table in soup.find_all("table"):
@@ -857,13 +954,8 @@ def parse_curriculum_from_html_content(html_content: str) -> List[dict]:
         first_col_norm = normalize_for_match(first_col).upper().replace(" ", "")
 
         if block_pattern.match(first_col_norm):
-            block_name = col_texts[1] if len(col_texts) > 1 else ""
-            credits = 0
-            for item in col_texts[2:]:
-                parsed = _parse_credit_token(item)
-                if parsed > 0:
-                    credits = parsed
-                    break
+            block_name = _extract_block_name(col_texts, start_idx=1)
+            credits = _extract_required_credits(col_texts, start_idx=2)
 
             current_block = {
                 "id": first_col_norm,
@@ -878,13 +970,8 @@ def parse_curriculum_from_html_content(html_content: str) -> List[dict]:
             continue
 
         if sub_block_pattern.match(first_col_norm):
-            sub_name = col_texts[1] if len(col_texts) > 1 else ""
-            credits = 0
-            for item in col_texts[2:]:
-                parsed = _parse_credit_token(item)
-                if parsed > 0:
-                    credits = parsed
-                    break
+            sub_name = _extract_block_name(col_texts, start_idx=1)
+            credits = _extract_required_credits(col_texts, start_idx=2)
 
             current_sub_block = {
                 "id": first_col_norm,
