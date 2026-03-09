@@ -1485,6 +1485,126 @@ def _list_curriculum_candidates() -> List[Path]:
     return candidates
 
 
+def _normalize_group_code(raw_code: str) -> str:
+    return str(raw_code or "").strip().upper().replace(" ", "")
+
+
+def _normalize_subject_item(raw_subject: Dict[str, Any]) -> Dict[str, Any]:
+    code = str(raw_subject.get("code") or "").strip()
+    name = str(raw_subject.get("name") or "").strip()
+    try:
+        credits = int(raw_subject.get("credits") or 0)
+    except Exception:
+        credits = 0
+    return {
+        "code": code,
+        "name": name,
+        "credits": credits,
+    }
+
+
+def _collect_group_notes(group_data: Dict[str, Any]) -> List[Dict[str, str]]:
+    notes: List[Dict[str, str]] = []
+    for raw_note in group_data.get("notes") or []:
+        if isinstance(raw_note, dict):
+            text = str(raw_note.get("text") or "").strip()
+        else:
+            text = str(raw_note or "").strip()
+        if not text:
+            continue
+        notes.append({"text": text, "norm": normalize_for_match(text)})
+    return notes
+
+
+def _structure_to_groups_lookup(structure: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    groups: Dict[str, Dict[str, Any]] = {}
+
+    def _add_group(item: Dict[str, Any], default_code: str = "") -> None:
+        code = _normalize_group_code(item.get("id") or default_code)
+        if not code:
+            return
+
+        try:
+            credits_required = int(item.get("required_credits") or 0)
+        except Exception:
+            credits_required = 0
+
+        subjects = []
+        for subj in item.get("subjects") or []:
+            normalized = _normalize_subject_item(subj)
+            if normalized.get("code"):
+                subjects.append(normalized)
+
+        groups[code] = {
+            "group_code": code,
+            "group_name": str(item.get("name") or "").strip(),
+            "subjects": subjects,
+            "credits_required": credits_required,
+            "notes": _collect_group_notes(item),
+        }
+
+    for block in structure or []:
+        _add_group(block)
+        for sub_block in block.get("sub_blocks") or []:
+            _add_group(sub_block)
+
+    return groups
+
+
+def _group_matches_hint(group_code: str, group_data: Dict[str, Any], norm_hint: str) -> bool:
+    if not norm_hint:
+        return True
+
+    if norm_hint in normalize_for_match(group_code):
+        return True
+
+    if norm_hint in normalize_for_match(str(group_data.get("group_name") or "")):
+        return True
+
+    for note in group_data.get("notes") or []:
+        note_text = note.get("text") if isinstance(note, dict) else str(note or "")
+        if norm_hint in normalize_for_match(note_text):
+            return True
+
+    for subj in group_data.get("subjects") or []:
+        if norm_hint in normalize_for_match(str(subj.get("code") or "")):
+            return True
+        if norm_hint in normalize_for_match(str(subj.get("name") or "")):
+            return True
+
+    return False
+
+
+def _select_groups_for_schedule(groups_data: Dict[str, Dict[str, Any]]) -> Tuple[str, List[str]]:
+    tokens = ("tu chon", "bo tro", "dinh huong", "chuyen sau", "nhom nganh")
+    leaf_codes: List[str] = []
+    token_matched_codes: List[str] = []
+
+    for group_code, group_data in groups_data.items():
+        subjects = group_data.get("subjects") or []
+        if not subjects:
+            continue
+
+        leaf_codes.append(group_code)
+        content_norm = " ".join(
+            [
+                normalize_for_match(str(group_data.get("group_name") or "")),
+                " ".join(
+                    normalize_for_match(
+                        (note.get("text") if isinstance(note, dict) else str(note or ""))
+                    )
+                    for note in (group_data.get("notes") or [])
+                ),
+            ]
+        ).strip()
+        if any(token in content_norm for token in tokens):
+            token_matched_codes.append(group_code)
+
+    if token_matched_codes:
+        return "token_matched_groups", token_matched_codes
+    return "all_leaf_groups_fallback", leaf_codes
+
+
 @mcp_tool("get_curriculum_lookup")
 def get_curriculum_lookup(group_hint: str = None, program_id: str = None) -> str:
     """
@@ -1518,67 +1638,13 @@ def get_curriculum_lookup(group_hint: str = None, program_id: str = None) -> str
         return json.dumps({"error": "Curriculum HTML file not found."})
 
     try:
-        with open(html_path, "r", encoding="utf-8") as f:
-            soup = BeautifulSoup(f.read(), "html.parser")
-        
-        rows = soup.find_all("tr")
-        groups = {}
-        current_group_code = None
-        
-        for row in rows:
-            cells = row.find_all("td")
-            if not cells: continue
-            
-            first_cell_text = cells[0].get_text(strip=True)
-            
-            # Detect Group Header (e.g., V.2.1, I.1, II, II.1.2)
-            if re.match(r"^[IVX]+\.?\d*(\.\d+)*$", first_cell_text):
-                current_group_code = first_cell_text
-                group_name = ""
-                credits_required = 0
-                
-                # Find group name: first non-empty non-numeric cell after group code
-                for idx, cell in enumerate(cells[1:], start=1):
-                    cell_text = cell.get_text(strip=True)
-                    if cell_text and not cell_text.isdigit() and "/" not in cell_text:
-                        group_name = re.sub(r"NhÃ³m cÃ¡c há»c pháº§n vá»\s*", "", cell_text, flags=re.IGNORECASE).strip()
-                        break
-                
-                # Try extract credits from cells
-                for cell in cells:
-                    txt = cell.get_text(strip=True)
-                    if "/" in txt:
-                        parts = txt.split("/")
-                        if parts[0].isdigit():
-                            credits_required = int(parts[0])
-                            break
-                    elif txt.isdigit() and int(txt) < 200:
-                        credits_required = int(txt)
-                
-                groups[current_group_code] = {
-                    "group_code": current_group_code,
-                    "group_name": group_name,
-                    "subjects": [],
-                    "credits_required": credits_required
-                }
+        html_content = html_path.read_text(encoding="utf-8", errors="ignore")
+        structure = parse_curriculum_from_html_content(html_content)
+        groups = _structure_to_groups_lookup(structure)
 
-            elif first_cell_text.isdigit() and current_group_code:
-                # Subject Row
-                if len(cells) >= 4:
-                    code = cells[1].get_text(strip=True)
-                    name = cells[2].get_text(strip=True)
-                    try:
-                        creds = int(cells[3].get_text(strip=True))
-                    except: 
-                        creds = 0
-                    
-                    if code and name:
-                        groups[current_group_code]["subjects"].append({
-                            "code": code,
-                            "name": name,
-                            "credits": creds
-                        })
-        
+        if not groups:
+            return json.dumps({"error": "No groups parsed from curriculum source."}, ensure_ascii=False)
+
         top_level_pattern = re.compile(r"^[IVX]+$")
         total_credits_required = sum(
             int(v.get("credits_required") or 0)
@@ -1588,43 +1654,23 @@ def get_curriculum_lookup(group_hint: str = None, program_id: str = None) -> str
 
         # Filter if hint provided
         if group_hint:
-             norm_hint = normalize_for_match(group_hint)
-             filtered = {}
-             matched_parent_codes = []  # Track parent groups that matched
-             
-             for k, v in groups.items():
-                 if norm_hint in normalize_for_match(k) or norm_hint in normalize_for_match(v["group_name"]):
-                     filtered[k] = v
-                     # If this is a parent group (e.g., V.2), save code for cascade
-                     if re.match(r"^[IVX]+\.\d+$", k):  # Parent like V.2, not V.2.1
-                         matched_parent_codes.append(k)
-             
-             # Cascade: If a parent matched, also include all its sub-groups
-             for parent_code in matched_parent_codes:
-                 for k, v in groups.items():
-                     if k.startswith(parent_code + ".") and k not in filtered:
-                         filtered[k] = v
-             
-             # Fallback for "tu chon" if still no results with subjects
-             if "tu chon" in norm_hint:
-                  # Ensure we have V.2.x groups included
-                  for k, v in groups.items():
-                      if k.startswith("V.2.") and k not in filtered:
-                          filtered[k] = v
-             
-             # Filter out groups with no subjects (parent groups like V.2)
-             filtered = {k: v for k, v in filtered.items() if len(v.get("subjects", [])) > 0}
-             
-             if not filtered:
-                 return json.dumps({"error": f"No groups found checking '{group_hint}'"}, ensure_ascii=False)
+            norm_hint = normalize_for_match(group_hint)
+            filtered = {
+                k: v
+                for k, v in groups.items()
+                if _group_matches_hint(k, v, norm_hint)
+            }
 
-             return json.dumps(
-                 {
-                     "total_credits_required": total_credits_required,
-                     "groups": filtered,
-                 },
-                 ensure_ascii=False,
-             )
+            if not filtered:
+                return json.dumps({"error": f"No groups found checking '{group_hint}'"}, ensure_ascii=False)
+
+            return json.dumps(
+                {
+                    "total_credits_required": total_credits_required,
+                    "groups": filtered,
+                },
+                ensure_ascii=False,
+            )
 
         return json.dumps(
             {
@@ -1652,7 +1698,7 @@ def get_electives_with_schedule(check_schedule: bool = True, program_id: str = N
     """
     logger.info(f"[get_electives_with_schedule] invoked with check_schedule={check_schedule}, program_id={program_id}")
 
-    curriculum_result = get_curriculum_lookup("tu chon", program_id=program_id)
+    curriculum_result = get_curriculum_lookup(program_id=program_id)
     try:
         curriculum_data = json.loads(curriculum_result)
     except Exception:
@@ -1670,23 +1716,43 @@ def get_electives_with_schedule(check_schedule: bool = True, program_id: str = N
             if isinstance(v, dict) and "subjects" in v
         }
 
+    selection_mode, selected_group_codes = _select_groups_for_schedule(groups_data)
+
     all_electives = []
-    for _group_code, group_data in groups_data.items():
-        group_name = group_data.get("group_name", "")
+    seen_codes: Set[str] = set()
+    for group_code in selected_group_codes:
+        group_data = groups_data.get(group_code) or {}
+        group_name = str(group_data.get("group_name") or "")
         for subj in group_data.get("subjects", []):
+            code = str(subj.get("code") or "").strip()
+            if not code:
+                continue
+            norm_code = _normalize_subject_code(code)
+            if norm_code in seen_codes:
+                continue
+            seen_codes.add(norm_code)
             all_electives.append(
                 {
-                    "code": subj.get("code"),
+                    "code": code,
                     "name": subj.get("name"),
                     "credits": subj.get("credits"),
                     "group": group_name,
+                    "group_code": group_code,
                 }
             )
 
     logger.info("[get_electives_with_schedule] Found %s elective subjects in curriculum", len(all_electives))
 
     if not check_schedule:
-        return json.dumps({"all_electives": all_electives, "total": len(all_electives)}, ensure_ascii=False)
+        return json.dumps(
+            {
+                "all_electives": all_electives,
+                "total": len(all_electives),
+                "selection_mode": selection_mode,
+                "selected_group_codes": selected_group_codes,
+            },
+            ensure_ascii=False,
+        )
 
     try:
         tkb_text, selected_tkb_name = _load_best_schedule_text()
@@ -1707,6 +1773,8 @@ def get_electives_with_schedule(check_schedule: bool = True, program_id: str = N
                 "all_electives": all_electives,
                 "total": len(all_electives),
                 "schedule_error": "Khong tim thay du lieu TKB hop le.",
+                "selection_mode": selection_mode,
+                "selected_group_codes": selected_group_codes,
             },
             ensure_ascii=False,
         )
@@ -1743,6 +1811,8 @@ def get_electives_with_schedule(check_schedule: bool = True, program_id: str = N
         "not_opened": not_opened,
         "not_opened_count": len(not_opened),
         "total_electives": len(all_electives),
+        "selection_mode": selection_mode,
+        "selected_group_codes": selected_group_codes,
     }
 
     logger.info("[get_electives_with_schedule] Result: %s opened, %s not opened", len(opened), len(not_opened))

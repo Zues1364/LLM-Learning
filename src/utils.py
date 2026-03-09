@@ -861,13 +861,42 @@ def parse_curriculum_from_html_content(html_content: str) -> List[dict]:
         text = (value or "").strip()
         if not text:
             return 0
-        match = re.search(r"\b(\d{1,3})(?:\s*/\s*\d{1,3})?\b", text)
+        norm = normalize_for_match(text)
+
+        # Only accept dedicated credit-cell formats to avoid false positives from names
+        # like "(... từ 11 đến 14)" in block descriptions.
+        if not (
+            re.fullmatch(r"\d{1,3}(?:\s*/\s*\d{1,3})?", text)
+            or re.fullmatch(r"\d{1,3}\s*tin\s*chi", norm)
+        ):
+            return 0
+
+        match = re.search(r"\b(\d{1,3})\b", text)
         if not match:
             return 0
         try:
             return int(match.group(1))
         except Exception:
             return 0
+
+    def _extract_block_name(values: List[str], start_idx: int = 1) -> str:
+        for raw in values[start_idx:]:
+            text = (raw or "").strip()
+            if not text:
+                continue
+            if text in {"+", "-"}:
+                continue
+            if _parse_credit_token(text) > 0:
+                continue
+            return text
+        return ""
+
+    def _extract_required_credits(values: List[str], start_idx: int = 2) -> int:
+        for raw in values[start_idx:]:
+            parsed = _parse_credit_token(raw)
+            if parsed > 0:
+                return parsed
+        return 0
 
     target_table = None
     for table in soup.find_all("table"):
@@ -925,13 +954,8 @@ def parse_curriculum_from_html_content(html_content: str) -> List[dict]:
         first_col_norm = normalize_for_match(first_col).upper().replace(" ", "")
 
         if block_pattern.match(first_col_norm):
-            block_name = col_texts[1] if len(col_texts) > 1 else ""
-            credits = 0
-            for item in col_texts[2:]:
-                parsed = _parse_credit_token(item)
-                if parsed > 0:
-                    credits = parsed
-                    break
+            block_name = _extract_block_name(col_texts, start_idx=1)
+            credits = _extract_required_credits(col_texts, start_idx=2)
 
             current_block = {
                 "id": first_col_norm,
@@ -946,13 +970,8 @@ def parse_curriculum_from_html_content(html_content: str) -> List[dict]:
             continue
 
         if sub_block_pattern.match(first_col_norm):
-            sub_name = col_texts[1] if len(col_texts) > 1 else ""
-            credits = 0
-            for item in col_texts[2:]:
-                parsed = _parse_credit_token(item)
-                if parsed > 0:
-                    credits = parsed
-                    break
+            sub_name = _extract_block_name(col_texts, start_idx=1)
+            credits = _extract_required_credits(col_texts, start_idx=2)
 
             current_sub_block = {
                 "id": first_col_norm,
