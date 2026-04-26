@@ -6,17 +6,25 @@ Hệ thống tư vấn học vụ dùng mô hình RAG (Retrieval-Augmented Gener
 - Tính thiếu tín chỉ, môn còn thiếu, GPA projection.
 - Kiểm tra mở lớp theo kỳ và trả lời truy vấn học vụ theo ngữ cảnh phiên.
 
-## 2. Kiến trúc hiện tại
-Dự án chạy theo mô hình 3 dịch vụ:
-- `MCP Server` (`src/mcp_server/server.py`, cổng `8000`): lớp deterministic tools (retrieve, curriculum, schedule, advisor pipeline, memory).
-- `Backend API` (`src/app.py`, cổng `9000`): lớp orchestrator `/ask`, session, upload PDF, resource management, gọi MCP qua HTTP.
+## 2. Kiến trúc hiện tại (Multi-Agent RAG)
+Đây là kiến trúc `multi-agent RAG` theo mô hình nhiều lớp:
+
+### 2.1. Lớp Service
+- `MCP Server` (`src/mcp_server/server.py`, cổng `8000`): deterministic tools (retrieve, curriculum, schedule, advisor pipeline, memory).
+- `Backend API` (`src/app.py`, cổng `9000`): orchestrator `/ask`, session, upload PDF, resource management, gọi MCP qua HTTP.
 - `Frontend` (`frontend`, Vite + React, cổng `5173`): giao diện chat, quản lý tài nguyên, chọn CTĐT, upload transcript.
 
-Luồng chính:
+### 2.2. Lớp Agent (Multi-Agent)
+- `Planner Agent` (`src/agents.py`): phân loại intent, chọn tool/path xử lý phù hợp.
+- `Academic Advisor Agent` (`src/agents.py` + context từ MCP): tổng hợp kết quả học vụ có cấu trúc.
+- `Answer Generator Agent` (`src/agents.py`): chuẩn hóa câu trả lời cuối theo context + memory.
+
+### 2.3. Luồng chính
 1. Frontend gọi `POST /ask` ở Backend.
-2. Backend gọi planner/answer agent và gọi tool qua MCP client.
-3. MCP Server xử lý retrieval + logic học vụ, trả context.
-4. Backend trả câu trả lời cuối cùng cho Frontend.
+2. Backend gọi Planner Agent để quyết định tool chain.
+3. Backend gọi MCP tools (qua MCP client) để lấy dữ kiện deterministic.
+4. MCP Server xử lý retrieval + logic học vụ + memory.
+5. Backend gọi Answer Agent để tạo câu trả lời cuối và trả về frontend.
 
 Tài liệu kiến trúc chi tiết: `docs/ARCHITECTURE.md`.
 
@@ -25,7 +33,7 @@ Tài liệu kiến trúc chi tiết: `docs/ARCHITECTURE.md`.
 LLM Learning/
 |- src/
 |  |- app.py                     # FastAPI orchestrator
-|  |- agents.py                  # planner + answer/advisor agent
+|  |- agents.py                  # planner + answer/advisor agents
 |  |- utils.py                   # OCR, chunking, embeddings, FAISS
 |  |- resource_loader.py         # ingest local/global resources
 |  |- persistent_memory.py       # SQLite memory theo session
