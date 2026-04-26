@@ -31,6 +31,10 @@ from mcp_tools import (
     tool_get_curriculum_lookup,
     tool_get_electives_with_schedule,
     tool_get_available_programs,
+    tool_resolve_course_alias,
+    tool_get_teachers_by_subject,
+    tool_get_classes_by_teacher,
+    tool_get_schedule_rows,
 )
 
 
@@ -55,7 +59,21 @@ def get_mcp_planner_agent(allow_web_search: bool = False) -> Agent:
     Tra ve JSON:
     {"source": "summary_index|vector_store|vector_store_compare|web_search|academic_advisor|error", "context": "...", "memory": "...", "chunk_index": int|null}
     """
-    tools = [tool_get_file_summaries, tool_retrieve, tool_compare_pdfs, tool_memory_get, tool_consult_advisor, tool_get_curriculum_lookup, tool_get_electives_with_schedule, tool_get_available_programs]
+    tools = [
+        tool_get_file_summaries,
+        tool_retrieve,
+        tool_compare_pdfs,
+        tool_memory_get,
+        tool_consult_advisor,
+        tool_get_curriculum_lookup,
+        tool_get_electives_with_schedule,
+        tool_get_schedule,
+        tool_get_available_programs,
+        tool_resolve_course_alias,
+        tool_get_teachers_by_subject,
+        tool_get_classes_by_teacher,
+        tool_get_schedule_rows,
+    ]
     web_msg = "Ban khong duoc dung tool_web_search."
     if allow_web_search:
         tools.insert(2, tool_web_search)
@@ -72,22 +90,37 @@ def get_mcp_planner_agent(allow_web_search: bool = False) -> Agent:
         "Sau do tra JSON: {\"source\": \"program_selection\", \"context\": \"<danh sach chuong trinh tu tool>\", \"memory\": \"...\", \"chunk_index\": null, \"requires_selection\": true}. "
         "Front-end se hoi nguoi dung chon chuong trinh. Sau khi nguoi dung chon, session se co [PROGRAM:<id>]. "
         "Neu DA CO [PROGRAM:<program_id>], su dung program_id nay khi goi tool_get_curriculum_lookup va tool_get_electives_with_schedule. "
+        "Khi goi tool_get_curriculum_lookup/tool_get_electives_with_schedule/tool_retrieve, luon truyen session_id tu [SESSION]. "
         
         "### UU TIEN 1 - HOC PHAN TU CHON MO LOP (ELECTIVES IN SCHEDULE) ###: "
-        "Neu nguoi dung hoi bat ky cau hoi nao ve: 'mon tu chon', 'hoc phan tu chon', 'tu chon mo lop', 'tu chon ky nay', 'dang ky mon tu chon', 'mon nao dang mo', 'co lop nao mo', 'kiem tra mon tu chon', 'mon tu chon nao co lop': "
-        "BAT BUOC goi tool tool_get_electives_with_schedule(check_schedule=True, program_id=<program_id neu co>). "
-        "KHONG goi tool_retrieve hay tool_compare_pdfs cho cac cau hoi ve tu chon. "
-        "Tra JSON voi source=electives_schedule, context=<ket qua tu tool>, memory=<ket qua tool_memory_get>, chunk_index=null. "
+        "Neu nguoi dung hoi bat ky cau hoi nao ve: 'mon tu chon', 'hoc phan tu chon', 'hoc phan lua chon', 'tu chon mo lop', 'lua chon mo lop', 'tu chon ky nay', 'lua chon ky nay', 'dang ky mon tu chon', 'mon nao dang mo', 'co lop nao mo', 'kiem tra mon tu chon', 'mon tu chon nao co lop': "
+        "BUOC 1: BAT BUOC goi tool tool_get_electives_with_schedule(check_schedule=True, program_id=<program_id neu co>, session_id=[SESSION]). "
+        "Neu cau hoi CHI can danh sach mon mo lop tong quan thi tra JSON source=electives_schedule voi context la ket qua tool nay. "
+        "Neu cau hoi co rang buoc bo sung (vi du: 'lien quan AI', 'mo hom nao trong tuan', 'thu may', 'ca nao', 'chi lay nhom nao do') thi planner phai tu chain tiep: "
+        "BUOC 2: Loc danh sach mon mo lop theo rang buoc nguoi dung (chu de/nhom/tu khoa). "
+        "BUOC 3: Goi tool_get_schedule_rows(subject_code=..., session_id=[SESSION]) cho tung mon duoc loc (toi da 8 mon de tranh qua tai). "
+        "BUOC 4: Tong hop lai thanh context co rows/matched_subjects/coverage_note va tra JSON voi source=structured_schedule. "
+        "KHONG goi tool_retrieve hay tool_compare_pdfs cho cac cau hoi tu chon dang mo lop, tru khi tat ca tool structured tra rong. "
+
+        "### UU TIEN 1.1 - GIANG VIEN / LICH HOC MON CU THE (STRUCTURED TKB) ###: "
+        "Neu nguoi dung hoi ve 'ai day', 'giang vien', 'thu may', 'hom nao', 'ca nao', 'tiet nao', 'phong nao' cho mon hoc/lop hoc: "
+        "Uu tien chain tool structured theo thu tu: "
+        "(1) tool_resolve_course_alias(query, program_id=<program_id neu co>, session_id=[SESSION]) "
+        "-> (2) tool_get_teachers_by_subject(subject_code=...) hoac tool_get_schedule_rows(subject_code=...). "
+        "Neu hoi nguoc theo ten giang vien (vd 'co X day lop nao'), goi tool_get_classes_by_teacher(teacher_name=..., session_id=[SESSION]). "
+        "Chi fallback sang tool_get_schedule / tool_retrieve khi structured tra rows rong hoac confidence thap. "
+        "KHONG uu tien tool_consult_advisor cho nhom cau hoi nay. "
+        "Tra JSON voi source=structured_schedule (neu dung tool structured), source=schedule_lookup (neu fallback get_schedule), hoac source=vector_store (neu fallback retrieve). "
         
         "FOLLOW-UP SCHEDULING (UU TIEN CAO): Neu memory_context CHUA thong tin ve 'lich hoc', 'lap lich', 'TKB', 'Thứ 2', 'Thứ 3', 'tiết', hoặc 'học kỳ' VA cau hoi hien tai la follow-up nhu 'co', 'ok', 'them', 'bang lich', 'hoan chinh', 'them HIS1001', 'lich chi tiet': TUYET DOI HAY goi tool_consult_advisor(query, file_ids, session_id, program_id=<program_id neu co>). KHONG goi tool_compare_pdfs cho cac cau follow-up nhu vay. "
-        "DYNAMIC ADVISORY: Neu nguoi dung hoi ve tinh diem, muc tieu GPA, hoac lo trinh hoc: TUYET DOI KHONG tu tra loi, KHONG goi tool_retrieve. Hay goi tool_consult_advisor(query, file_ids, session_id=[SESSION], program_id=<program_id neu co>). Ket qua tra ve tu tool nay chinh la context. Tra JSON voi source=academic_advisor, context=<ket qua tu tool>, memory=<ket qua tool_memory_get>, chunk_index=null. "
+        "DYNAMIC ADVISORY: Neu nguoi dung hoi ve tinh diem, muc tieu GPA, lo trinh hoc, mon con thieu, hoac so tin chi con thieu theo CTDT: TUYET DOI KHONG tu tra loi, KHONG goi tool_retrieve. Hay goi tool_consult_advisor(query, file_ids, session_id=[SESSION], program_id=<program_id neu co>). Ket qua tra ve tu tool nay chinh la context. Tra JSON voi source=academic_advisor, context=<ket qua tu tool>, memory=<ket qua tool_memory_get>, chunk_index=null. "
 
-        "HOC PHAN TU CHON (ELECTIVES GENERAL - danh sach CTDT): Neu nguoi dung hoi ve 'danh sach hoc phan tu chon trong CTDT', 'cac mon tu chon la gi', 'danh sach mon trong chuong trinh': goi tool tool_get_curriculum_lookup(group_hint='tu chon', program_id=<program_id neu co>). Khong goi cai nay neu nguoi dung hoi ve 'mo lop', 'dang ky'. Tra JSON voi source=curriculum_lookup, context=<ket qua tu tool>, memory=<ket qua tool_memory_get>, chunk_index=null. "
+        "HOC PHAN TU CHON (ELECTIVES GENERAL - danh sach CTDT): Neu nguoi dung hoi ve 'danh sach hoc phan tu chon trong CTDT', 'danh sach hoc phan lua chon trong CTDT', 'cac mon tu chon la gi', 'cac mon lua chon la gi', 'danh sach mon trong chuong trinh': goi tool tool_get_curriculum_lookup(group_hint='tu chon', program_id=<program_id neu co>, session_id=[SESSION]). Khong goi cai nay neu nguoi dung hoi ve 'mo lop', 'dang ky'. Tra JSON voi source=curriculum_lookup, context=<ket qua tu tool>, memory=<ket qua tool_memory_get>, chunk_index=null. "
 
         "Neu cau hoi mang tinh tong quan/khai quat/tom tat/noi dung chinh la gì hoac so sanh noi dung chinh giua cac file, va [FILES] co file_id, goi tool tool_get_file_summaries(file_ids) va dat source=summary_index (chunk_index=null). Neu khong co file_id, khong goi tool_get_file_summaries, dat source=error va context=Vui long cung cap file_ids. "
-        "Neu hoi chi tiet ve >=2 file, goi tool tool_compare_pdfs(query, file_ids, top_k=15) va dat source=vector_store_compare (chi thuc hien khi co >=2 file_id). "
-        "Neu hoi chi tiet mot file hoac [FILES] chi co 1 id, goi tool tool_retrieve(question, top_k=15, file_ids=[...]) va dat source=vector_store (chi thuc hien khi co file_id). "
-        "TRUONG HOP DAC BIET: Neu [FILES] la rong (khong co file_id), ma nguoi dung hoi ve thong tin chung hoac quy che/so tay/chung chi ngoai ngu/IELTS/toeic/tot nghiep, hay goi `tool_retrieve(question, top_k=15, file_ids=[])`. He thong se tu dong tim trong cac Tai nguyen Toan cuc (Global Resources) nhu So tay, Quy che. Dat source=vector_store. "
+        "Neu hoi chi tiet ve >=2 file, goi tool tool_compare_pdfs(query, file_ids, top_k=25) va dat source=vector_store_compare (chi thuc hien khi co >=2 file_id). "
+        "Neu hoi chi tiet mot file hoac [FILES] chi co 1 id, goi tool tool_retrieve(question, top_k=25, file_ids=[...], session_id=[SESSION]) va dat source=vector_store (chi thuc hien khi co file_id). "
+        "TRUONG HOP DAC BIET: Neu [FILES] la rong (khong co file_id), ma nguoi dung hoi ve thong tin chung hoac quy che/so tay/chung chi ngoai ngu/IELTS/toeic/tot nghiep, hay goi `tool_retrieve(question, top_k=25, file_ids=[], session_id=[SESSION])`. He thong se tu dong tim trong cac Tai nguyen Toan cuc (Global Resources) va tai nguyen session neu co. Dat source=vector_store. "
         "QUAN TRONG - CHINH SACH/POLICY OVERRIDE: Neu cau hoi ve khainiem/dinhnghia/muctieu/hocphan/mien giam/chung chi: Bat buoc them tien to 'trong So tay hoc vu' vao question VA truyen `file_ids=[]` (rong) ngay ca khi co [FILES]. Dieu nay dam bao tim kiem toan cuc. "
         f"{web_msg} "
         "Luon truyen tham so file_ids khi goi tool_retrieve/tool_compare_pdfs/tool_get_file_summaries (lay tu [FILES], neu khong co thi truyen list rong []). "
@@ -103,6 +136,29 @@ def get_mcp_planner_agent(allow_web_search: bool = False) -> Agent:
         name="MCP Planner Agent",
         model=_gemini_model("gemini-2.5-pro"),
         tools=tools,
+        instructions=instructions,
+        markdown=False,
+    )
+
+
+def get_elective_interest_agent() -> Agent:
+    instructions = (
+        "Ban la bo phan xep hang hoc phan tu chon theo dinh huong nguoi hoc. "
+        "Dau vao se gom cau hoi va danh sach hoc phan dang mo lop. "
+        "Nhiem vu: chon cac ma mon phu hop nhat voi dinh huong trong cau hoi. "
+        "Khong duoc tao ma mon moi, chi duoc chon tu danh sach cung cap. "
+        "Uu tien theo muc do lien quan chu de va tinh ung dung thuc te theo cau hoi. "
+        "Neu cau hoi mo ho hoac khong du thong tin de loc chu de, tra selected_codes rong. "
+        "Tra ve DUY NHAT mot RAW JSON object (khong markdown) voi schema: "
+        "{\"focus\":\"...\","
+        "\"selected_codes\":[\"INTxxxx\",...],"
+        "\"reason_by_code\":{\"INTxxxx\":\"...\"},"
+        "\"confidence\":0.0}. "
+        "selected_codes toi da 6 ma mon."
+    )
+    return Agent(
+        name="Elective Interest Agent",
+        model=_gemini_model("gemini-2.5-flash"),
         instructions=instructions,
         markdown=False,
     )
@@ -140,7 +196,13 @@ def get_academic_advisor_agent() -> Agent:
     - TUYET DOI KHONG dung cum "thoi gian uoc tinh".
     - Chi duoc neu gio hoc khi co du lieu trong "resolved_time_range" hoac "time_slot_definitions".
     - Neu khong co gio hoc chinh xac, bat buoc ghi "chua xac dinh tu TKB nguon", khong duoc tu suy luan.
-    - Neu context co "time_source_file", neu ro nguon nay khi trinh bay lich.
+    - Phan biet ro nguon:
+      - "schedule_source_file"/"schedule_source_files": nguon de ket luan mon nao co/khong mo lop.
+      - "time_source_file": chi la nguon bang ca-tiet (khung gio), KHONG duoc dung de ket luan mo lop.
+    - Khi noi "chua co thong tin mo lop", uu tien dan nguon tu "schedule_source_file" (neu co), khong dan "time_source_file".
+    - Neu "history" co ten file/nguon cu mau thuan voi CONTEXT hien tai, BO QUA history va chi dung nguon trong CONTEXT hien tai.
+    - Khi ten mon hoc co ca tieng Viet va tieng Anh, phai format dang: "Ten tieng Viet (English Name)"; KHONG de dinh lien kieu "Ten tieng Viet English Name".
+    - Neu CONTEXT co "elective_credit_plan", phai uu tien goi y mon tu chon theo tung nhom trong plan nay va KHONG goi y vuot qua so tin chi con thieu cua moi nhom.
     - Khi trinh bay lich tuan dang bang, BAT BUOC dung 7 cot theo dung thu tu:
       Ngay hoc | Ca hoc | Tiet + Thoi gian | Ma mon hoc | Ten mon hoc | Tin chi | Ghi chu ve lop
     - TUYET DOI KHONG gop "Ca hoc" chung voi "Tiet + Thoi gian" trong mot cot.
@@ -288,12 +350,32 @@ class AnswerGeneratorAgent:
         try:
             logger.info(f"[AnswerGeneratorAgent] Observation: Nhận câu hỏi và ngữ cảnh: {query}")
             logger.info("[AnswerGeneratorAgent] Thought: Xây dựng prompt và tổ chức câu trả lời...")
+            query_norm = (query or "").lower()
+            source_norm = (source or "").lower()
+            list_intent = any(
+                token in query_norm
+                for token in ("toàn bộ", "tat ca", "liệt kê", "liet ke")
+            )
+            must_full_list = list_intent and source_norm in {
+                "electives_schedule",
+                "curriculum_lookup",
+            }
+
+            extra_rules = ""
+            if must_full_list:
+                extra_rules = (
+                    " CÂU HỎI NÀY YÊU CẦU LIỆT KÊ ĐẦY ĐỦ: "
+                    "bắt buộc liệt kê toàn bộ mã môn trong Bối cảnh theo đúng dữ liệu, "
+                    "không được rút gọn bằng ví dụ hay dấu ba chấm."
+                )
+
             full_prompt = (
                 f"Bối cảnh: {context}\n\n"
                 f"Lịch sử trò chuyện: {memory_context}\n\n"
                 f"Nguồn tham khảo: {source}\n\n"
                 f"Câu hỏi: {query}\n\n"
                 "Chỉ sử dụng thông tin từ Bối cảnh để trả lời chính. Lịch sử chỉ để tham chiếu ngữ cảnh hội thoại, không được ghi đè thông tin mới trong Bối cảnh. Nếu Bối cảnh có thông tin thì trả lời theo Bối cảnh. Nếu Bối cảnh trống, mới dùng thông tin từ Lịch sử. Trả lời ngắn gọn, tiếng Việt. TUYỆT ĐỐI KHÔNG ghi lại dòng 'Nguồn: ...' hoặc 'Nguồn tham khảo: ...' ở cuối câu trả lời."
+                f"{extra_rules}"
             )
             logger.info("[AnswerGeneratorAgent] Action: Gọi LLM để sinh câu trả lời...")
             response = self.llm_agent.run(full_prompt)

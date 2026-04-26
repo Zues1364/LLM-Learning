@@ -29,6 +29,7 @@ from utils import (
     parse_curriculum_from_html_content,
     compute_curriculum_missing_credits,
 )
+from mcp_server.structured_schedule_store import StructuredScheduleStore
 from persistent_memory import PersistentMemory
 from agents import get_academic_advisor_agent
 from resource_loader import resource_loader # NEW IMPORT
@@ -100,6 +101,8 @@ RESOURCE_DIR = BASE_DIR / "data" / "resources"
 CURRICULUM_HTML_DIR = RESOURCE_DIR / "html"
 CURRICULUM_PDF_DIR = RESOURCE_DIR / "pdfs"
 MEMORY_DB = BASE_DIR / "data" / "memory.db"
+VECTOR_SNAPSHOT_DIR = BASE_DIR / "data" / "cache" / "vector_snapshots"
+GLOBAL_VECTOR_SNAPSHOT_FILE = VECTOR_SNAPSHOT_DIR / "global_resources_snapshot.pkl"
 
 _embedder: Optional[VietnameseEmbedder] = None
 _store: Optional[FAISSVectorStore] = None  
@@ -112,29 +115,359 @@ SCHEDULE_NAME_HINTS: Tuple[str, ...] = (
     "lich hoc",
     "hoc ky",
 )
-_SCHEDULE_TEXT_CACHE: Dict[str, Any] = {
-    "signature": None,
-    "file_name": None,
-    "text": "",
+_SCHEDULE_TEXT_CACHE: Dict[str, Dict[str, Any]] = {}
+_SCHEDULE_TIME_SLOT_CACHE: Dict[str, Dict[str, Any]] = {}
+_structured_schedule_store: Optional[StructuredScheduleStore] = None
+_PROGRAM_SUBJECT_CODE_CACHE: Dict[str, Set[str]] = {}
+_DEFAULT_TIME_SLOT_MAP: Dict[str, Dict[str, str]] = {
+    "1": {"session": "Sang", "period": "Tiet 1-3", "time_range": "07:00 – 09:40"},
+    "2": {"session": "Sang", "period": "Tiet 4-6", "time_range": "09:50 – 12:30"},
+    "3": {"session": "Chieu", "period": "Tiet 7-9", "time_range": "13:30 – 16:10"},
+    "4": {"session": "Chieu", "period": "Tiet 10-12", "time_range": "16:20 – 19:00"},
 }
-_SCHEDULE_TIME_SLOT_CACHE: Dict[str, Any] = {
-    "signature": None,
-    "source_file": None,
-    "slot_map": {},
-    "checksum": None,
-}
+TEACHER_LOOKUP_MARKERS: Tuple[str, ...] = (
+    "giang vien",
+    "giảng viên",
+    "ai day",
+    "ai dạy",
+    "co ai day",
+    "có ai dạy",
+    "co nhung ai day",
+    "có những ai dạy",
+    "thay nao day",
+    "thầy nào dạy",
+    "co nao day",
+    "cô nào dạy",
+)
+
+
+def _is_teacher_lookup_query(question: str) -> bool:
+    raw_q = (question or "").lower()
+    norm_q = normalize_for_match(question or "")
+    if not raw_q and not norm_q:
+        return False
+    if not any((marker in norm_q) or (marker in raw_q) for marker in TEACHER_LOOKUP_MARKERS):
+        return False
+    combined = f"{raw_q} {norm_q}".strip()
+    return ("mon " in combined) or ("môn " in combined) or ("hoc phan" in combined) or ("học phần" in combined) or ("ky nay" in combined) or ("ki nay" in combined) or ("kỳ này" in combined)
+
+
+def _infer_subject_codes_from_teacher_query(question: str, schedule_text: str, max_codes: int = 5) -> List[str]:
+    """
+    Infer likely subject codes from teacher-lookup question by scanning schedule text lines.
+    This avoids relying only on top-k vector chunks when a course has many opened classes.
+    """
+    norm_q = normalize_for_match(question or "")
+    if not norm_q or not schedule_text:
+        return []
+
+    stop_tokens = {
+        "mon",
+        "hoc",
+        "phan",
+        "ki",
+        "ky",
+        "nay",
+        "co",
+        "nhung",
+        "ai",
+        "day",
+        "giang",
+        "vien",
+        "o",
+        "truong",
+        "la",
+        "nao",
+        "bao",
+        "nhieu",
+        "trong",
+        "duoc",
+        "mo",
+        "lop",
+    }
+    raw_tokens = re.findall(r"[a-z0-9]+", norm_q)
+    content_tokens = [tok for tok in raw_tokens if len(tok) >= 3 and tok not in stop_tokens]
+    if not content_tokens:
+        return []
+
+    code_counter: Dict[str, int] = {}
+    required_hits = 3 if len(content_tokens) >= 4 else (2 if len(content_tokens) >= 3 else 1)
+    query_phrase = " ".join(content_tokens)
+    for line in schedule_text.splitlines():
+        line_norm = normalize_for_match(line)
+        phrase_hit = bool(query_phrase and query_phrase in line_norm)
+        hit_count = sum(1 for tok in content_tokens if tok in line_norm)
+        if not phrase_hit and hit_count < required_hits:
+            continue
+        for code in re.findall(r"(?<![A-Z0-9])([A-Z]{3}\d{4}[A-Z]?)(?![A-Z0-9])", line.upper()):
+            code_counter[code] = code_counter.get(code, 0) + 1
+
+    if not code_counter:
+        return []
+    ranked = sorted(code_counter.items(), key=lambda kv: (-kv[1], kv[0]))
+    top_count = ranked[0][1]
+    keep_threshold = max(2, int(top_count * 0.5))
+    filtered = [code for code, count in ranked if count >= keep_threshold]
+    if not filtered:
+        filtered = [ranked[0][0]]
+    return filtered[:max_codes]
+
+
+def _build_teacher_lookup_context(
+    question: str,
+    top_k: int = 25,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> List[str]:
+    """
+    Deterministically return schedule rows for teacher lookup queries.
+    Returns [] when query is not a teacher lookup or cannot infer any subject code.
+    """
+    if not _is_teacher_lookup_query(question):
+        return []
+
+    tkb_text, _ = _invoke_with_optional_session(
+        _load_best_schedule_text,
+        session_id=session_id,
+        user_id=user_id,
+    )
+    if not tkb_text:
+        return []
+
+    inferred_codes = _infer_subject_codes_from_teacher_query(question, tkb_text)
+    if not inferred_codes:
+        return []
+
+    try:
+        schedule_payload = _invoke_with_optional_session(
+            get_schedule,
+            inferred_codes,
+            session_id=session_id,
+            user_id=user_id,
+        )
+        if isinstance(schedule_payload, str):
+            schedule_items = json.loads(schedule_payload)
+        elif isinstance(schedule_payload, list):
+            schedule_items = schedule_payload
+        else:
+            schedule_items = []
+    except Exception as e:
+        logger.warning("[teacher_lookup] deterministic schedule lookup failed: %s", e)
+        return []
+
+    context_lines: List[str] = []
+    for item in schedule_items or []:
+        code = str((item or {}).get("subject_code") or "").strip()
+        schedule_lines = (item or {}).get("schedule_lines") or []
+        compact_lines: List[str] = []
+        for raw in schedule_lines:
+            compact = " ".join(str(raw or "").split())
+            if not compact or "|" in compact:
+                continue
+            compact_lines.append(compact)
+        if not compact_lines:
+            compact_lines = [" ".join(str(raw or "").split()) for raw in schedule_lines if str(raw or "").strip()][:10]
+
+        seen_local: Set[str] = set()
+        for line in compact_lines:
+            if line in seen_local:
+                continue
+            seen_local.add(line)
+            if code:
+                context_lines.append(f"[SCHEDULE {code}] {line}")
+            else:
+                context_lines.append(f"[SCHEDULE] {line}")
+
+    deduped = list(dict.fromkeys(context_lines))
+    max_rows = max(20, min(120, top_k * 4))
+    return deduped[:max_rows]
 
 # Initialize global embedder/store early if possible
 def _init_vector_store():
     global _embedder, _store
-    if _embedder is None:
-        _embedder = VietnameseEmbedder()
     if _store is None:
+        # Keep embedder/store lifecycle aligned so tests that monkeypatch
+        # VietnameseEmbedder and reset only `_store` stay deterministic.
+        _embedder = VietnameseEmbedder()
         _store = FAISSVectorStore([], _embedder)
         # Link resource loader to this store
         resource_loader.set_vector_store(_store)
-        # triggers initial load
-        resource_loader.load_resources()
+        # Eager-load resources at startup so retrieval/advisor has full context immediately.
+        logger.info("MCP vector store: eager loading resources.")
+        global_signature = resource_loader.get_scope_signature()
+        snapshot_meta = _store.load_snapshot(
+            GLOBAL_VECTOR_SNAPSHOT_FILE,
+            expected_signature=global_signature,
+        )
+        if snapshot_meta:
+            snapshot_ids_raw = snapshot_meta.get("loaded_resource_ids")
+            if isinstance(snapshot_ids_raw, list):
+                snapshot_ids = {str(item) for item in snapshot_ids_raw if str(item).strip()}
+            else:
+                snapshot_ids = resource_loader.list_scope_resource_ids()
+            resource_loader.mark_scope_loaded(snapshot_ids)
+            logger.info(
+                "MCP vector store: restored global snapshot (%s docs).",
+                len(_store.documents),
+            )
+        else:
+            resource_loader.load_resources()
+            loaded_ids = sorted(resource_loader.get_loaded_resource_ids(include_global=True))
+            saved = _store.save_snapshot(
+                GLOBAL_VECTOR_SNAPSHOT_FILE,
+                metadata={
+                    "scope": "global",
+                    "resource_signature": global_signature,
+                    "loaded_resource_ids": loaded_ids,
+                },
+            )
+            if not saved:
+                logger.warning(
+                    "MCP vector store: snapshot save skipped/failed (%s).",
+                    GLOBAL_VECTOR_SNAPSHOT_FILE,
+                )
+    elif _embedder is None:
+        # Defensive: if store survives but embedder was reset, recover gracefully.
+        _embedder = getattr(_store, "embedder", None) or VietnameseEmbedder()
+
+
+def _normalize_session_id(session_id: Optional[str]) -> Optional[str]:
+    if not session_id:
+        return None
+    normalized = re.sub(r"[^A-Za-z0-9._-]", "_", str(session_id).strip())
+    return normalized or None
+
+
+def _normalize_user_id(user_id: Optional[str]) -> Optional[str]:
+    if not user_id:
+        return None
+    normalized = re.sub(r"[^A-Za-z0-9._-]", "_", str(user_id).strip())
+    return normalized or None
+
+
+def _schedule_scope_key(session_id: Optional[str], user_id: Optional[str] = None) -> str:
+    safe_user = _normalize_user_id(user_id)
+    safe_session = _normalize_session_id(session_id)
+    if safe_user:
+        return f"user::{safe_user}"
+    return f"session::{safe_session}" if safe_session else "global"
+
+
+def _invoke_with_optional_session(
+    func,
+    *args,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    **kwargs,
+):
+    """
+    Backward-compatible invoker for functions that were later extended with
+    optional `session_id`/`user_id` but may still be monkeypatched/tests with old signatures.
+    """
+    attempts: List[Dict[str, Optional[str]]] = []
+    if session_id is not None or user_id is not None:
+        attempts.append({"session_id": session_id, "user_id": user_id})
+    if session_id is not None:
+        attempts.append({"session_id": session_id})
+    if user_id is not None:
+        attempts.append({"user_id": user_id})
+    attempts.append({})
+
+    for extra_kwargs in attempts:
+        try:
+            return func(*args, **extra_kwargs, **kwargs)
+        except TypeError as exc:
+            if "unexpected keyword argument" not in str(exc):
+                raise
+    return func(*args, **kwargs)
+
+
+def _get_structured_schedule_store() -> StructuredScheduleStore:
+    global _structured_schedule_store
+    if _structured_schedule_store is None:
+        db_path = BASE_DIR / "data" / "structured_schedule.db"
+        _structured_schedule_store = StructuredScheduleStore(db_path=db_path)
+    return _structured_schedule_store
+
+
+def _ensure_structured_schedule_ingested(
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    force: bool = False,
+) -> Dict[str, Any]:
+    resource_dir = BASE_DIR / "data" / "resources" / "pdfs"
+    safe_session = _normalize_session_id(session_id)
+    safe_user = _normalize_user_id(user_id)
+    candidates = _invoke_with_optional_session(
+        _collect_schedule_files,
+        resource_dir,
+        session_id=safe_session,
+        user_id=safe_user,
+    )
+    store = _get_structured_schedule_store()
+    summary = store.ingest_schedule_files(candidates, force=force)
+    return {"files": [p.name for p in candidates], "ingest_summary": summary}
+
+
+def _coerce_structured_payload(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            return {"raw": value}
+    return {"raw": str(value)}
+
+
+def _extract_curriculum_subject_codes(groups: Dict[str, Any]) -> Set[str]:
+    subject_codes: Set[str] = set()
+    for group in (groups or {}).values():
+        if not isinstance(group, dict):
+            continue
+        for subject in group.get("subjects") or []:
+            code = _normalize_subject_code(str((subject or {}).get("code") or ""))
+            if code:
+                subject_codes.add(code)
+    return subject_codes
+
+
+def _get_program_subject_codes(
+    program_id: Optional[str],
+    session_id: Optional[str] = None,
+) -> Set[str]:
+    pid = str(program_id or "").strip()
+    if not pid:
+        return set()
+    if pid in _PROGRAM_SUBJECT_CODE_CACHE:
+        return set(_PROGRAM_SUBJECT_CODE_CACHE[pid])
+
+    try:
+        lookup_raw = get_curriculum_lookup(program_id=pid, session_id=session_id)
+        lookup = json.loads(lookup_raw) if isinstance(lookup_raw, str) else (lookup_raw or {})
+        if isinstance(lookup, dict) and not lookup.get("error"):
+            subject_codes = _extract_curriculum_subject_codes(lookup.get("groups") or {})
+            if subject_codes:
+                _PROGRAM_SUBJECT_CODE_CACHE[pid] = set(subject_codes)
+                return subject_codes
+    except Exception as e:
+        logger.warning("[resolve_course_alias] Failed to load curriculum subject codes for %s: %s", pid, e)
+    return set()
+
+
+def _pick_best_alias_candidate(candidates: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    normalized_candidates = [c for c in (candidates or []) if isinstance(c, dict)]
+    if not normalized_candidates:
+        return None
+    normalized_candidates.sort(
+        key=lambda item: (
+            -float(item.get("score") or 0.0),
+            str(item.get("subject_code") or ""),
+        )
+    )
+    return normalized_candidates[0]
 
 
 def _looks_like_schedule_pdf(path: Path) -> bool:
@@ -148,9 +481,21 @@ def _looks_like_schedule_pdf(path: Path) -> bool:
     return any(hint in norm_name for hint in SCHEDULE_NAME_HINTS)
 
 
-def _collect_schedule_files(resource_dir: Path) -> List[Path]:
+def _collect_schedule_files(
+    resource_dir: Path,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> List[Path]:
     files: Dict[str, Path] = {}
     scan_dirs = [resource_dir, PDF_DIR]
+    safe_user = _normalize_user_id(user_id)
+    safe_session = _normalize_session_id(session_id)
+    if safe_user:
+        user_pdf_dir = BASE_DIR / "data" / "resources" / "users" / safe_user / "pdfs"
+        scan_dirs.insert(1, user_pdf_dir)
+    elif safe_session:
+        session_pdf_dir = BASE_DIR / "data" / "resources" / "sessions" / safe_session / "pdfs"
+        scan_dirs.insert(1, session_pdf_dir)
     for folder in scan_dirs:
         if not folder.exists():
             continue
@@ -176,25 +521,40 @@ def _build_schedule_signature(files: List[Path]) -> Tuple[Tuple[str, int, int], 
     return tuple(signature)
 
 
-def _load_best_schedule_text(force_refresh: bool = False) -> Tuple[str, str]:
+def _load_best_schedule_text(
+    force_refresh: bool = False,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> Tuple[str, str]:
     """
     Load and cache the best schedule (TKB) text based on extracted text length.
     Cache invalidates automatically when candidate files change.
     """
-    global _SCHEDULE_TEXT_CACHE
-
+    scope_key = _schedule_scope_key(session_id, user_id=user_id)
+    cache_obj = _SCHEDULE_TEXT_CACHE.get(scope_key) or {
+        "signature": None,
+        "file_name": None,
+        "text": "",
+    }
     resource_dir = BASE_DIR / "data" / "resources" / "pdfs"
-    candidates = _collect_schedule_files(resource_dir)
+    safe_user = _normalize_user_id(user_id)
+    safe_session = _normalize_session_id(session_id)
+    candidates = _invoke_with_optional_session(
+        _collect_schedule_files,
+        resource_dir,
+        session_id=safe_session,
+        user_id=safe_user,
+    )
     if not candidates:
         return "", ""
 
     signature = _build_schedule_signature(candidates)
     if (
         not force_refresh
-        and _SCHEDULE_TEXT_CACHE.get("signature") == signature
-        and _SCHEDULE_TEXT_CACHE.get("text")
+        and cache_obj.get("signature") == signature
+        and cache_obj.get("text")
     ):
-        return str(_SCHEDULE_TEXT_CACHE.get("text") or ""), str(_SCHEDULE_TEXT_CACHE.get("file_name") or "")
+        return str(cache_obj.get("text") or ""), str(cache_obj.get("file_name") or "")
 
     ranked: List[Tuple[Path, int, str]] = []
     for path in candidates:
@@ -206,21 +566,21 @@ def _load_best_schedule_text(force_refresh: bool = False) -> Tuple[str, str]:
             logger.warning("[schedule] Failed to parse candidate %s: %s", path.name, e)
 
     if not ranked:
-        _SCHEDULE_TEXT_CACHE = {"signature": signature, "file_name": None, "text": ""}
+        _SCHEDULE_TEXT_CACHE[scope_key] = {"signature": signature, "file_name": None, "text": ""}
         return "", ""
 
     ranked.sort(key=lambda item: item[1], reverse=True)
     best_path, best_len, best_text = ranked[0]
     if best_len <= 2000:
-        _SCHEDULE_TEXT_CACHE = {"signature": signature, "file_name": None, "text": ""}
+        _SCHEDULE_TEXT_CACHE[scope_key] = {"signature": signature, "file_name": None, "text": ""}
         return "", ""
 
-    _SCHEDULE_TEXT_CACHE = {
+    _SCHEDULE_TEXT_CACHE[scope_key] = {
         "signature": signature,
         "file_name": best_path.name,
         "text": best_text,
     }
-    logger.info("[schedule] Selected BEST TKB file: %s (%s chars text)", best_path.name, best_len)
+    logger.info("[schedule] Selected BEST TKB file: %s (%s chars text) for %s", best_path.name, best_len, scope_key)
     return best_text, best_path.name
 
 
@@ -370,28 +730,65 @@ def _format_time_slot_map_text(slot_map: Dict[str, Dict[str, str]]) -> str:
     return "\n".join(lines)
 
 
-def _load_schedule_time_slot_map(force_refresh: bool = False) -> Tuple[Dict[str, Dict[str, str]], str]:
+def _with_default_time_slots(slot_map: Optional[Dict[str, Dict[str, str]]]) -> Dict[str, Dict[str, str]]:
+    merged: Dict[str, Dict[str, str]] = {
+        slot: dict(values)
+        for slot, values in _DEFAULT_TIME_SLOT_MAP.items()
+    }
+    if not isinstance(slot_map, dict):
+        return merged
+    for slot, values in slot_map.items():
+        if not isinstance(slot, str) or not slot:
+            continue
+        current = dict(merged.get(slot) or {})
+        if isinstance(values, dict):
+            for key in ("session", "period", "time_range"):
+                raw = str(values.get(key) or "").strip()
+                if raw:
+                    current[key] = raw
+        if current:
+            merged[slot] = current
+    return merged
+
+
+def _load_schedule_time_slot_map(
+    force_refresh: bool = False,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> Tuple[Dict[str, Dict[str, str]], str]:
     """
     Load and cache canonical time slots from all schedule files.
     Priority: official CV-like file and files that contain full slot definitions.
     """
-    global _SCHEDULE_TIME_SLOT_CACHE
-
+    scope_key = _schedule_scope_key(session_id, user_id=user_id)
+    cache_obj = _SCHEDULE_TIME_SLOT_CACHE.get(scope_key) or {
+        "signature": None,
+        "source_file": None,
+        "slot_map": {},
+        "checksum": None,
+    }
     resource_dir = BASE_DIR / "data" / "resources" / "pdfs"
-    candidates = _collect_schedule_files(resource_dir)
+    safe_user = _normalize_user_id(user_id)
+    safe_session = _normalize_session_id(session_id)
+    candidates = _invoke_with_optional_session(
+        _collect_schedule_files,
+        resource_dir,
+        session_id=safe_session,
+        user_id=safe_user,
+    )
     if not candidates:
-        logger.warning("[schedule] Time-slot map: no schedule candidates found.")
+        logger.warning("[schedule] Time-slot map: no schedule candidates found for %s.", scope_key)
         return {}, ""
 
     signature = _build_schedule_signature(candidates)
     if (
         not force_refresh
-        and _SCHEDULE_TIME_SLOT_CACHE.get("signature") == signature
-        and _SCHEDULE_TIME_SLOT_CACHE.get("slot_map")
+        and cache_obj.get("signature") == signature
+        and cache_obj.get("slot_map")
     ):
         return (
-            dict(_SCHEDULE_TIME_SLOT_CACHE.get("slot_map") or {}),
-            str(_SCHEDULE_TIME_SLOT_CACHE.get("source_file") or ""),
+            dict(cache_obj.get("slot_map") or {}),
+            str(cache_obj.get("source_file") or ""),
         )
 
     ranked: List[Tuple[int, int, Path, Dict[str, Dict[str, str]]]] = []
@@ -418,35 +815,42 @@ def _load_schedule_time_slot_map(force_refresh: bool = False) -> Tuple[Dict[str,
             logger.warning("[schedule] Failed to build time-slot map from %s: %s", path.name, e)
 
     if not ranked:
-        _SCHEDULE_TIME_SLOT_CACHE = {
+        fallback_map = _with_default_time_slots({})
+        _SCHEDULE_TIME_SLOT_CACHE[scope_key] = {
             "signature": signature,
-            "source_file": None,
-            "slot_map": {},
+            "source_file": "DEFAULT_UET_TIME_SLOTS",
+            "slot_map": fallback_map,
             "checksum": None,
         }
-        logger.warning("[schedule] Time-slot map empty after scanning %s candidates.", len(candidates))
-        return {}, ""
+        logger.warning(
+            "[schedule] Time-slot map empty after scanning %s candidates for %s. Falling back to default slots.",
+            len(candidates),
+            scope_key,
+        )
+        return fallback_map, "DEFAULT_UET_TIME_SLOTS"
 
     ranked.sort(key=lambda x: (x[0], x[1]), reverse=True)
     _, slot_count, best_path, best_map = ranked[0]
+    best_map = _with_default_time_slots(best_map)
 
     checksum = hashlib.sha1(
         json.dumps(best_map, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()[:12]
     signature_hash = hashlib.sha1(str(signature).encode("utf-8")).hexdigest()[:10]
 
-    _SCHEDULE_TIME_SLOT_CACHE = {
+    _SCHEDULE_TIME_SLOT_CACHE[scope_key] = {
         "signature": signature,
         "source_file": best_path.name,
         "slot_map": best_map,
         "checksum": checksum,
     }
     logger.info(
-        "[schedule] Loaded time-slot map: slots=%s source=%s checksum=%s signature=%s",
+        "[schedule] Loaded time-slot map: slots=%s source=%s checksum=%s signature=%s scope=%s",
         slot_count,
         best_path.name,
         checksum,
         signature_hash,
+        scope_key,
     )
     return best_map, best_path.name
 
@@ -554,7 +958,7 @@ def _build_schedule_table_rows(
         else:
             period_time = "Chưa xác định từ TKB nguồn"
 
-        subject_name = str(subj.get("name") or item.get("name") or "").strip()
+        subject_name = _format_subject_name_vi_en(subj.get("name") or item.get("name") or "")
         credits = subj.get("credits", item.get("credits"))
 
         class_note = ""
@@ -1077,21 +1481,32 @@ def analyze_transcript(file_ids: str | List[str]) -> str:
 
 
 @mcp_tool("get_schedule")
-def get_schedule(subject_codes: List[str]) -> str:
+def get_schedule(subject_codes: List[str], session_id: Optional[str] = None, user_id: Optional[str] = None) -> str:
     """
     Deterministically retrieve schedule info for specific subjects from the Global TKB PDF.
     Scans ALL available TKB-related PDFs to find class data and canonical time definitions.
     """
-    logger.info(f"get_schedule invoked for: {subject_codes}")
+    safe_session = _normalize_session_id(session_id)
+    safe_user = _normalize_user_id(user_id)
+    logger.info("get_schedule invoked for: %s (session=%s, user=%s)", subject_codes, safe_session, safe_user)
 
     resource_dir = BASE_DIR / "data" / "resources" / "pdfs"
-    tkb_candidates = _collect_schedule_files(resource_dir)
+    tkb_candidates = _invoke_with_optional_session(
+        _collect_schedule_files,
+        resource_dir,
+        session_id=safe_session,
+        user_id=safe_user,
+    )
     if not tkb_candidates:
         return json.dumps({"error": "Global Schedule file (TKB) not found."}, ensure_ascii=False)
 
     logger.info("Found %s TKB candidates: %s", len(tkb_candidates), [p.name for p in tkb_candidates])
 
-    time_slot_map, time_source_file = _load_schedule_time_slot_map()
+    time_slot_map, time_source_file = _invoke_with_optional_session(
+        _load_schedule_time_slot_map,
+        session_id=safe_session,
+        user_id=safe_user,
+    )
     time_definitions_text = _format_time_slot_map_text(time_slot_map)
 
     combined_results: Dict[str, Dict[str, Any]] = {}
@@ -1158,6 +1573,198 @@ def get_schedule(subject_codes: List[str]) -> str:
             final_output.append(fallback_item)
 
     return json.dumps(final_output, ensure_ascii=False)
+
+
+@mcp_tool("resolve_course_alias")
+def resolve_course_alias(
+    query: str,
+    program_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> str:
+    """
+    Resolve a free-form subject mention (code or name) to a canonical subject code.
+    Returns deterministic JSON with confidence and candidates.
+    """
+    _ensure_structured_schedule_ingested(session_id=session_id, user_id=user_id)
+    store = _get_structured_schedule_store()
+    result = store.resolve_course_alias(query or "")
+    curriculum_subject_codes = _get_program_subject_codes(program_id=program_id, session_id=session_id)
+    if curriculum_subject_codes:
+        filtered_candidates = [
+            candidate
+            for candidate in (result.get("candidates") or [])
+            if _normalize_subject_code(str((candidate or {}).get("subject_code") or "")) in curriculum_subject_codes
+        ]
+        result["candidates"] = filtered_candidates
+        best = _pick_best_alias_candidate(filtered_candidates)
+        if best:
+            result["matched_subject"] = {
+                "subject_code": best.get("subject_code"),
+                "subject_name_vi": best.get("subject_name_vi") or "",
+            }
+            result["confidence"] = float(best.get("score") or 0.0)
+        else:
+            result["matched_subject"] = None
+            result["confidence"] = 0.0
+    result["program_id"] = program_id
+    result["query"] = query
+    return json.dumps(result, ensure_ascii=False)
+
+
+@mcp_tool("get_teachers_by_subject")
+def get_teachers_by_subject(
+    subject_code: str,
+    semester: Optional[str] = None,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> str:
+    """
+    Deterministic lookup: return teacher list and class rows for one subject code/name.
+    """
+    _ensure_structured_schedule_ingested(session_id=session_id, user_id=user_id)
+    store = _get_structured_schedule_store()
+
+    alias_info = store.resolve_course_alias(subject_code or "")
+    matched_subject = alias_info.get("matched_subject") if isinstance(alias_info, dict) else None
+    target_code = str((matched_subject or {}).get("subject_code") or "").strip()
+    confidence = float(alias_info.get("confidence") or 0.0) if isinstance(alias_info, dict) else 0.0
+
+    if not target_code:
+        payload = {
+            "matched_subject": None,
+            "confidence": 0.0,
+            "teachers": [],
+            "rows": [],
+            "source_files": [],
+            "coverage_note": "Khong xac dinh duoc ma mon tu truy van.",
+        }
+        return json.dumps(payload, ensure_ascii=False)
+
+    payload = _coerce_structured_payload(store.get_teachers_by_subject(target_code, semester=semester))
+    payload["confidence"] = max(confidence, float(payload.get("confidence") or 0.0))
+    payload["matched_subject"] = payload.get("matched_subject") or matched_subject
+    return json.dumps(payload, ensure_ascii=False)
+
+
+@mcp_tool("get_classes_by_teacher")
+def get_classes_by_teacher(
+    teacher_name: str,
+    semester: Optional[str] = None,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> str:
+    """
+    Deterministic reverse lookup: teacher -> classes/subjects/schedule rows.
+    """
+    _ensure_structured_schedule_ingested(session_id=session_id, user_id=user_id)
+    store = _get_structured_schedule_store()
+    payload = _coerce_structured_payload(store.get_classes_by_teacher(teacher_name, semester=semester))
+    return json.dumps(payload, ensure_ascii=False)
+
+
+@mcp_tool("get_schedule_rows")
+def get_schedule_rows(
+    subject_code: Optional[str] = None,
+    teacher_name: Optional[str] = None,
+    semester: Optional[str] = None,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> str:
+    """
+    Generic deterministic schedule lookup over structured SQLite rows.
+    """
+    _ensure_structured_schedule_ingested(session_id=session_id, user_id=user_id)
+    store = _get_structured_schedule_store()
+
+    resolved_subject = None
+    confidence = 0.0
+    target_subject_code = subject_code
+    if subject_code:
+        alias_info = store.resolve_course_alias(subject_code)
+        resolved_subject = alias_info.get("matched_subject") if isinstance(alias_info, dict) else None
+        target_subject_code = (resolved_subject or {}).get("subject_code") or subject_code
+        confidence = float(alias_info.get("confidence") or 0.0) if isinstance(alias_info, dict) else 0.0
+
+    payload = _coerce_structured_payload(
+        store.get_schedule_rows(
+            subject_code=target_subject_code,
+            teacher_name=teacher_name,
+            semester=semester,
+        )
+    )
+    payload["matched_subject"] = resolved_subject
+    payload["confidence"] = confidence
+    return json.dumps(payload, ensure_ascii=False)
+
+
+@mcp_tool("get_time_slot_info")
+def get_time_slot_info(
+    slot: Optional[str] = None,
+    query: Optional[str] = None,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> str:
+    """
+    Deterministic lookup for generic time-slot definition (e.g. "Ca 1 mấy giờ").
+    Reads canonical slot map from schedule resources and falls back to defaults.
+    """
+    safe_session = _normalize_session_id(session_id)
+    safe_user = _normalize_user_id(user_id)
+
+    slot_text = str(slot or "").strip()
+    if not slot_text and query:
+        norm_query = normalize_for_match(query)
+        match = re.search(r"\bca\s*([1-9])\b", norm_query)
+        if match:
+            slot_text = match.group(1)
+    if slot_text:
+        slot_digits = re.sub(r"[^0-9]", "", slot_text)
+        slot_text = slot_digits or slot_text
+
+    if not slot_text or not re.fullmatch(r"[1-9]", slot_text):
+        return json.dumps(
+            {
+                "slot": "",
+                "period": "",
+                "time_range": "",
+                "session": "",
+                "source_file": "",
+                "coverage_note": "Không xác định được ca học cần tra cứu từ câu hỏi.",
+            },
+            ensure_ascii=False,
+        )
+
+    slot_map, source_file = _invoke_with_optional_session(
+        _load_schedule_time_slot_map,
+        session_id=safe_session,
+        user_id=safe_user,
+    )
+    slot_info = (slot_map or {}).get(slot_text) or {}
+    period = str(slot_info.get("period") or "").strip()
+    time_range = str(slot_info.get("time_range") or "").strip()
+    session_label = str(slot_info.get("session") or "").strip()
+
+    coverage_note = ""
+    if not slot_info:
+        coverage_note = f"Không có dữ liệu giờ học cho Ca {slot_text} trong tài liệu hiện có."
+    elif source_file == "DEFAULT_UET_TIME_SLOTS":
+        coverage_note = (
+            "Khung giờ đang dùng từ bảng mặc định vì chưa đọc được bảng thời gian chi tiết từ TKB nguồn."
+        )
+
+    payload = {
+        "slot": slot_text,
+        "period": period,
+        "time_range": time_range,
+        "session": session_label,
+        "source_file": source_file or "",
+        "source_page": None,
+        "source_line": None,
+        "coverage_note": coverage_note,
+    }
+    return json.dumps(payload, ensure_ascii=False)
+
 
 @mcp_tool("math_eval")
 def math_eval(expression: str) -> str:
@@ -1576,17 +2183,19 @@ def _group_matches_hint(group_code: str, group_data: Dict[str, Any], norm_hint: 
 
 
 def _select_groups_for_schedule(groups_data: Dict[str, Dict[str, Any]]) -> Tuple[str, List[str]]:
-    tokens = ("tu chon", "bo tro", "dinh huong", "chuyen sau", "nhom nganh")
-    leaf_codes: List[str] = []
-    token_matched_codes: List[str] = []
+    include_tokens = ("tu chon", "lua chon", "dinh huong", "chuyen sau", "bo tro", "elective")
+    exclude_tokens = (
+        "bat buoc",
+        "kien thuc chung",
+        "khoa luan",
+        "tot nghiep",
+        "thuc tap",
+        "do an",
+        "du an",
+    )
 
-    for group_code, group_data in groups_data.items():
-        subjects = group_data.get("subjects") or []
-        if not subjects:
-            continue
-
-        leaf_codes.append(group_code)
-        content_norm = " ".join(
+    def _normalize_group_content(group_data: Dict[str, Any]) -> str:
+        return " ".join(
             [
                 normalize_for_match(str(group_data.get("group_name") or "")),
                 " ".join(
@@ -1597,7 +2206,35 @@ def _select_groups_for_schedule(groups_data: Dict[str, Dict[str, Any]]) -> Tuple
                 ),
             ]
         ).strip()
-        if any(token in content_norm for token in tokens):
+
+    def _iter_lineage_codes(group_code: str) -> List[str]:
+        parts = group_code.split(".")
+        lineage: List[str] = []
+        for idx in range(1, len(parts) + 1):
+            lineage.append(".".join(parts[:idx]))
+        return lineage
+
+    content_by_code = {
+        code: _normalize_group_content(data) for code, data in groups_data.items()
+    }
+
+    leaf_codes: List[str] = []
+    token_matched_codes: List[str] = []
+
+    for group_code, group_data in groups_data.items():
+        subjects = group_data.get("subjects") or []
+        if not subjects:
+            continue
+
+        leaf_codes.append(group_code)
+
+        lineage_content = " ".join(
+            content_by_code.get(code, "") for code in _iter_lineage_codes(group_code)
+        ).strip()
+
+        has_include = any(token in lineage_content for token in include_tokens)
+        has_exclude = any(token in lineage_content for token in exclude_tokens)
+        if has_include and not has_exclude:
             token_matched_codes.append(group_code)
 
     if token_matched_codes:
@@ -1606,7 +2243,7 @@ def _select_groups_for_schedule(groups_data: Dict[str, Dict[str, Any]]) -> Tuple
 
 
 @mcp_tool("get_curriculum_lookup")
-def get_curriculum_lookup(group_hint: str = None, program_id: str = None) -> str:
+def get_curriculum_lookup(group_hint: str = None, program_id: str = None, session_id: Optional[str] = None) -> str:
     """
     Parses the Curriculum HTML to return a structure of Module Groups and their Subjects.
     Useful for finding list of electives when a specific subject is not found in schedule.
@@ -1614,7 +2251,12 @@ def get_curriculum_lookup(group_hint: str = None, program_id: str = None) -> str
         group_hint: Optional text to filter groups (e.g. "V.2.1" or "Pháº§n má»m"). If None, returns all.
         program_id: Optional program identifier (e.g. "it_2025", "cs_2022"). If None, uses default/first available.
     """
-    logger.info(f"get_curriculum_lookup invoked with hint: {group_hint}, program_id: {program_id}")
+    logger.info(
+        "get_curriculum_lookup invoked with hint: %s, program_id: %s, session_id: %s",
+        group_hint,
+        program_id,
+        _normalize_session_id(session_id),
+    )
     
     # Resolve HTML path from program registry
     programs = _scan_curriculum_programs()
@@ -1686,7 +2328,12 @@ def get_curriculum_lookup(group_hint: str = None, program_id: str = None) -> str
 
 
 @mcp_tool("get_electives_with_schedule")
-def get_electives_with_schedule(check_schedule: bool = True, program_id: str = None) -> str:
+def get_electives_with_schedule(
+    check_schedule: bool = True,
+    program_id: str = None,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> str:
     """
     Lay danh sach mon tu chon tu CTDT va kiem tra mon nao dang mo trong TKB.
 
@@ -1696,9 +2343,22 @@ def get_electives_with_schedule(check_schedule: bool = True, program_id: str = N
     Returns:
         JSON voi 2 phan: "opened" va "not_opened".
     """
-    logger.info(f"[get_electives_with_schedule] invoked with check_schedule={check_schedule}, program_id={program_id}")
+    safe_session = _normalize_session_id(session_id)
+    safe_user = _normalize_user_id(user_id)
+    logger.info(
+        "[get_electives_with_schedule] invoked with check_schedule=%s, program_id=%s, session_id=%s, user_id=%s",
+        check_schedule,
+        program_id,
+        safe_session,
+        safe_user,
+    )
 
-    curriculum_result = get_curriculum_lookup(program_id=program_id)
+    curriculum_result = _invoke_with_optional_session(
+        get_curriculum_lookup,
+        program_id=program_id,
+        session_id=safe_session,
+        user_id=safe_user,
+    )
     try:
         curriculum_data = json.loads(curriculum_result)
     except Exception:
@@ -1755,7 +2415,11 @@ def get_electives_with_schedule(check_schedule: bool = True, program_id: str = N
         )
 
     try:
-        tkb_text, selected_tkb_name = _load_best_schedule_text()
+        tkb_text, selected_tkb_name = _invoke_with_optional_session(
+            _load_best_schedule_text,
+            session_id=safe_session,
+            user_id=safe_user,
+        )
     except Exception as e:
         logger.warning("[get_electives_with_schedule] Could not load TKB: %s", e)
         return json.dumps(
@@ -1813,6 +2477,7 @@ def get_electives_with_schedule(check_schedule: bool = True, program_id: str = N
         "total_electives": len(all_electives),
         "selection_mode": selection_mode,
         "selected_group_codes": selected_group_codes,
+        "schedule_source_file": selected_tkb_name or None,
     }
 
     logger.info("[get_electives_with_schedule] Result: %s opened, %s not opened", len(opened), len(not_opened))
@@ -2424,8 +3089,14 @@ def calculate_gpa_feasibility(
     max_gpa_no_retakes = (points_no_retake / curriculum_total) if curriculum_total > 0 else 0.0
 
     feasible = None
+    feasible_with_retakes = None
+    feasible_no_retakes = None
     if target_gpa is not None:
-        feasible = target_gpa <= max_possible_gpa + 1e-6
+        # Keep default "feasible" conservative: evaluate without optional retakes.
+        # This avoids over-promising outcomes that depend on retake approval/capacity.
+        feasible_no_retakes = target_gpa <= max_gpa_no_retakes + 1e-6
+        feasible_with_retakes = target_gpa <= max_possible_gpa + 1e-6
+        feasible = feasible_no_retakes
 
     # Sort retake candidates
     retake_candidates.sort(key=lambda x: (x.get("grade_4") or 0))
@@ -2438,6 +3109,8 @@ def calculate_gpa_feasibility(
         "max_gpa_no_retakes": round(max_gpa_no_retakes, 4), # Only F + New
         "target_gpa": target_gpa,
         "feasible": feasible,
+        "feasible_no_retakes": feasible_no_retakes,
+        "feasible_with_retakes": feasible_with_retakes,
         "retake_candidates": retake_candidates, 
         "policy_note": f"Policy: Retake <= {mandatory_retake_grade}, Improve <= {improve_threshold}, Target Grade: {improve_target_grade}"
     }
@@ -2447,6 +3120,8 @@ def check_course_schedule(
     subjects: List[Dict[str, Any]],
     target_semester: Optional[str] = None,
     class_code: Optional[str] = None,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Check if subject codes appear in current schedule documents.
@@ -2459,12 +3134,24 @@ def check_course_schedule(
     if _store is None:
         return []
 
+    safe_session = _normalize_session_id(session_id)
+    safe_user = _normalize_user_id(user_id)
     resource_loader.set_vector_store(_store)
-    if not resource_loader.loaded_resources:
+    if safe_user or safe_session:
+        _invoke_with_optional_session(resource_loader.load_resources, session_id=safe_session, user_id=safe_user)
+    else:
         resource_loader.load_resources()
 
-    tkb_full_text, selected_file_name = _load_best_schedule_text()
-    time_slot_map, time_source_file = _load_schedule_time_slot_map()
+    tkb_full_text, selected_file_name = _invoke_with_optional_session(
+        _load_best_schedule_text,
+        session_id=safe_session,
+        user_id=safe_user,
+    )
+    time_slot_map, time_source_file = _invoke_with_optional_session(
+        _load_schedule_time_slot_map,
+        session_id=safe_session,
+        user_id=safe_user,
+    )
     tkb_upper = tkb_full_text.upper() if tkb_full_text else ""
 
     results: List[Dict[str, Any]] = []
@@ -2534,9 +3221,9 @@ def check_course_schedule(
                     day_candidate = _detect_schedule_day_from_line(line)
                     if day_candidate:
                         resolved_day = day_candidate
-                if not resolved_slot and time_slot_map:
+                if not resolved_slot:
                     slot_candidate = _detect_schedule_slot_from_line(line)
-                    if slot_candidate and slot_candidate in time_slot_map:
+                    if slot_candidate:
                         resolved_slot = slot_candidate
                         resolved_time_range = (time_slot_map.get(slot_candidate) or {}).get("time_range")
                 if resolved_day and resolved_slot:
@@ -2558,6 +3245,7 @@ def check_course_schedule(
                 "offered": offered,
                 "snippet": extracted_info,
                 "file_id": selected_file_name or "Unknown Schedule PDF",
+                "schedule_source_file": selected_file_name or None,
                 "query": query,
                 "time_slot_map": time_slot_map,
                 "time_source_file": time_source_file or None,
@@ -2604,12 +3292,550 @@ def _identify_priority_subjects(query: str, history: str, all_curriculum_subject
                      
     return priority_codes
 
+
+def _extract_completed_subject_codes(transcript_json: Dict[str, Any]) -> Set[str]:
+    completed: Set[str] = set()
+    if not isinstance(transcript_json, dict):
+        return completed
+    for sem in transcript_json.get("semesters") or []:
+        for subj in (sem or {}).get("subjects") or []:
+            code = _normalize_subject_code((subj or {}).get("code"))
+            if code:
+                completed.add(code)
+    return completed
+
+
+def _query_targets_elective_opened_not_taken(query: str) -> bool:
+    norm_query = normalize_for_match(query or "")
+    if not norm_query:
+        return False
+    has_elective = ("tu chon" in norm_query) or ("lua chon" in norm_query) or ("chuyen nganh" in norm_query)
+    has_opening = ("mo lop" in norm_query) or ("ky nay" in norm_query)
+    has_not_taken = ("chua hoc" in norm_query) or ("con thieu" in norm_query)
+    return has_elective and has_opening and has_not_taken
+
+
+def _looks_like_transient_model_error(answer: str) -> bool:
+    text = str(answer or "").strip()
+    if not text:
+        return True
+    norm = normalize_for_match(text)
+    raw_lower = text.lower()
+    markers = (
+        "response [503 service unavailable]",
+        "response [400 bad request]",
+        "server disconnected without sending a response",
+        "service unavailable",
+        "bad request",
+        "gateway timeout",
+        "model overloaded",
+        "loi khi sinh cau tra loi",
+        '"detail":"<response [503 service unavailable]>"',
+        '"detail":"<response [400 bad request]>"',
+    )
+    return any(marker in raw_lower or marker in norm for marker in markers)
+
+
+def _format_subject_name_vi_en(raw_name: Any) -> str:
+    name = re.sub(r"\s+", " ", str(raw_name or "")).strip()
+    if not name:
+        return ""
+    if "(" in name and ")" in name:
+        return name
+
+    tokens = name.split()
+    if len(tokens) < 4:
+        return name
+
+    def _letters_only(token: str) -> str:
+        return "".join(ch for ch in str(token or "") if ch.isalpha())
+
+    def _is_ascii_latin_token(token: str) -> bool:
+        letters = _letters_only(token)
+        if not letters:
+            return False
+        return all("A" <= ch <= "Z" or "a" <= ch <= "z" for ch in letters)
+
+    def _starts_with_upper_ascii(token: str) -> bool:
+        letters = _letters_only(token)
+        if not letters:
+            return False
+        first = letters[0]
+        return "A" <= first <= "Z"
+
+    def _is_short_upper_acronym(token: str) -> bool:
+        letters = _letters_only(token)
+        if not letters:
+            return False
+        if len(letters) > 5:
+            return False
+        return all("A" <= ch <= "Z" for ch in letters)
+
+    prefix_has_non_ascii = any(any(ord(ch) > 127 for ch in tok) for tok in tokens)
+    if not prefix_has_non_ascii:
+        return name
+
+    for idx in range(1, len(tokens)):
+        tok = tokens[idx]
+        if not (_is_ascii_latin_token(tok) and _starts_with_upper_ascii(tok)):
+            continue
+        # Keep domain acronyms like KHMT/CNTT on Vietnamese side when they
+        # are immediately followed by an English phrase.
+        if (
+            _is_short_upper_acronym(tok)
+            and (idx + 1) < len(tokens)
+            and _starts_with_upper_ascii(tokens[idx + 1])
+        ):
+            continue
+
+        tail = tokens[idx:]
+        latin_tail = sum(1 for t in tail if _is_ascii_latin_token(t))
+        if latin_tail < 2:
+            # Allow single-word English suffixes, e.g. "Tối ưu hóa Optimization".
+            if not (
+                latin_tail == 1
+                and len(tail) == 1
+                and _starts_with_upper_ascii(tail[0])
+                and len(_letters_only(tail[0])) >= 4
+            ):
+                continue
+        if latin_tail / max(len(tail), 1) < 0.8:
+            continue
+
+        vi_name = " ".join(tokens[:idx]).strip(" -")
+        en_tokens = tail[:]
+        if len(en_tokens) >= 2 and en_tokens[0].lower() == en_tokens[1].lower():
+            en_tokens = en_tokens[1:]
+        en_name = " ".join(en_tokens).strip(" -")
+        if vi_name and en_name:
+            return f"{vi_name} ({en_name})"
+    return name
+
+
+def _coerce_int(value: Any) -> int:
+    try:
+        return int(float(value))
+    except Exception:
+        return 0
+
+
+def _is_required_credit_block(block: Dict[str, Any]) -> bool:
+    block_name_norm = normalize_for_match((block or {}).get("block_name", ""))
+    return (block or {}).get("block_type") == "required" or "bat buoc" in block_name_norm
+
+
+def _collect_elective_credit_blocks(credit_analysis: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    blocks: List[Dict[str, Any]] = []
+    for block in credit_analysis or []:
+        if _is_required_credit_block(block):
+            continue
+        missing_credits = _coerce_int((block or {}).get("missing_credits"))
+        if missing_credits <= 0:
+            continue
+
+        seen_codes: Set[str] = set()
+        candidates: List[Dict[str, Any]] = []
+        for cand in (block or {}).get("candidates") or []:
+            code = str((cand or {}).get("code") or "").strip()
+            norm_code = _normalize_subject_code(code)
+            if not norm_code or norm_code in seen_codes:
+                continue
+            seen_codes.add(norm_code)
+            candidates.append(
+                {
+                    "code": code,
+                    "name": _format_subject_name_vi_en((cand or {}).get("name")),
+                    "credits": _coerce_int((cand or {}).get("credits")),
+                }
+            )
+
+        block_name = str((block or {}).get("block_name") or "").strip() or str((block or {}).get("block_id") or "").strip()
+        blocks.append(
+            {
+                "block_id": str((block or {}).get("block_id") or "").strip(),
+                "block_name": block_name,
+                "missing_credits": missing_credits,
+                "candidates": candidates,
+            }
+        )
+    return blocks
+
+
+def _build_opened_elective_recommendations(
+    elective_blocks: List[Dict[str, Any]],
+    opened_items: List[Dict[str, Any]],
+    completed_codes: Set[str],
+    priority_codes: Optional[Set[str]] = None,
+    include_all_opened: bool = False,
+    max_items: int = 200,
+) -> Dict[str, Any]:
+    priority_norm = {_normalize_subject_code(c) for c in (priority_codes or set()) if c}
+    completed_norm = {_normalize_subject_code(c) for c in (completed_codes or set()) if c}
+
+    opened_by_norm: Dict[str, Dict[str, Any]] = {}
+    opened_order: List[str] = []
+    for item in opened_items or []:
+        if not (item or {}).get("offered", True):
+            continue
+        code = str((item or {}).get("code") or "").strip()
+        norm_code = _normalize_subject_code(code)
+        if not norm_code:
+            continue
+        if norm_code not in opened_by_norm:
+            opened_order.append(norm_code)
+        opened_by_norm[norm_code] = item
+
+    block_by_code: Dict[str, Dict[str, Any]] = {}
+    for block in elective_blocks or []:
+        for cand in block.get("candidates") or []:
+            norm_code = _normalize_subject_code(cand.get("code"))
+            if norm_code and norm_code not in block_by_code:
+                block_by_code[norm_code] = block
+
+    selected_items: List[Dict[str, Any]] = []
+    selected_codes: Set[str] = set()
+    block_plan: List[Dict[str, Any]] = []
+
+    def _merge_entry(
+        norm_code: str,
+        schedule_item: Dict[str, Any],
+        candidate: Optional[Dict[str, Any]] = None,
+        block: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        merged = dict(schedule_item or {})
+        code = str((candidate or {}).get("code") or merged.get("code") or "").strip()
+        merged["code"] = code
+        merged["name"] = _format_subject_name_vi_en((candidate or {}).get("name") or merged.get("name"))
+        merged["credits"] = _coerce_int((candidate or {}).get("credits") or merged.get("credits"))
+        if block:
+            merged["elective_block_id"] = block.get("block_id")
+            merged["elective_block_name"] = block.get("block_name")
+        return merged
+
+    has_block_candidates = any((block.get("candidates") or []) for block in (elective_blocks or []))
+
+    if include_all_opened or not elective_blocks or not has_block_candidates:
+        for norm_code in opened_order:
+            if norm_code in completed_norm or norm_code in selected_codes:
+                continue
+            sched = opened_by_norm.get(norm_code) or {}
+            block = block_by_code.get(norm_code)
+            candidate = None
+            if block:
+                candidate = next(
+                    (c for c in (block.get("candidates") or []) if _normalize_subject_code(c.get("code")) == norm_code),
+                    None,
+                )
+            selected_items.append(_merge_entry(norm_code, sched, candidate=candidate, block=block))
+            selected_codes.add(norm_code)
+            if len(selected_items) >= max_items:
+                break
+        return {"selected_items": selected_items, "block_plan": block_plan}
+
+    for block in elective_blocks:
+        missing_credits = _coerce_int(block.get("missing_credits"))
+        if missing_credits <= 0:
+            continue
+
+        pool: List[Tuple[str, Dict[str, Any], Dict[str, Any], int]] = []
+        for cand in block.get("candidates") or []:
+            norm_code = _normalize_subject_code(cand.get("code"))
+            if not norm_code or norm_code in completed_norm or norm_code in selected_codes:
+                continue
+            sched = opened_by_norm.get(norm_code)
+            if not sched:
+                continue
+            credits = _coerce_int(cand.get("credits") or sched.get("credits"))
+            if credits <= 0:
+                credits = 1
+            pool.append((norm_code, cand, sched, credits))
+
+        pool.sort(key=lambda row: (row[0] not in priority_norm, -row[3], row[0]))
+
+        selected_for_block: List[Dict[str, Any]] = []
+        gained_credits = 0
+        for norm_code, cand, sched, credits in pool:
+            selected_codes.add(norm_code)
+            selected_for_block.append(
+                {
+                    "code": str(cand.get("code") or sched.get("code") or "").strip(),
+                    "credits": credits,
+                }
+            )
+            gained_credits += credits
+            selected_items.append(_merge_entry(norm_code, sched, candidate=cand, block=block))
+            if gained_credits >= missing_credits or len(selected_items) >= max_items:
+                break
+
+        block_plan.append(
+            {
+                "block_id": block.get("block_id"),
+                "block_name": block.get("block_name"),
+                "missing_credits": missing_credits,
+                "selected_credits": gained_credits,
+                "selected_items": selected_for_block,
+            }
+        )
+        if len(selected_items) >= max_items:
+            break
+
+    # Defensive fallback: when block-based matching yields empty due mismatched/incomplete
+    # curriculum candidates, still return opened courses not yet completed.
+    if not selected_items and opened_order:
+        for norm_code in opened_order:
+            if norm_code in completed_norm or norm_code in selected_codes:
+                continue
+            sched = opened_by_norm.get(norm_code) or {}
+            block = block_by_code.get(norm_code)
+            candidate = None
+            if block:
+                candidate = next(
+                    (c for c in (block.get("candidates") or []) if _normalize_subject_code(c.get("code")) == norm_code),
+                    None,
+                )
+            selected_items.append(_merge_entry(norm_code, sched, candidate=candidate, block=block))
+            selected_codes.add(norm_code)
+            if len(selected_items) >= max_items:
+                break
+
+    return {"selected_items": selected_items, "block_plan": block_plan}
+
+
+def _postprocess_advisor_answer_text(answer: str) -> str:
+    text = str(answer or "")
+    if not text.strip():
+        return text
+
+    lines: List[str] = []
+    code_regex = re.compile(r"[A-Z]{2,4}\d{3,4}[A-Z]?")
+    bullet_course_regex = re.compile(
+        r"^(\s*(?:[-*]\s+)?(?:\*\*)?([A-Z]{2,4}\d{3,4}[A-Z]?)(?:\*\*)?\s*[:\-]\s*)(.+)$"
+    )
+
+    for raw_line in text.splitlines():
+        line = raw_line
+
+        # Markdown table row: normalize "Tên môn học" column when code column is present.
+        if "|" in line and line.count("|") >= 7:
+            parts = line.split("|")
+            if len(parts) >= 8:
+                code_col = parts[4].strip() if len(parts) > 4 else ""
+                name_col = parts[5] if len(parts) > 5 else ""
+                if code_regex.fullmatch(code_col):
+                    parts[5] = f" {_format_subject_name_vi_en(name_col.strip())} "
+                    line = "|".join(parts)
+
+        # Bullet/list row with explicit subject code prefix.
+        match = bullet_course_regex.match(line)
+        if match:
+            prefix = match.group(1)
+            remainder = match.group(3)
+            credits_marker = re.search(
+                r"\(\s*\d+\s*t[íi]n\s*ch[ỉi]\s*\)",
+                remainder,
+                flags=re.IGNORECASE,
+            )
+            if credits_marker:
+                raw_name = remainder[: credits_marker.start()].rstrip(" -–—")
+                tail = remainder[credits_marker.start() :]
+            else:
+                raw_name = remainder.strip()
+                tail = ""
+            formatted_name = _format_subject_name_vi_en(raw_name)
+            sep = " " if tail and not str(tail).startswith(" ") else ""
+            line = f"{prefix}{formatted_name}{sep}{tail}"
+
+        lines.append(line)
+
+    return "\n".join(lines)
+
+
+def _render_elective_opened_not_taken_text(advisor_context: Dict[str, Any]) -> str:
+    credit_summary = advisor_context.get("credit_summary") or {}
+    missing_subjects = advisor_context.get("missing_subjects") or {}
+    credit_analysis = missing_subjects.get("credit_analysis") or []
+    elective_catalog = advisor_context.get("elective_catalog") or {}
+    transcript_json = advisor_context.get("transcript_json") or {}
+
+    completed_codes = _extract_completed_subject_codes(transcript_json)
+    elective_blocks = _collect_elective_credit_blocks(credit_analysis)
+    selection = _build_opened_elective_recommendations(
+        elective_blocks=elective_blocks,
+        opened_items=elective_catalog.get("opened") or [],
+        completed_codes=completed_codes,
+        include_all_opened=False,
+        max_items=100,
+    )
+    selected_items = selection.get("selected_items") or []
+    block_plan = selection.get("block_plan") or []
+
+    elective_missing_credits = sum(_coerce_int((block or {}).get("missing_credits")) for block in elective_blocks)
+
+    lines: List[str] = []
+    lines.append(
+        f"Bạn còn thiếu tổng {int(credit_summary.get('total_missing_credits') or 0)} tín chỉ; "
+        f"phần học phần tự chọn còn thiếu khoảng {elective_missing_credits} tín chỉ."
+    )
+    lines.append("")
+    if not selected_items:
+        lines.append("Hiện chưa tìm thấy học phần tự chọn mở lớp kỳ này mà bạn chưa học.")
+        return "\n".join(lines).strip()
+
+    if block_plan:
+        lines.append("Gợi ý theo từng nhóm còn thiếu:")
+        for plan in block_plan:
+            block_name = str(plan.get("block_name") or "Nhóm tự chọn").strip()
+            missing_credits = _coerce_int(plan.get("missing_credits"))
+            selected_credits = _coerce_int(plan.get("selected_credits"))
+            selected_codes = ", ".join(str(x.get("code") or "") for x in (plan.get("selected_items") or []) if x.get("code"))
+            if selected_codes:
+                lines.append(
+                    f"- {block_name}: thiếu {missing_credits} tín chỉ, gợi ý {selected_credits} tín chỉ ({selected_codes})."
+                )
+            else:
+                lines.append(f"- {block_name}: thiếu {missing_credits} tín chỉ, hiện chưa thấy môn mở lớp phù hợp.")
+
+    lines.append("")
+    lines.append("Danh sách môn tự chọn mở lớp kỳ này mà bạn chưa học (đã lọc theo tín chỉ còn thiếu):")
+    for item in selected_items:
+        code = str(item.get("code") or "").strip()
+        name = _format_subject_name_vi_en(item.get("name"))
+        credits = _coerce_int(item.get("credits"))
+        block_name = str(item.get("elective_block_name") or item.get("group") or "").strip()
+        if block_name:
+            lines.append(f"- {code} - {name} ({credits} tín chỉ), nhóm {block_name}")
+        else:
+            lines.append(f"- {code} - {name} ({credits} tín chỉ)")
+    return "\n".join(lines).strip()
+
+
+def _render_advisor_fallback_text(query: str, advisor_context: Dict[str, Any]) -> str:
+    """
+    Deterministic fallback text when advisor LLM is temporarily unavailable.
+    """
+    norm_query = normalize_for_match(query or "")
+    credit_summary = advisor_context.get("credit_summary") or {}
+    missing_subjects = advisor_context.get("missing_subjects") or {}
+    mandatory_missing = missing_subjects.get("mandatory_missing") or []
+    elective_suggestions = missing_subjects.get("elective_suggestions") or []
+    schedule_items = advisor_context.get("schedule_offerings") or []
+    curriculum = advisor_context.get("curriculum") or {}
+    structure = curriculum.get("structure") or []
+    elective_catalog = advisor_context.get("elective_catalog") or {}
+
+    lines: List[str] = []
+    lines.append(
+        "Che do du phong: model tu van tam thoi khong on dinh, nen ket qua duoi day duoc tong hop truc tiep tu CTDT + bang diem + TKB."
+    )
+    lines.append("")
+    lines.append(f"- Tin chi tich luy tren bang diem: {int(credit_summary.get('transcript_total_credits') or 0)}")
+    lines.append(f"- Tin chi duoc cong nhan theo CTDT: {int(credit_summary.get('curriculum_applicable_credits') or 0)}")
+    lines.append(f"- Tin chi con thieu: {int(credit_summary.get('total_missing_credits') or 0)}")
+
+    schedule_by_code: Dict[str, Dict[str, Any]] = {}
+    for item in schedule_items:
+        code = _normalize_subject_code(item.get("code"))
+        if code:
+            schedule_by_code[code] = item
+
+    curriculum_code_to_group: Dict[str, str] = {}
+    for block in structure:
+        for sub in block.get("sub_blocks") or []:
+            group_id = str(sub.get("id") or block.get("id") or "").strip()
+            for subj in sub.get("subjects") or []:
+                code = _normalize_subject_code(subj.get("code"))
+                if code:
+                    curriculum_code_to_group[code] = group_id
+        for subj in block.get("subjects") or []:
+            code = _normalize_subject_code(subj.get("code"))
+            if code and code not in curriculum_code_to_group:
+                curriculum_code_to_group[code] = str(block.get("id") or "").strip()
+
+    opened_codes = {
+        _normalize_subject_code(item.get("code"))
+        for item in (elective_catalog.get("opened") or [])
+        if item.get("code")
+    }
+    not_opened_codes = {
+        _normalize_subject_code(item.get("code"))
+        for item in (elective_catalog.get("not_opened") or [])
+        if item.get("code")
+    }
+
+    if any(
+        marker in norm_query
+        for marker in ("tu chon", "lua chon", "chuyen nganh", "mo lop", "liet ke", "tat ca", "toan bo")
+    ):
+        lines.append("")
+        lines.append("Hoc phan tu chon chuyen nganh dang mo lop ky nay:")
+        emitted: Set[str] = set()
+        for item in (elective_catalog.get("opened") or []):
+            code = _normalize_subject_code(item.get("code"))
+            if not code or code in emitted:
+                continue
+            emitted.add(code)
+            lines.append(
+                f"- {item.get('code')} - {_format_subject_name_vi_en(item.get('name'))} ({_coerce_int(item.get('credits'))} tín chỉ)"
+            )
+        if not emitted:
+            for item in elective_suggestions:
+                code = _normalize_subject_code(item.get("code"))
+                if not code or code in emitted:
+                    continue
+                emitted.add(code)
+                lines.append(
+                    f"- {item.get('code')} - {_format_subject_name_vi_en(item.get('name'))} ({_coerce_int(item.get('credits'))} tín chỉ)"
+                )
+
+        if any(marker in norm_query for marker in ("tat ca", "toan bo", "liet ke")):
+            lines.append("")
+            lines.append("Nhom chuyen nganh trong CTDT:")
+            for group_id in ("V.2.1", "V.2.2", "V.2.3", "V.2.4", "V.3"):
+                lines.append(f"- {group_id}")
+
+    if any(marker in norm_query for marker in ("xu ly anh", "int3404")):
+        code = "INT3404E"
+        in_curriculum = code in curriculum_code_to_group
+        offered = code in opened_codes or (schedule_by_code.get(code) or {}).get("offered") is True
+        if not offered and code in not_opened_codes:
+            offered = False
+        lines.append("")
+        lines.append(
+            f"Ket luan cho {code}: {'co mo lop ky nay' if offered else 'khong mo lop ky nay'}; "
+            f"{'thuoc CTDT' if in_curriculum else 'khong thay trong CTDT'}"
+            + (f" (nhom {curriculum_code_to_group.get(code)})." if in_curriculum else ".")
+        )
+
+    if any(marker in norm_query for marker in ("thi giac", "int3412")):
+        code = "INT3412E"
+        sched = schedule_by_code.get(code)
+        lines.append("")
+        if sched:
+            snippet = str(sched.get("snippet") or "").strip()
+            lines.append(f"Thong tin mo lop {code}: {snippet or 'dang mo lop'}")
+        else:
+            lines.append(f"Chua co dong TKB chi tiet cho {code} trong du lieu hien tai.")
+
+    if mandatory_missing:
+        lines.append("")
+        lines.append("Mon bat buoc con thieu:")
+        for subj in mandatory_missing:
+            code = subj.get("code")
+            name = subj.get("name")
+            credits = subj.get("credits")
+            sched = schedule_by_code.get(_normalize_subject_code(code))
+            status = "co mo lop" if (sched and sched.get("offered")) else "chua thay mo lop"
+            lines.append(f"- {code} - {name} ({credits} tin chi): {status}")
+
+    return "\n".join(lines).strip()
+
 @mcp_tool("consult_advisor")
 def consult_advisor(
     query: str,
     file_ids: List[str] | None = None,
     session_id: str = "default",
     program_id: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> str:
     ids = file_ids or []
     if isinstance(ids, str): ids = [p.strip() for p in ids.split(",") if p.strip()]
@@ -2633,6 +3859,7 @@ def consult_advisor(
         )
 
     explicit_program_id = str(program_id).strip() if program_id else None
+    safe_user = _normalize_user_id(user_id)
     
     try: history = _memory.get_context("", session_id=session_id, max_rows=5)
     except: history = ""
@@ -2705,7 +3932,10 @@ def consult_advisor(
 
     missing_info = compute_missing_subjects(transcript_data or {}, curriculum) if transcript_data else {"missing": [], "completed_map": {}, "low_grades": [], "credit_summary": {}}
     next_semester = _infer_next_semester_code(transcript_data or {}) if transcript_data else None
-    time_slot_definitions, time_source_file = _load_schedule_time_slot_map()
+    time_slot_definitions, time_source_file = _invoke_with_optional_session(
+        _load_schedule_time_slot_map,
+        session_id=session_id,
+    )
     
     # --- SMART SUBJECT FILTERING ---
     # Instead of sending ALL 32 missing subjects to the Agent, we filter to a reasonable recommendation list.
@@ -2737,10 +3967,12 @@ def consult_advisor(
     # --- Build "recommended" subject list (limited) ---
     recommended_subjects: List[Dict[str, Any]] = []
     elective_suggestions: List[Dict[str, Any]] = []
+    elective_credit_plan: List[Dict[str, Any]] = []
     
     # 1. Collect mandatory missing subjects (required courses from credit_analysis)
     mandatory_missing: List[Dict[str, Any]] = []
     elective_missing_candidates: List[Dict[str, Any]] = []
+    elective_missing_blocks: List[Dict[str, Any]] = []
     
     if credit_analysis:
         for block in credit_analysis:
@@ -2754,18 +3986,55 @@ def consult_advisor(
                     mandatory_missing.extend(candidates)
                 else:
                     elective_missing_candidates.extend(candidates)
+                    elective_missing_blocks.append(
+                        {
+                            "block_id": str(block.get("block_id") or "").strip(),
+                            "block_name": str(block.get("block_name") or "").strip(),
+                            "missing_credits": _coerce_int(block_missing_creds),
+                            "candidates": candidates,
+                        }
+                    )
     else:
         # Fallback: Use all missing subjects if no credit_analysis
         mandatory_missing = all_missing
     
+    # 1.1 Dedupe + format mandatory list
+    mandatory_seen: Set[str] = set()
+    unique_mandatory_missing: List[Dict[str, Any]] = []
+    for c in mandatory_missing:
+        code = str((c or {}).get("code") or "").strip()
+        norm_code = _normalize_subject_code(code)
+        if not norm_code or norm_code in mandatory_seen:
+            continue
+        mandatory_seen.add(norm_code)
+        unique_mandatory_missing.append(
+            {
+                "code": code,
+                "name": _format_subject_name_vi_en((c or {}).get("name")),
+                "credits": _coerce_int((c or {}).get("credits")),
+            }
+        )
+    mandatory_missing = unique_mandatory_missing
+
     # 2. Dedupe elective candidates
-    seen_codes = set()
-    unique_elective_candidates = []
+    seen_codes: Set[str] = set()
+    unique_elective_candidates: List[Dict[str, Any]] = []
     for c in elective_missing_candidates:
-        code = c.get("code")
-        if code and code not in seen_codes:
-            unique_elective_candidates.append(c)
-            seen_codes.add(code)
+        code = str((c or {}).get("code") or "").strip()
+        norm_code = _normalize_subject_code(code)
+        if not norm_code or norm_code in seen_codes:
+            continue
+        unique_elective_candidates.append(
+            {
+                "code": code,
+                "name": _format_subject_name_vi_en((c or {}).get("name")),
+                "credits": _coerce_int((c or {}).get("credits")),
+            }
+        )
+        seen_codes.add(norm_code)
+
+    # Rebuild elective blocks from normalized credit analysis for strict per-group credit matching.
+    elective_missing_blocks = _collect_elective_credit_blocks(credit_analysis)
     
     # --- PRIORITY SORT ---
     # Promote subjects relevant to the user query (or history refs) to the TOP of the list.
@@ -2776,18 +4045,45 @@ def consult_advisor(
         # Sort key: False (0) comes before True (1). So we want (code NOT in priority)
         unique_elective_candidates.sort(key=lambda x: x.get("code") not in priority_codes)
     
-    # 3. Limit electives based on missing credits
-    # Heuristic: If user needs 5 elective credits, suggest ~5 courses (enough choice)
-    elective_credits_needed = sum(
-        b.get("missing_credits", 0) for b in credit_analysis 
-        if not ("bat buoc" in normalize_for_match(b.get("block_name", "")) or b.get("block_type") == "required")
-    ) if credit_analysis else 0
-    
-    elective_limit = max(5, (elective_credits_needed // 2) + 3)  # At least 5, or based on credits
+    # 3. Query hint for full list requests.
+    norm_query = normalize_for_match(query)
+    query_wants_full_elective_list = any(
+        marker in norm_query for marker in ("tat ca", "toan bo", "liet ke", "day du", "full list")
+    )
+    query_explicitly_asks_electives = _query_targets_elective_opened_not_taken(query) or any(
+        marker in norm_query
+        for marker in (
+            "hoc phan tu chon",
+            "mon tu chon",
+            "nhom tu chon",
+            "hoc phan lua chon",
+            "mon lua chon",
+            "nhom lua chon",
+            "tu chon chuyen nganh",
+        )
+    )
+
+    elective_limit = 200 if query_wants_full_elective_list else 120
     
     # 4. Build one schedule map (avoid duplicate check_course_schedule calls)
     offered_electives: List[Dict[str, Any]] = []
     schedule_by_norm: Dict[str, Dict[str, Any]] = {}
+
+    def _schedule_item_score(item: Dict[str, Any]) -> int:
+        if not item:
+            return 0
+        score = 0
+        if item.get("offered"):
+            score += 4
+        if item.get("resolved_day"):
+            score += 2
+        if item.get("resolved_slot"):
+            score += 2
+        if item.get("resolved_time_range"):
+            score += 2
+        if str(item.get("snippet") or "").strip():
+            score += 1
+        return score
 
     def _put_schedule_items(items: List[Dict[str, Any]]):
         for item in items or []:
@@ -2796,7 +4092,12 @@ def consult_advisor(
                 continue
             norm = _normalize_subject_code(code)
             prev = schedule_by_norm.get(norm)
-            if prev is None or (not prev.get("offered") and item.get("offered")):
+            if prev is None:
+                schedule_by_norm[norm] = item
+                continue
+            prev_score = _schedule_item_score(prev)
+            new_score = _schedule_item_score(item)
+            if new_score > prev_score:
                 schedule_by_norm[norm] = item
 
     schedule_probe_subjects = mandatory_missing + (unique_elective_candidates[:30] if unique_elective_candidates else [])
@@ -2810,6 +4111,8 @@ def consult_advisor(
                 schedule_probe_subjects,
                 target_semester=next_semester,
                 class_code=schedule_class_hint,
+                session_id=session_id,
+                user_id=safe_user,
             )
             _put_schedule_items(schedule_probe_results)
         except Exception as e:
@@ -2819,9 +4122,16 @@ def consult_advisor(
     if not unique_elective_candidates:
         logger.info("[consult_advisor] No elective candidates found from curriculum analysis. Trying fallback to get_electives_with_schedule...")
         try:
-            raw_sched = get_electives_with_schedule(check_schedule=True, program_id=program_hint)
+            raw_sched = _invoke_with_optional_session(
+                get_electives_with_schedule,
+                check_schedule=True,
+                program_id=program_hint,
+                session_id=session_id,
+                user_id=safe_user,
+            )
             sched_data = json.loads(raw_sched)
             opened_fallback = sched_data.get("opened", [])
+            fallback_schedule_source = str(sched_data.get("schedule_source_file") or "").strip() or None
 
             completed_codes = set()
             if transcript_data:
@@ -2841,6 +4151,8 @@ def consult_advisor(
                     "credits": item.get("credits"),
                     "offered": True,
                     "snippet": f"Mon tu chon nhom {item.get('group')} dang mo lop.",
+                    "file_id": fallback_schedule_source or "Unknown Schedule PDF",
+                    "schedule_source_file": fallback_schedule_source,
                     "time_slot_map": time_slot_definitions,
                     "time_source_file": time_source_file or None,
                     "resolved_day": None,
@@ -2862,37 +4174,121 @@ def consult_advisor(
             if sched and sched.get("offered"):
                 offered_electives.append(sched)
 
-    # Map back for output
-    cand_map = {c.get("code"): c for c in unique_elective_candidates}
-
-    if unique_elective_candidates:
-        for sched in offered_electives[:elective_limit]:
-            code = sched.get("code")
-            orig = cand_map.get(code)
-            if orig:
-                elective_suggestions.append(
-                    {
-                        "code": code,
-                        "name": orig.get("name"),
-                        "credits": orig.get("credits"),
-                        "offered": True,
-                        "schedule_snippet": sched.get("snippet", "")[:100],
-                    }
-                )
-    else:
-        for sched in offered_electives[:elective_limit]:
-            elective_suggestions.append(
-                {
-                    "code": sched.get("code"),
-                    "name": sched.get("name"),
-                    "credits": sched.get("credits"),
-                    "offered": True,
-                    "schedule_snippet": sched.get("snippet", "")[:100],
-                }
+        # If semester hint is stale (e.g., transcript next semester != current TKB semester),
+        # retry schedule matching without semester/class filters to avoid false "no opened electives".
+        if not offered_electives and unique_elective_candidates:
+            logger.info(
+                "[consult_advisor] No opened electives found with semester/class hint; retrying broad schedule check."
             )
+            try:
+                broad_schedule = check_course_schedule(
+                    unique_elective_candidates[:50],
+                    target_semester=None,
+                    class_code=None,
+                    session_id=session_id,
+                    user_id=safe_user,
+                )
+                _put_schedule_items(broad_schedule)
+                for candidate in unique_elective_candidates:
+                    code = str(candidate.get("code") or "").strip()
+                    if not code:
+                        continue
+                    sched = schedule_by_norm.get(_normalize_subject_code(code))
+                    if sched and sched.get("offered"):
+                        offered_electives.append(sched)
+            except Exception as e:
+                logger.warning("[consult_advisor] Broad schedule retry failed: %s", e)
 
-    # 5. Build recommended_subjects = mandatory + limited electives
-    recommended_subjects = mandatory_missing + [
+        # Final fallback: use get_electives_with_schedule opened list and intersect by elective candidates.
+        if not offered_electives and unique_elective_candidates:
+            logger.info(
+                "[consult_advisor] No opened electives after broad retry; fallback to get_electives_with_schedule."
+            )
+            try:
+                raw_sched = _invoke_with_optional_session(
+                    get_electives_with_schedule,
+                    check_schedule=True,
+                    program_id=program_hint,
+                    session_id=session_id,
+                    user_id=safe_user,
+                )
+                sched_data = json.loads(raw_sched)
+                opened_fallback = sched_data.get("opened", [])
+                opened_by_norm = {
+                    _normalize_subject_code(item.get("code")): item
+                    for item in opened_fallback
+                    if item.get("code")
+                }
+                for candidate in unique_elective_candidates:
+                    norm_c = _normalize_subject_code(candidate.get("code"))
+                    item = opened_by_norm.get(norm_c)
+                    if not item:
+                        continue
+                    fallback_item = {
+                        "code": item.get("code"),
+                        "name": item.get("name") or candidate.get("name"),
+                        "credits": item.get("credits") or candidate.get("credits"),
+                        "offered": True,
+                        "snippet": item.get("snippet") or "",
+                        "file_id": item.get("file_id") or item.get("schedule_source_file") or "Unknown Schedule PDF",
+                        "schedule_source_file": item.get("schedule_source_file"),
+                        "time_slot_map": item.get("time_slot_map") or time_slot_definitions,
+                        "time_source_file": item.get("time_source_file") or time_source_file or None,
+                        "resolved_day": item.get("resolved_day"),
+                        "resolved_slot": item.get("resolved_slot"),
+                        "resolved_time_range": item.get("resolved_time_range"),
+                    }
+                    offered_electives.append(fallback_item)
+                    _put_schedule_items([fallback_item])
+            except Exception as e:
+                logger.warning("[consult_advisor] Elective fallback from get_electives_with_schedule failed: %s", e)
+
+    completed_codes = _extract_completed_subject_codes(transcript_data or {})
+    should_recommend_opened_electives = bool(elective_missing_blocks) or query_wants_full_elective_list or query_explicitly_asks_electives
+    selected_opened_electives: List[Dict[str, Any]] = []
+    elective_credit_plan: List[Dict[str, Any]] = []
+    if should_recommend_opened_electives:
+        elective_selection = _build_opened_elective_recommendations(
+            elective_blocks=elective_missing_blocks,
+            opened_items=offered_electives,
+            completed_codes=completed_codes,
+            priority_codes=priority_codes,
+            include_all_opened=query_wants_full_elective_list,
+            max_items=elective_limit,
+        )
+        selected_opened_electives = elective_selection.get("selected_items") or []
+        elective_credit_plan = elective_selection.get("block_plan") or []
+
+        if not selected_opened_electives and offered_electives:
+            selected_opened_electives = offered_electives[:elective_limit]
+
+    cand_map = {
+        _normalize_subject_code(c.get("code")): c
+        for c in unique_elective_candidates
+        if c.get("code")
+    }
+    seen_suggestion_codes: Set[str] = set()
+    for sched in selected_opened_electives:
+        code = str((sched or {}).get("code") or "").strip()
+        norm_code = _normalize_subject_code(code)
+        if not norm_code or norm_code in seen_suggestion_codes:
+            continue
+        seen_suggestion_codes.add(norm_code)
+        orig = cand_map.get(norm_code) or {}
+        elective_suggestions.append(
+            {
+                "code": code,
+                "name": _format_subject_name_vi_en(orig.get("name") or sched.get("name")),
+                "credits": _coerce_int(orig.get("credits") or sched.get("credits")),
+                "offered": True,
+                "schedule_snippet": str((sched or {}).get("snippet") or "")[:120],
+                "block_id": sched.get("elective_block_id"),
+                "block_name": sched.get("elective_block_name"),
+            }
+        )
+
+    # 5. Build recommended_subjects = mandatory + selected electives
+    recommended_subjects = list(mandatory_missing) + [
         {"code": e["code"], "name": e["name"], "credits": e["credits"]}
         for e in elective_suggestions
     ]
@@ -2907,6 +4303,11 @@ def consult_advisor(
         sched = schedule_by_norm.get(_normalize_subject_code(code))
         if sched:
             schedule_info.append(sched)
+            has_resolved_time = bool(
+                sched.get("resolved_day") or sched.get("resolved_slot") or sched.get("resolved_time_range")
+            )
+            if not has_resolved_time:
+                unresolved_subjects.append(subj)
         else:
             unresolved_subjects.append(subj)
 
@@ -2916,16 +4317,67 @@ def consult_advisor(
                 unresolved_subjects,
                 target_semester=next_semester,
                 class_code=schedule_class_hint,
+                session_id=session_id,
+                user_id=safe_user,
             )
             _put_schedule_items(extra_schedule)
             schedule_info.extend(extra_schedule)
         except Exception as e:
             logger.warning("[consult_advisor] Error checking unresolved schedule subjects: %s", e)
 
+        # Retry unresolved rows without semester/class filters to avoid stale hint mismatches.
+        still_unresolved_subjects: List[Dict[str, Any]] = []
+        for subj in unresolved_subjects:
+            norm_code = _normalize_subject_code((subj or {}).get("code"))
+            sched = schedule_by_norm.get(norm_code)
+            has_resolved_time = bool(
+                sched and (sched.get("resolved_day") or sched.get("resolved_slot") or sched.get("resolved_time_range"))
+            )
+            if not has_resolved_time:
+                still_unresolved_subjects.append(subj)
+
+        if still_unresolved_subjects:
+            try:
+                broad_schedule = check_course_schedule(
+                    still_unresolved_subjects,
+                    target_semester=None,
+                    class_code=None,
+                    session_id=session_id,
+                    user_id=safe_user,
+                )
+                _put_schedule_items(broad_schedule)
+                schedule_info.extend(broad_schedule)
+            except Exception as e:
+                logger.warning("[consult_advisor] Broad schedule retry for unresolved rows failed: %s", e)
+
+    # Rebuild schedule_info from latest merged map, preserving recommended subject order.
+    dedup_norm_codes: Set[str] = set()
+    normalized_schedule_info: List[Dict[str, Any]] = []
+    for subj in recommended_subjects:
+        norm_code = _normalize_subject_code((subj or {}).get("code"))
+        if not norm_code or norm_code in dedup_norm_codes:
+            continue
+        dedup_norm_codes.add(norm_code)
+        sched = schedule_by_norm.get(norm_code)
+        if sched:
+            normalized_schedule_info.append(sched)
+    schedule_info = normalized_schedule_info
+
     schedule_table_rows = _build_schedule_table_rows(
         schedule_items=schedule_info,
         recommended_subjects=recommended_subjects,
         default_time_slot_map=time_slot_definitions,
+    )
+    schedule_source_files: List[str] = []
+    for item in schedule_info:
+        src = str(item.get("schedule_source_file") or item.get("file_id") or "").strip()
+        if src and src not in schedule_source_files:
+            schedule_source_files.append(src)
+    primary_schedule_source_file = schedule_source_files[0] if schedule_source_files else None
+    logger.info(
+        "[consult_advisor] Schedule sources resolved: offering_sources=%s | time_source=%s",
+        schedule_source_files,
+        time_source_file,
     )
     
     logger.info(f"[consult_advisor] Sending {len(recommended_subjects)} recommended subjects to Agent (mandatory: {len(mandatory_missing)}, electives: {len(elective_suggestions)})")
@@ -2946,6 +4398,31 @@ def consult_advisor(
         scenario = "registration"
     if any(k in norm_query for k in gpa_keywords):
         scenario = "gpa_improvement"
+
+    elective_catalog: Dict[str, Any] = {}
+    needs_elective_catalog = any(
+        marker in norm_query
+        for marker in ("tu chon", "lua chon", "chuyen nganh", "mo lop", "xu ly anh", "int3404", "thi giac", "int3412")
+    )
+    if needs_elective_catalog:
+        try:
+            raw_catalog = _invoke_with_optional_session(
+                get_electives_with_schedule,
+                check_schedule=True,
+                program_id=program_hint,
+                session_id=session_id,
+                user_id=safe_user,
+            )
+            parsed_catalog = json.loads(raw_catalog)
+            if isinstance(parsed_catalog, dict):
+                elective_catalog = {
+                    "opened": parsed_catalog.get("opened") or [],
+                    "not_opened": parsed_catalog.get("not_opened") or [],
+                    "selection_mode": parsed_catalog.get("selection_mode"),
+                    "selected_group_codes": parsed_catalog.get("selected_group_codes") or [],
+                }
+        except Exception as e:
+            logger.warning("[consult_advisor] Could not load elective catalog snapshot: %s", e)
 
     # --- CONTEXT FOR AGENT ---
     # Use recommended_subjects instead of all missing, and elective_suggestions for clarity
@@ -2969,11 +4446,14 @@ def consult_advisor(
             "recommended": recommended_subjects,  # FILTERED list
             "mandatory_missing": mandatory_missing,
             "elective_suggestions": elective_suggestions,
+            "elective_credit_plan": elective_credit_plan,
             "credit_analysis": credit_analysis,  # Detailed breakdown
         },
         "next_semester": next_semester,
         "time_slot_definitions": time_slot_definitions,
         "time_source_file": time_source_file or None,
+        "schedule_source_file": primary_schedule_source_file,
+        "schedule_source_files": schedule_source_files,
         "schedule_offerings": schedule_info,  # Now limited to recommended only
         "schedule_table_columns": [
             "Ngày học",
@@ -2986,7 +4466,11 @@ def consult_advisor(
         ],
         "schedule_table_rows": schedule_table_rows,
         "gpa_projection": gpa_projection,
+        "elective_catalog": elective_catalog,
     }
+
+    if _query_targets_elective_opened_not_taken(query):
+        return _postprocess_advisor_answer_text(_render_elective_opened_not_taken_text(advisor_context))
 
     prompt = (
         "--- CONTEXT ---\n"
@@ -2994,68 +4478,137 @@ def consult_advisor(
         "--- END ---\n"
         f"Query: {query}"
     )
-    return getattr(get_academic_advisor_agent().run(prompt), "content", "")
+    try:
+        llm_answer = getattr(get_academic_advisor_agent().run(prompt), "content", "")
+    except Exception as e:
+        logger.warning("[consult_advisor] Advisor LLM failed. Using deterministic fallback. error=%s", e)
+        if _query_targets_elective_opened_not_taken(query):
+            return _postprocess_advisor_answer_text(_render_elective_opened_not_taken_text(advisor_context))
+        return _postprocess_advisor_answer_text(_render_advisor_fallback_text(query, advisor_context))
+
+    if _looks_like_transient_model_error(llm_answer):
+        logger.warning(
+            "[consult_advisor] Advisor LLM returned transient error-shaped content; using deterministic fallback. content=%s",
+            str(llm_answer)[:300],
+        )
+        if _query_targets_elective_opened_not_taken(query):
+            return _postprocess_advisor_answer_text(_render_elective_opened_not_taken_text(advisor_context))
+        return _postprocess_advisor_answer_text(_render_advisor_fallback_text(query, advisor_context))
+
+    return _postprocess_advisor_answer_text(llm_answer)
 
 @mcp_tool("retrieve_chunks")
-def retrieve_chunks(question: str, top_k: int = 15, file_ids: List[str] | None = None) -> List[str]:
+def retrieve_chunks(
+    question: str,
+    top_k: int = 25,
+    file_ids: List[str] | None = None,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> List[str]:
     try:
         top_k = int(top_k)
     except Exception:
-        top_k = 15
+        top_k = 25
     if top_k < 1:
         top_k = 1
     if top_k > 50:
         top_k = 50
+    explicit_empty_file_ids = isinstance(file_ids, list) and len(file_ids) == 0
     ids_input = file_ids or []
-    if isinstance(ids_input, str): ids_input = [p.strip() for p in ids_input.split(",")]
-    
-    # NEW LOGIC: If no file_ids, we might search global resources?
-    # The client might send empty list if they want "general knowledge" or "all resources".
-    # Current logic returns empty.
-    # ResourceLoader adds documents to _store with "is_global_resource".
-    # User requirement: "add 1 part is available resources... that can be added manually... crawl web..."
-    # If user doesn't select specific files, maybe we SHOULD search global resources.
-    
-    # Let's Modify: if file_ids is empty, retrieve from GLOBAL resources?
-    # Or should we require file_ids?
-    # Usually "Available Resources" implies they are always available.
-    # Let's search everything if file_ids is empty.
-    
+    if isinstance(ids_input, str):
+        ids_input = [p.strip() for p in ids_input.split(",")]
+
+    safe_session = _normalize_session_id(session_id)
+    safe_user = _normalize_user_id(user_id)
+
+    # Teacher lookup queries are better served by deterministic schedule parsing:
+    # vector top-k retrieval may miss classes/teachers when one subject spans many rows.
+    teacher_context = _build_teacher_lookup_context(
+        question=question,
+        top_k=top_k,
+        session_id=safe_session,
+        user_id=safe_user,
+    )
+    if teacher_context:
+        logger.info(
+            "[retrieve_chunks] teacher_lookup deterministic hit: rows=%s session=%s user=%s",
+            len(teacher_context),
+            safe_session,
+            safe_user,
+        )
+        return teacher_context
+
+    # Backward-compatible behavior for callers/tests that pass explicit `[]`
+    # without session/user scope: do not bootstrap the global vector store.
+    if explicit_empty_file_ids and not safe_session and not safe_user and _store is None:
+        return []
+
     _init_vector_store()
-    
-    if not _store: return []
-    
+
+    if not _store:
+        return []
+
+    resource_loader.set_vector_store(_store)
+    resource_loader.load_resources(session_id=safe_session, user_id=safe_user)
+
     ids = [fid for fid in ids_input if fid]
     if ids:
-        # Load specific requested files
-        for fid in ids: _ensure_file_loaded(fid)
-        # Search constrained to these files OR global resources
-        # We need to filter where (metadata.file_id IN ids) OR (metadata.is_global_resource == True)
-        # FAISSVectorStore retrieve might accept a custom filter function or we modify how it filters.
-        # But standard `retrieve` method in utils.py likely works with strict list info.
-        # Let's peek at FAISSVectorStore.retrieve in utils.py... 
-        # Actually simplest way: if we want to include global resources, we can find out what they are
-        # and append their IDs to `ids`.
-        
-        global_resources = resource_loader.loaded_resources
-        # Resolving their IDs might be tricky if we don't have them handy, but resource_loader tracks them.
-        
-        # Combine user IDs + Global IDs
-        combined_ids = set(ids) | global_resources
-        
-        chunks = _store.retrieve(question, top_k=top_k, file_ids=list(combined_ids))
+        for fid in ids:
+            _ensure_file_loaded(fid)
+        # Explicit file_ids should stay strict to avoid cross-program/global noise.
+        # The caller can still pass multiple files when cross-file context is desired.
+        strict_ids = list(dict.fromkeys(ids))
+        chunks = _store.retrieve(question, top_k=top_k, file_ids=strict_ids)
     else:
-        # Search EVERYTHING (Global resources included)
-        # _store.retrieve handles file_ids=None as "search all"
-        chunks = _store.retrieve(question, top_k=top_k)
-        
-    if not chunks: return []
-    
-    return [f"[{c.metadata.get('file_name', c.metadata.get('source', 'unknown'))} - Chunk {c.metadata.get('index')}] {c.page_content}" for c in chunks]
+        # Always constrain retrieval to resources currently present on disk/config.
+        # This avoids stale chunks from deleted resources lingering in in-memory snapshots.
+        scoped_resources = set(resource_loader.list_scope_resource_ids())
+        if safe_user or safe_session:
+            scoped_resources.update(
+                resource_loader.list_scope_resource_ids(session_id=safe_session, user_id=safe_user)
+            )
+        if not scoped_resources:
+            chunks = []
+        else:
+            chunks = _store.retrieve(question, top_k=top_k, file_ids=sorted(scoped_resources))
+
+    if not chunks:
+        return []
+
+    def _coerce_positive_int(value: Any) -> Optional[int]:
+        if value is None:
+            return None
+        try:
+            number = int(str(value).strip())
+        except Exception:
+            return None
+        if number <= 0:
+            return None
+        return number
+
+    formatted: List[str] = []
+    for chunk_doc in chunks:
+        source_file = str(
+            chunk_doc.metadata.get("file_name", chunk_doc.metadata.get("source", "unknown"))
+        ).strip()
+        chunk_index = _coerce_positive_int(
+            chunk_doc.metadata.get("index", chunk_doc.metadata.get("chunk_index"))
+        )
+        page = _coerce_positive_int(chunk_doc.metadata.get("page"))
+        source_line = _coerce_positive_int(chunk_doc.metadata.get("source_line"))
+
+        header_parts = [f"{source_file} - Chunk {chunk_index or 0}"]
+        if page is not None:
+            header_parts.append(f"Page {page}")
+        if source_line is not None:
+            header_parts.append(f"Line {source_line}")
+        formatted.append(f"[{' - '.join(header_parts)}] {chunk_doc.page_content}")
+
+    return formatted
 
 
 @mcp_tool("compare_pdfs")
-def compare_pdfs(query: str, file_ids: List[str], top_k: int = 5) -> List[str]:
+def compare_pdfs(query: str, file_ids: List[str], top_k: int = 25) -> List[str]:
     # Similar logic...
     ids_input = file_ids or []
     if isinstance(ids_input, str): ids_input = [p.strip() for p in ids_input.split(",")]
@@ -3077,6 +4630,8 @@ def get_file_summaries(file_ids: List[str]) -> List[str]:
     ids_input = file_ids or []
     if isinstance(ids_input, str): ids_input = [p.strip() for p in ids_input.split(",")]
     ids = [fid for fid in ids_input if fid]
+    if not ids:
+        raise HTTPException(400, "Need file_ids")
     
     sums = []
     for fid in ids:
@@ -3099,9 +4654,11 @@ def memory_add(session_id: str, query: str, answer: str, chunk_index: int | None
 
 # NEW TOOL: Scan / Refresh Resources
 @mcp_tool("scan_resources")
-def scan_resources(reset: bool = False) -> str:
+def scan_resources(reset: bool = False, session_id: Optional[str] = None, user_id: Optional[str] = None) -> str:
     """Triggers resource loader to scan directories and ingest new items. Set reset=True to force rebuild."""
-    logger.info(f"Manual scan_resources triggered (reset={reset}).")
+    safe_session = _normalize_session_id(session_id)
+    safe_user = _normalize_user_id(user_id)
+    logger.info("Manual scan_resources triggered (reset=%s, session_id=%s, user_id=%s).", reset, safe_session, safe_user)
     global _store, _embedder
     
     _init_vector_store()
@@ -3112,9 +4669,24 @@ def scan_resources(reset: bool = False) -> str:
         _store = FAISSVectorStore([], _embedder)
         # Update proper references
         resource_loader.set_vector_store(_store)
-        resource_loader.loaded_resources = set()
-        
-    resource_loader.load_resources()
+        resource_loader.reset_loaded_state()
+        resource_loader.load_resources()
+        if safe_user or safe_session:
+            resource_loader.load_resources(session_id=safe_session, user_id=safe_user)
+    else:
+        if safe_user or safe_session:
+            resource_loader.load_resources(session_id=safe_session, user_id=safe_user)
+        else:
+            resource_loader.load_resources()
+
+    try:
+        _ensure_structured_schedule_ingested(
+            session_id=safe_session,
+            user_id=safe_user,
+            force=bool(reset),
+        )
+    except Exception as structured_err:
+        logger.warning("Structured schedule ingestion during scan_resources failed: %s", structured_err)
     
     # === NEW: Curriculum Program Discovery ===
     logger.info("[Curriculum Registry] Scanning for training programs...")
@@ -3128,6 +4700,9 @@ def scan_resources(reset: bool = False) -> str:
     
     return json.dumps({
         "status": "Resources scanned and updated.",
+        "scope": "user" if safe_user else ("session" if safe_session else "global"),
+        "session_id": safe_session,
+        "user_id": safe_user,
         "programs_discovered": len(programs) if programs else 0,
         "programs": [{"id": p["id"], "name": p["display_name"]} for p in (programs.values() if programs else [])]
     }, ensure_ascii=False)

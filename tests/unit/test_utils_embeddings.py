@@ -131,3 +131,113 @@ def test_faiss_retrieve_threshold_fallback():
     # High threshold yields none; fallback inside retrieve should still return something
     results = store.retrieve("anything", top_k=2, threshold=0.9, file_ids=["A"])
     assert len(results) == 2
+
+
+def test_faiss_retrieve_teacher_query_prioritizes_schedule_chunks():
+    embedder = DummyEmbedder()
+    docs = [
+        Document(
+            page_content="PEC1008 Kinh te chinh tri, giang vien Nguyen Van A, thu 4, tiet 7-9",
+            metadata={"file_id": "PHU_LUC_TKB_HKII.pdf", "source": "PHU LUC THOI KHOA BIEU HKII"},
+        ),
+        Document(
+            page_content="Tai lieu tom tat chung khong co thong tin giang vien lop hoc.",
+            metadata={"file_id": "general_notes.pdf", "source": "GENERAL"},
+        ),
+    ]
+    store = FAISSVectorStore([], embedder)
+    # Keep non-schedule chunk slightly higher in vector score so this test verifies heuristic boost.
+    store.add_documents_with_embeddings(docs, np.array([[0.80, 0.20], [1.00, 0.00]], dtype="float32"))
+
+    results = store.retrieve("mon kinh te chinh tri ki nay co nhung ai day", top_k=1, threshold=0.0)
+    assert len(results) == 1
+    assert results[0].metadata["file_id"] == "PHU_LUC_TKB_HKII.pdf"
+
+
+def test_faiss_retrieve_non_schedule_query_still_penalizes_schedule_chunks():
+    embedder = DummyEmbedder()
+    docs = [
+        Document(
+            page_content="Day la bang lich hoc theo thu tiet cho nhieu mon.",
+            metadata={"file_id": "PHU_LUC_TKB_HKII.pdf", "source": "PHU LUC THOI KHOA BIEU HKII"},
+        ),
+        Document(
+            page_content="Thong tin tong quan khong lien quan den lich hoc.",
+            metadata={"file_id": "general_notes.pdf", "source": "GENERAL"},
+        ),
+    ]
+    store = FAISSVectorStore([], embedder)
+    # Same base score; schedule penalty should push timetable chunk lower for non-schedule query.
+    store.add_documents_with_embeddings(docs, np.array([[1.00, 0.00], [1.00, 0.00]], dtype="float32"))
+
+    results = store.retrieve("cho toi thong tin tong quan chuong trinh", top_k=1, threshold=0.0)
+    assert len(results) == 1
+    assert results[0].metadata["file_id"] == "general_notes.pdf"
+
+
+def test_faiss_vector_snapshot_roundtrip(tmp_path):
+    embedder = DummyEmbedder()
+    docs = [
+        Document(page_content="alpha", metadata={"file_id": "A", "index": 1}),
+        Document(page_content="beta", metadata={"file_id": "B", "index": 2}),
+    ]
+    embeddings = np.array([[1.0, 0.0], [0.2, 0.8]], dtype="float32")
+
+    store = FAISSVectorStore([], embedder)
+    store.add_documents_with_embeddings(docs, embeddings)
+
+    snapshot_file = tmp_path / "global_snapshot.pkl"
+    saved = store.save_snapshot(snapshot_file, metadata={"resource_signature": "sig-1"})
+    assert saved is True
+    assert snapshot_file.exists()
+
+    restored = FAISSVectorStore([], embedder)
+    meta = restored.load_snapshot(snapshot_file, expected_signature="sig-1")
+    assert isinstance(meta, dict)
+    assert meta.get("resource_signature") == "sig-1"
+    assert len(restored.documents) == 2
+    assert restored.documents[0].page_content == "alpha"
+
+    results = restored.retrieve("alpha", top_k=1, threshold=0.0)
+    assert len(results) == 1
+    assert results[0].metadata["file_id"] == "A"
+
+
+def test_faiss_vector_snapshot_rejects_signature_mismatch(tmp_path):
+    embedder = DummyEmbedder()
+    store = FAISSVectorStore([], embedder)
+    store.add_documents_with_embeddings(
+        [Document(page_content="x", metadata={"file_id": "A", "index": 1})],
+        np.array([[1.0, 0.0]], dtype="float32"),
+    )
+
+    snapshot_file = tmp_path / "snapshot.pkl"
+    assert store.save_snapshot(snapshot_file, metadata={"resource_signature": "sig-good"}) is True
+
+    restored = FAISSVectorStore([], embedder)
+    meta = restored.load_snapshot(snapshot_file, expected_signature="sig-bad")
+    assert meta is None
+    assert restored.documents == []
+
+
+def test_faiss_vector_snapshot_handles_recursive_metadata(tmp_path):
+    embedder = DummyEmbedder()
+    cyclic_meta = {"file_id": "A", "index": 1}
+    cyclic_meta["self"] = cyclic_meta
+
+    store = FAISSVectorStore([], embedder)
+    store.add_documents_with_embeddings(
+        [Document(page_content="recursive", metadata=cyclic_meta)],
+        np.array([[1.0, 0.0]], dtype="float32"),
+    )
+
+    snapshot_file = tmp_path / "snapshot_recursive.pkl"
+    assert store.save_snapshot(snapshot_file, metadata={"resource_signature": "sig-recursive"}) is True
+
+    restored = FAISSVectorStore([], embedder)
+    meta = restored.load_snapshot(snapshot_file, expected_signature="sig-recursive")
+    assert isinstance(meta, dict)
+    assert len(restored.documents) == 1
+    nested = restored.documents[0].metadata.get("self")
+    assert isinstance(nested, dict)
+    assert nested.get("self") == "<cycle>"

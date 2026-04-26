@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import json
@@ -150,11 +150,19 @@ def _classify_error(err: Exception) -> str:
 
 def _validate_advisor_content(answer: str) -> Tuple[bool, Dict[str, bool]]:
     norm = _norm(answer)
+    malformed_course_parentheses = bool(
+        re.search(
+            r"^\s*[-*]\s*[A-Z]{2,4}\d{3,4}[A-Z]?\s*-\s*[^\n]*\([a-zà-ỹ]",
+            answer or "",
+            flags=re.MULTILINE,
+        )
+    )
     checks = {
-        "has_missing": any(k in norm for k in ["thiếu", "thieu", "tín chỉ", "tin chi"]),
-        "has_courses": any(k in norm for k in ["môn", "mon", "học phần", "hoc phan"]),
-        "has_opened": any(k in norm for k in ["mở", "mo", "lớp", "lop", "học kỳ", "hoc ky"]),
-        "has_schedule": any(k in norm for k in ["lịch", "lich", "thứ", "ca ", "tiết", "tiet"]),
+        "has_missing": any(k in norm for k in ["thiáº¿u", "thieu", "tÃ­n chá»‰", "tin chi"]),
+        "has_courses": any(k in norm for k in ["mÃ´n", "mon", "há»c pháº§n", "hoc phan"]),
+        "has_opened": any(k in norm for k in ["má»Ÿ", "mo", "lá»›p", "lop", "há»c ká»³", "hoc ky"]),
+        "has_schedule": any(k in norm for k in ["lá»‹ch", "lich", "thá»©", "ca ", "tiáº¿t", "tiet"]),
+        "no_malformed_course_parentheses": not malformed_course_parentheses,
     }
     return all(checks.values()), checks
 
@@ -199,7 +207,7 @@ def run_matrix(limit: int | None, run_deep: bool, deep_programs: List[str], rati
 
     registry = server._scan_curriculum_programs(force_refresh=False)  # noqa: SLF001
     deep_set = set(deep_programs)
-    query = "Mình còn thiếu bao nhiêu tín chỉ, thiếu môn nào theo chương trình này, môn nào đang mở kỳ này và gợi ý lịch học phù hợp."
+    query = "MÃ¬nh cÃ²n thiáº¿u bao nhiÃªu tÃ­n chá»‰, thiáº¿u mÃ´n nÃ o theo chÆ°Æ¡ng trÃ¬nh nÃ y, mÃ´n nÃ o Ä‘ang má»Ÿ ká»³ nÃ y vÃ  gá»£i Ã½ lá»‹ch há»c phÃ¹ há»£p."
 
     results: List[ProgramResult] = []
     errors_summary: Dict[str, int] = {}
@@ -403,3 +411,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

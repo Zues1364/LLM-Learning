@@ -1,13 +1,296 @@
 ﻿
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo, isValidElement } from "react";
 import DOMPurify from "dompurify";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import "./style.css";
 
-const API_BASE = "http://127.0.0.1:9000";
+const DEFAULT_API_BASE = "http://127.0.0.1:9000";
+const ENV_API_BASE =
+  typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE
+    ? String(import.meta.env.VITE_API_BASE).trim()
+    : "";
+const inferApiBase = () => {
+  if (typeof window === "undefined") return DEFAULT_API_BASE;
+  const protocol = window.location.protocol || "http:";
+  const host = window.location.hostname || "127.0.0.1";
+  return `${protocol}//${host}:9000`;
+};
+const API_BASE = ENV_API_BASE || inferApiBase();
+const APP_AUTH_CALLBACK_URI = `${API_BASE}/api/auth/google/callback`;
+const MAIL_CONNECT_CALLBACK_URI = `${API_BASE}/api/mail/connect/callback`;
 const createSessionId = () =>
   (crypto?.randomUUID ? crypto.randomUUID() : `session-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+
+const normalizeQueryForIntent = (text) =>
+  String(text || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+
+const stripSourceFooterFromMessage = (value) => {
+  const text = String(value || "");
+  if (!text.trim()) return text;
+
+  const normalizeLine = (line) =>
+    normalizeQueryForIntent(line)
+      .replace(/^[>\s\-\*\+`#]+/g, "")
+      .replace(/[^a-z0-9.\-:\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const isSourceHeader = (line) => {
+    const norm = normalizeLine(line);
+    if (!norm) return false;
+    const tokens = norm.split(" ").filter(Boolean);
+    const first = tokens[0] || "";
+    const hasNguonLead = first.startsWith("ngu");
+    const hasTham = tokens.some((token) => token.startsWith("tham"));
+    const hasChieu = tokens.some((token) => token.startsWith("chi"));
+    const hasKhao = tokens.some((token) => token.startsWith("kha"));
+    if (hasNguonLead && ((hasTham && hasChieu) || hasKhao)) return true;
+    if (norm === "nguon" || norm === "nguon:" || norm.startsWith("nguon tham chieu") || norm.startsWith("nguon tham khao")) {
+      return true;
+    }
+    return false;
+  };
+
+  const looksLikeSourceItem = (line) => {
+    const raw = String(line || "").trim();
+    if (!raw) return true;
+    if (/^(?:[-*]\s*)?\[\d+\]\s+.+$/.test(raw)) return true;
+    const norm = normalizeLine(raw);
+    return ["pdf", "html", "sheet", "page", "line", "chunk", ".xlsx", ".doc", ".ppt"].some((token) =>
+      norm.includes(token)
+    );
+  };
+
+  const trimRightBlankLines = (arr) => {
+    const cloned = [...arr];
+    while (cloned.length && !String(cloned[cloned.length - 1] || "").trim()) cloned.pop();
+    return cloned;
+  };
+
+  const lines = text.split("\n");
+  let end = lines.length - 1;
+  while (end >= 0 && !String(lines[end] || "").trim()) end -= 1;
+  if (end < 0) return "";
+
+  const tailNorm = normalizeLine(lines[end]);
+  if (tailNorm.startsWith("nguon:") && looksLikeSourceItem(lines[end])) {
+    const kept = lines.slice(0, end);
+    while (kept.length && !String(kept[kept.length - 1] || "").trim()) kept.pop();
+    return kept.join("\n");
+  }
+
+  let headerIdx = -1;
+  for (let i = end; i >= 0; i -= 1) {
+    if (isSourceHeader(lines[i])) {
+      headerIdx = i;
+      break;
+    }
+  }
+  if (headerIdx < 0) {
+    // Fallback: remove trailing [n] source lines, even if header is OCR-broken.
+    let tail = end;
+    let tailSourceCount = 0;
+    while (tail >= 0) {
+      const raw = String(lines[tail] || "").trim();
+      if (!raw) {
+        tail -= 1;
+        continue;
+      }
+      if (!looksLikeSourceItem(raw)) break;
+      tailSourceCount += 1;
+      tail -= 1;
+    }
+    if (tailSourceCount >= 2) {
+      const beforeTailNorm = tail >= 0 ? normalizeLine(lines[tail]) : "";
+      if (
+        !beforeTailNorm ||
+        beforeTailNorm.startsWith("ngu") ||
+        beforeTailNorm.includes("tham chi") ||
+        beforeTailNorm.includes("tham kha")
+      ) {
+        return trimRightBlankLines(lines.slice(0, Math.max(0, tail))).join("\n");
+      }
+    }
+    return text;
+  }
+
+  const trailing = lines.slice(headerIdx + 1, end + 1).filter((line) => String(line || "").trim());
+  if (!trailing.length) return lines.slice(0, headerIdx).join("\n").trimEnd();
+
+  const sourceLikeCount = trailing.filter((line) => looksLikeSourceItem(line)).length;
+  if (sourceLikeCount >= Math.max(1, Math.floor(trailing.length * 0.6))) {
+    return lines.slice(0, headerIdx).join("\n").trimEnd();
+  }
+
+  return text;
+};
+
+const citationDisplayLabel = (citation, fallbackIndex) => {
+  const sourceFile = String(citation?.source_file || "").trim();
+  const chunk = Number.isInteger(citation?.chunk_index) ? citation.chunk_index : null;
+  const page = Number.isInteger(citation?.page) ? citation.page : null;
+  const idx = Number.isInteger(citation?.id) ? citation.id : fallbackIndex + 1;
+  const locationParts = [];
+  if (page !== null) locationParts.push(`Page ${page}`);
+  if (chunk !== null) locationParts.push(`Chunk ${chunk}`);
+  if (sourceFile && locationParts.length > 0) return `[${idx}] ${sourceFile} - ${locationParts.join(" - ")}`;
+  if (locationParts.length > 0) return `[${idx}] ${locationParts.join(" - ")}`;
+  if (sourceFile) return `[${idx}] ${sourceFile}`;
+  return `[${idx}] Nguồn ${idx}`;
+};
+
+const citationAnchorLabel = (citation, fallbackIndex) => {
+  const idx = Number.isInteger(citation?.id) ? citation.id : fallbackIndex + 1;
+  const page = Number.isInteger(citation?.page) ? citation.page : null;
+  const chunk = Number.isInteger(citation?.chunk_index) ? citation.chunk_index : null;
+  if (page !== null) return `[${idx}] Tr.${page}`;
+  if (chunk !== null) return `[${idx}] Chunk ${chunk}`;
+
+  const excerpt = String(citation?.excerpt || "");
+  const classMatch = excerpt.match(/\b([A-Z]{2,4}\d{3,4}[A-Z]?\s*\d{1,3})\b/);
+  if (classMatch) return `[${idx}] ${classMatch[1].replace(/\s+/g, " ").trim()}`;
+
+  return `[${idx}] nguồn`;
+};
+
+const normalizeCitationMatchText = (value) =>
+  normalizeQueryForIntent(value)
+    .replace(/[^a-z0-9.\-\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const CITATION_STOPWORDS = new Set([
+  "la", "va", "cua", "cho", "voi", "trong", "theo", "nay", "kia", "do", "den", "tu", "mot",
+  "cac", "nhung", "duoc", "se", "da", "co", "khong", "neu", "thi", "ban", "toi", "chung",
+  "em", "anh", "chi", "day", "rang", "nhu", "de", "o", "tai", "ve", "hay", "roi", "van",
+  "coi", "nua", "luon", "them", "rat", "qua", "tren", "duoi", "sau", "truoc", "giua",
+  "the", "a", "an", "the", "and", "or", "of", "to", "in", "for", "on", "is", "are", "was",
+  "were", "be", "been", "being", "with", "by", "as", "that", "this", "these", "those",
+]);
+
+const tokenizeCitationMatchText = (value) =>
+  normalizeCitationMatchText(value)
+    .split(" ")
+    .filter((token) => token.length >= 2)
+    .filter((token) => !CITATION_STOPWORDS.has(token))
+    .filter((token) => !/^\d$/.test(token));
+
+const FORCE_CITATION_KEYWORDS = [
+  "ielts",
+  "toeic",
+  "toefl",
+  "vstep",
+  "aptis",
+  "jlpt",
+  "nat-test",
+  "j-test",
+];
+
+const extractNodePlainText = (node) => {
+  if (node == null || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map((item) => extractNodePlainText(item)).join(" ");
+  if (isValidElement(node)) return extractNodePlainText(node.props?.children);
+  return "";
+};
+
+const matchLineCitations = (lineText, citations, maxMatches = 2) => {
+  const line = String(lineText || "").trim();
+  if (!line || !Array.isArray(citations) || !citations.length) return [];
+
+  const lineNorm = normalizeCitationMatchText(line);
+  const lineTokens = tokenizeCitationMatchText(line);
+  if (!lineTokens.length) return [];
+  const lineTokenSet = new Set(lineTokens);
+  const lineUpper = line.toUpperCase();
+  const lineCodes = lineUpper.match(/\b[A-Z]{2,4}\d{3,4}[A-Z]?\b/g) || [];
+  const forceKeywords = FORCE_CITATION_KEYWORDS.filter((key) => lineNorm.includes(key));
+  const hasStrongSignal =
+    lineCodes.length > 0 ||
+    /\b(?:ielts|toeic|toefl|gpa|tin\s*chi|phong|ca|thu|lop|gv|giang\s*v(i|ie)n)\b/i.test(line) ||
+    /\d/.test(line);
+
+  const scored = [];
+  for (let index = 0; index < citations.length; index += 1) {
+    const citation = citations[index] || {};
+    const excerpt = String(citation.excerpt || "");
+    const source = String(citation.source_file || "");
+    const haystack = `${excerpt} ${source}`.trim();
+    const hayNorm = normalizeCitationMatchText(haystack);
+    if (forceKeywords.length > 0 && !forceKeywords.some((key) => hayNorm.includes(key))) {
+      continue;
+    }
+    const hayTokens = tokenizeCitationMatchText(haystack);
+    if (!hayTokens.length) continue;
+    const hayTokenSet = new Set(hayTokens);
+
+    let score = 0;
+    for (const token of lineTokenSet) {
+      if (hayTokenSet.has(token)) score += 1;
+    }
+
+    const citationUpper = haystack.toUpperCase();
+    if (lineCodes.length) {
+      for (const code of lineCodes) {
+        if (citationUpper.includes(code)) score += 4;
+      }
+    }
+
+    if (score <= 0) continue;
+    scored.push({ citation, score, index });
+  }
+
+  scored.sort((a, b) => (b.score - a.score) || (a.index - b.index));
+  const topScore = scored[0]?.score || 0;
+  const dynamicFloor = topScore >= 5 ? topScore - 2 : topScore >= 3 ? topScore - 1 : topScore;
+  const minScore = hasStrongSignal ? 2 : 3;
+  const threshold = Math.max(minScore, dynamicFloor);
+  const filtered = scored.filter((item) => item.score >= threshold);
+  return filtered.slice(0, maxMatches).map((item) => item.citation);
+};
+
+const shouldSkipCitationLine = (lineText) => {
+  const line = String(lineText || "").trim();
+  if (!line) return true;
+  const norm = normalizeCitationMatchText(line);
+  if (!norm) return true;
+
+  const hasCourseCode = /\b[A-Z]{2,4}\d{3,4}[A-Z]?\b/.test(String(line).toUpperCase());
+  const hasDigit = /\d/.test(line);
+  const endsWithColon = /[:：]\s*$/.test(line);
+  const sectionHeading = /^\s*\d+\)\s*[^\d:]+:?$/i.test(line);
+  const courseTitleHeading = /^\s*(?:[-*]\s*)?[A-Z]{2,4}\d{3,4}[A-Z]?\s*-\s*[^:]+$/i.test(line);
+  const hasScheduleDetailSignal = /\b(thu|ca|phong|gv|giang vien|lop)\b/.test(norm);
+
+  if (endsWithColon && !hasCourseCode && !hasDigit) return true;
+  if (sectionHeading && !hasCourseCode) return true;
+  if (courseTitleHeading && !hasScheduleDetailSignal) return true;
+
+  const headingPhrases = [
+    "chao ban",
+    "duoi day",
+    "lich hoc theo tung mon",
+    "cac lop cua giang vien",
+    "goi y lich",
+    "goi y",
+    "luu y",
+    "thieu tin chi",
+    "mon con thieu uu tien",
+    "gpa projection",
+    "nguon tham chieu",
+    "nguon tham khao",
+    "nguon",
+  ];
+  if (headingPhrases.some((phrase) => norm === phrase || norm.startsWith(`${phrase} `))) {
+    return true;
+  }
+
+  return false;
+};
 
 const readJson = (key, fallback) => {
   if (typeof localStorage === "undefined") return fallback;
@@ -86,8 +369,10 @@ async function deleteSessionApi(sessionId) {
 }
 
 // --- Resource API ---
-async function fetchResources() {
-  const res = await fetch(`${API_BASE}/api/resources`);
+async function fetchResources(sessionId) {
+  const url = new URL(`${API_BASE}/api/resources`);
+  if (sessionId) url.searchParams.set("session_id", sessionId);
+  const res = await fetch(url.toString(), { credentials: "include" });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -99,50 +384,153 @@ async function fetchPrograms(refresh = false) {
   return res.json();
 }
 
-async function uploadResourcePdf(file) {
-  const form = new FormData();
-  form.append("file", file);
-  const res = await fetch(`${API_BASE}/api/resources/pdf`, { method: "POST", body: form });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
-}
-
-async function uploadResourcePdfs(files) {
+async function uploadResourceFiles(files, sessionId) {
   const form = new FormData();
   files.forEach((f) => form.append("files", f));
-  const res = await fetch(`${API_BASE}/api/resources/pdfs`, { method: "POST", body: form });
+  if (sessionId) form.append("session_id", sessionId);
+  const res = await fetch(`${API_BASE}/api/resources/upload`, { method: "POST", credentials: "include", body: form });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
-async function uploadResourceHtml(file) {
-  const form = new FormData();
-  form.append("file", file);
-  const res = await fetch(`${API_BASE}/api/resources/html`, { method: "POST", body: form });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
-}
-
-async function uploadResourceHtmls(files) {
-  const form = new FormData();
-  files.forEach((f) => form.append("files", f));
-  const res = await fetch(`${API_BASE}/api/resources/htmls`, { method: "POST", body: form });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
-}
-
-async function addResourceUrl(url) {
+async function addResourceUrl(url, sessionId) {
   const res = await fetch(`${API_BASE}/api/resources/url`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url }),
+    credentials: "include",
+    body: JSON.stringify({ url, session_id: sessionId || null }),
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
-async function deleteResource(id) {
-  const res = await fetch(`${API_BASE}/api/resources/${encodeURIComponent(id)}`, { method: "DELETE" });
+async function deleteResource(id, sessionId) {
+  const url = new URL(`${API_BASE}/api/resources/${encodeURIComponent(id)}`);
+  if (sessionId) url.searchParams.set("session_id", sessionId);
+  const res = await fetch(url.toString(), { method: "DELETE", credentials: "include" });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function fetchMailStatus(sessionId) {
+  const url = new URL(`${API_BASE}/api/mail/status`);
+  url.searchParams.set("session_id", sessionId || "");
+  const res = await fetch(url.toString(), { credentials: "include" });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function fetchAuthMe() {
+  const res = await fetch(`${API_BASE}/api/auth/me`, { credentials: "include" });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function startGoogleSignIn(sessionId, redirectUri) {
+  const res = await fetch(`${API_BASE}/api/auth/google/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({
+      session_id: sessionId || null,
+      redirect_uri: redirectUri || null,
+    }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function logoutGoogleSignIn() {
+  const res = await fetch(`${API_BASE}/api/auth/logout`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function startMailConnect(sessionId, redirectUri) {
+  const res = await fetch(`${API_BASE}/api/mail/connect/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({
+      session_id: sessionId,
+      redirect_uri: redirectUri || null,
+    }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function disconnectMail(sessionId) {
+  const res = await fetch(`${API_BASE}/api/mail/disconnect`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ session_id: sessionId }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function fetchMailWhitelist(sessionId) {
+  const url = new URL(`${API_BASE}/api/mail/whitelist`);
+  url.searchParams.set("session_id", sessionId || "");
+  const res = await fetch(url.toString(), { credentials: "include" });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function setMailWhitelist(sessionId, senders) {
+  const res = await fetch(`${API_BASE}/api/mail/whitelist`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ session_id: sessionId, senders }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function pollMailNow(sessionId) {
+  const res = await fetch(`${API_BASE}/api/mail/poll`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ session_id: sessionId }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function fetchMailCandidates(sessionId, status = "") {
+  const url = new URL(`${API_BASE}/api/mail/candidates`);
+  url.searchParams.set("session_id", sessionId || "");
+  if (status) url.searchParams.set("status", status);
+  const res = await fetch(url.toString(), { credentials: "include" });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function applyMailCandidate(sessionId, candidateId) {
+  const res = await fetch(`${API_BASE}/api/mail/candidates/${encodeURIComponent(candidateId)}/apply`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ session_id: sessionId }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function rejectMailCandidate(sessionId, candidateId, reason = "") {
+  const res = await fetch(`${API_BASE}/api/mail/candidates/${encodeURIComponent(candidateId)}/reject`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ session_id: sessionId, reason }),
+  });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -174,6 +562,7 @@ export default function App() {
   const [inputStr, setInputStr] = useState("");
   const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [loadingFrame, setLoadingFrame] = useState(0);
   const [allowWeb, setAllowWeb] = useState(false);
   const [historyList, setHistoryList] = useState([]);
   const [uploadedFile, setUploadedFile] = useState(null);
@@ -196,8 +585,26 @@ export default function App() {
   const [showResourcePanel, setShowResourcePanel] = useState(false);
   const [resourceUrl, setResourceUrl] = useState("");
   const [resourceLoading, setResourceLoading] = useState(false);
+  const [resourceSearch, setResourceSearch] = useState("");
+  const [resourceListVisible, setResourceListVisible] = useState(false);
+  const [resourceListExpanded, setResourceListExpanded] = useState(false);
+  const [mailStatus, setMailStatus] = useState(null);
+  const [mailCandidates, setMailCandidates] = useState([]);
+  const [mailWhitelistText, setMailWhitelistText] = useState("");
+  const [mailLoading, setMailLoading] = useState(false);
+  const [mailError, setMailError] = useState("");
+  const [expandedMailCandidates, setExpandedMailCandidates] = useState({});
+  const [authState, setAuthState] = useState({
+    loading: false,
+    authenticated: false,
+    email: "",
+    userId: "",
+    name: "",
+  });
+  const [mailMode, setMailMode] = useState("session");
   const [programs, setPrograms] = useState([]);
   const [programsLoading, setProgramsLoading] = useState(false);
+  const [citationViewer, setCitationViewer] = useState(null);
   const [selectedProgramBySession, setSelectedProgramBySession] = useState(() => {
     if (
       storedSelectedPrograms &&
@@ -220,10 +627,10 @@ export default function App() {
   });
 
   const fileInputRef = useRef(null);
-  const resourceFileInputRef = useRef(null);
-  const resourceHtmlInputRef = useRef(null);
+  const resourceUploadInputRef = useRef(null);
   const chatEndRef = useRef(null);
   const filesRef = useRef([]);
+  const authPopupPollRef = useRef(null);
 
   const normalizeFileIds = useCallback((ids) => Array.from(new Set((ids || []).filter(Boolean))), []);
 
@@ -236,6 +643,31 @@ export default function App() {
     pendingProgramBySession[currentSession] || currentSelectedProgramId || programs[0]?.id || "";
   const currentProgramDisplayName =
     programs.find((p) => p.id === currentSelectedProgramId)?.display_name || currentSelectedProgramId || "";
+  const mailConnected = Boolean(mailStatus?.connected);
+  const isGoogleSignedIn = Boolean(authState?.authenticated);
+  const canManageMail = isGoogleSignedIn;
+  const mailPendingCount = Number(mailStatus?.candidate_counts?.pending || 0);
+  const mailStatusText = useMemo(() => {
+    const modeLabel = mailMode === "user" ? "User" : "Session";
+    if (mailConnected) {
+      const connectedEmail = mailStatus?.email || authState?.email || "unknown";
+      return `Mode: ${modeLabel} | Connected: ${connectedEmail} | Pending: ${mailPendingCount}`;
+    }
+    if (authState?.authenticated) {
+      const signedInEmail = authState?.email || "unknown";
+      return `Mode: ${modeLabel} | Signed in: ${signedInEmail} | Gmail chưa kết nối`;
+    }
+    return `Mode: ${modeLabel} | Chưa đăng nhập Google`;
+  }, [authState, mailConnected, mailMode, mailPendingCount, mailStatus]);
+  const filteredResources = useMemo(() => {
+    const keyword = resourceSearch.trim().toLowerCase();
+    if (!keyword) return resources;
+    return resources.filter((res) => String(res?.name || "").toLowerCase().includes(keyword));
+  }, [resources, resourceSearch]);
+  const resourcePreviewLimit = 8;
+  const visibleResources = resourceListExpanded
+    ? filteredResources
+    : filteredResources.slice(0, resourcePreviewLimit);
   const groupedPrograms = useMemo(() => {
     const groups = new Map();
 
@@ -295,14 +727,43 @@ export default function App() {
     }
   }, []);
 
-  const refreshResources = useCallback(async () => {
+  const refreshResources = useCallback(async (sessionId = currentSession) => {
     try {
-      const data = await fetchResources();
+      const data = await fetchResources(sessionId);
       setResources(data);
     } catch (err) {
       console.error("Fetch resources failed", err);
     }
-  }, []);
+  }, [currentSession]);
+
+  const refreshMailState = useCallback(async (sessionId = currentSession) => {
+    if (!sessionId) return;
+    try {
+      setMailError("");
+      setAuthState((prev) => ({ ...prev, loading: true }));
+      const [authData, statusData, whitelistData, candidateData] = await Promise.all([
+        fetchAuthMe().catch(() => ({ authenticated: false })),
+        fetchMailStatus(sessionId),
+        fetchMailWhitelist(sessionId),
+        fetchMailCandidates(sessionId, "pending"),
+      ]);
+      setAuthState({
+        loading: false,
+        authenticated: Boolean(authData?.authenticated),
+        email: authData?.user?.email || "",
+        userId: authData?.user?.id || "",
+        name: authData?.user?.name || "",
+      });
+      setMailStatus(statusData);
+      setMailWhitelistText((whitelistData?.senders || []).join("\n"));
+      setMailCandidates(candidateData?.candidates || []);
+      setMailMode(Boolean(authData?.authenticated) ? "user" : "session");
+    } catch (err) {
+      console.error("Fetch mail state failed", err);
+      setMailError(err.message || "Không tải được trạng thái mail.");
+      setAuthState((prev) => ({ ...prev, loading: false }));
+    }
+  }, [currentSession]);
 
   const refreshPrograms = useCallback(async (refresh = false) => {
     try {
@@ -346,13 +807,98 @@ export default function App() {
 
   useEffect(() => {
     refreshFiles();
-    refreshResources();
+    refreshResources(currentSession);
+    refreshMailState(currentSession);
     refreshPrograms(false);
-  }, [refreshFiles, refreshResources, refreshPrograms]);
+  }, [currentSession, refreshFiles, refreshResources, refreshMailState, refreshPrograms]);
+
+  useEffect(() => {
+    const handleWindowFocus = () => {
+      refreshMailState(currentSession);
+      refreshResources(currentSession);
+    };
+    window.addEventListener("focus", handleWindowFocus);
+    return () => window.removeEventListener("focus", handleWindowFocus);
+  }, [currentSession, refreshMailState, refreshResources]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [currentMessages, loading]);
+
+  useEffect(() => {
+    if (!loading) {
+      setLoadingFrame(0);
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setLoadingFrame((prev) => (prev + 1) % 3);
+    }, 280);
+    return () => window.clearInterval(timer);
+  }, [loading]);
+
+  const clearAuthPopupPoll = useCallback(() => {
+    if (authPopupPollRef.current) {
+      window.clearInterval(authPopupPollRef.current);
+      authPopupPollRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => clearAuthPopupPoll();
+  }, [clearAuthPopupPoll]);
+
+  const openOAuthPopupAndRefresh = useCallback(
+    (authUrl) => {
+      if (!authUrl) throw new Error("Thiếu URL xác thực OAuth.");
+
+      clearAuthPopupPoll();
+      const popup = window.open(authUrl, "google-oauth", "width=540,height=760");
+      if (!popup) {
+        window.open(authUrl, "_blank", "noopener,noreferrer");
+        setTimeout(() => {
+          refreshMailState(currentSession);
+          refreshResources(currentSession);
+        }, 2000);
+        return;
+      }
+
+      const startedAt = Date.now();
+      authPopupPollRef.current = window.setInterval(() => {
+        const timedOut = Date.now() - startedAt > 5 * 60 * 1000;
+        Promise.resolve(fetchAuthMe())
+          .then(async (authData) => {
+            if (authData?.authenticated) {
+              clearAuthPopupPoll();
+              try {
+                if (!popup.closed) popup.close();
+              } catch {
+                /* ignore */
+              }
+              await refreshMailState(currentSession);
+              await refreshResources(currentSession);
+              return;
+            }
+
+            if (!popup.closed && !timedOut) return;
+            clearAuthPopupPoll();
+            await refreshMailState(currentSession);
+            await refreshResources(currentSession);
+          })
+          .catch(async (err) => {
+            if (!popup.closed && !timedOut) return;
+            clearAuthPopupPoll();
+            try {
+              await refreshMailState(currentSession);
+              await refreshResources(currentSession);
+            } catch (refreshErr) {
+              console.error("Refresh after OAuth popup failed", refreshErr);
+            }
+            console.error("OAuth popup polling failed", err);
+          });
+      }, 1000);
+    },
+    [clearAuthPopupPoll, currentSession, refreshMailState, refreshResources]
+  );
 
   const handleNewChat = () => {
     const newId = createSessionId();
@@ -479,23 +1025,23 @@ export default function App() {
     }
   };
 
-  const handleResourceUpload = async (e) => {
+  const handleResourceFilesUpload = async (e) => {
     const selected = e.target.files ? Array.from(e.target.files) : [];
     if (!selected.length) return;
+    const sessionId = currentSession;
     setResourceLoading(true);
     try {
-      if (selected.length === 1) {
-        await uploadResourcePdf(selected[0]);
-        alert("Upload PDF thành công: 1 file.");
-      } else {
-        const resp = await uploadResourcePdfs(selected);
-        const uploadedCount = Number(resp?.uploaded_count ?? resp?.uploaded?.length ?? 0);
-        const errorCount = Number(resp?.error_count ?? resp?.errors?.length ?? 0);
-        const topError = resp?.errors?.[0]?.error || "";
-        const suffix = errorCount > 0 && topError ? ` (lỗi đầu: ${topError})` : "";
-        alert(`Upload PDF xong: thành công ${uploadedCount}, lỗi ${errorCount}.${suffix}`);
-      }
-      await refreshResources();
+      const resp = await uploadResourceFiles(selected, sessionId);
+      const uploadedCount = Number(resp?.uploaded_count ?? resp?.uploaded?.length ?? 0);
+      const errorCount = Number(resp?.error_count ?? resp?.errors?.length ?? 0);
+      const uploadedPdfCount = Number(resp?.uploaded_pdf_count ?? 0);
+      const uploadedHtmlCount = Number(resp?.uploaded_html_count ?? 0);
+      const topError = resp?.errors?.[0]?.error || "";
+      const suffix = errorCount > 0 && topError ? ` (lỗi đầu: ${topError})` : "";
+      alert(
+        `Upload resource xong: thành công ${uploadedCount} (PDF: ${uploadedPdfCount}, HTML: ${uploadedHtmlCount}), lỗi ${errorCount}.${suffix}`
+      );
+      await refreshResources(sessionId);
     } catch (err) {
       alert(`Lỗi upload resource: ${err.message}`);
     } finally {
@@ -504,38 +1050,14 @@ export default function App() {
     }
   };
 
-  const handleResourceHtmlUpload = async (e) => {
-    const selected = e.target.files ? Array.from(e.target.files) : [];
-    if (!selected.length) return;
-    setResourceLoading(true);
-    try {
-      if (selected.length === 1) {
-        await uploadResourceHtml(selected[0]);
-        alert("Upload HTML thành công: 1 file.");
-      } else {
-        const resp = await uploadResourceHtmls(selected);
-        const uploadedCount = Number(resp?.uploaded_count ?? resp?.uploaded?.length ?? 0);
-        const errorCount = Number(resp?.error_count ?? resp?.errors?.length ?? 0);
-        const topError = resp?.errors?.[0]?.error || "";
-        const suffix = errorCount > 0 && topError ? ` (lỗi đầu: ${topError})` : "";
-        alert(`Upload HTML xong: thành công ${uploadedCount}, lỗi ${errorCount}.${suffix}`);
-      }
-      await refreshResources();
-    } catch (err) {
-      alert(`Lỗi upload HTML: ${err.message}`);
-    } finally {
-      setResourceLoading(false);
-      e.target.value = null;
-    }
-  };
-
   const handleAddUrl = async () => {
     if (!resourceUrl.trim()) return;
+    const sessionId = currentSession;
     setResourceLoading(true);
     try {
-      await addResourceUrl(resourceUrl);
+      await addResourceUrl(resourceUrl, sessionId);
       setResourceUrl("");
-      await refreshResources();
+      await refreshResources(sessionId);
     } catch (err) {
       alert(`Lỗi thêm URL: ${err.message}`);
     } finally {
@@ -545,15 +1067,213 @@ export default function App() {
 
   const handleDeleteResource = async (id) => {
     if (!window.confirm("Bạn có chắc muốn xóa tài nguyên này?")) return;
+    const sessionId = currentSession;
     setResourceLoading(true);
     try {
-      await deleteResource(id);
-      await refreshResources();
+      await deleteResource(id, sessionId);
+      await refreshResources(sessionId);
     } catch (err) {
       alert(`Lỗi xóa: ${err.message}`);
     } finally {
       setResourceLoading(false);
     }
+  };
+
+  const handleMailConnect = async () => {
+    const sessionId = currentSession;
+    if (!sessionId) return;
+    if (!canManageMail) {
+      const msg = "Vui lòng đăng nhập Google ở khu vực User trước khi kết nối Gmail.";
+      setMailError(msg);
+      alert(msg);
+      return;
+    }
+    setMailLoading(true);
+    setMailError("");
+    try {
+      const data = await startMailConnect(sessionId, MAIL_CONNECT_CALLBACK_URI);
+      if (data?.auth_url) {
+        openOAuthPopupAndRefresh(data.auth_url);
+      } else {
+        alert("Không tạo được URL OAuth.");
+      }
+    } catch (err) {
+      alert(`Lỗi kết nối Gmail: ${err.message}`);
+    } finally {
+      setMailLoading(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    const sessionId = currentSession;
+    if (!sessionId) return;
+    setMailLoading(true);
+    setMailError("");
+    try {
+      const data = await startGoogleSignIn(sessionId, APP_AUTH_CALLBACK_URI);
+      if (data?.auth_url) {
+        openOAuthPopupAndRefresh(data.auth_url);
+      } else {
+        throw new Error("Không tạo được URL đăng nhập Google.");
+      }
+    } catch (err) {
+      setMailError(err.message || "Đăng nhập Google thất bại.");
+      alert(`Lỗi đăng nhập Google: ${err.message}`);
+    } finally {
+      setMailLoading(false);
+    }
+  };
+
+  const handleGoogleSignOut = async () => {
+    setMailLoading(true);
+    setMailError("");
+    try {
+      await logoutGoogleSignIn();
+      await refreshMailState(currentSession);
+      await refreshResources(currentSession);
+    } catch (err) {
+      setMailError(err.message || "Đăng xuất Google thất bại.");
+      alert(`Lỗi đăng xuất Google: ${err.message}`);
+    } finally {
+      setMailLoading(false);
+    }
+  };
+
+  const handleMailDisconnect = async () => {
+    const sessionId = currentSession;
+    if (!sessionId) return;
+    if (!canManageMail) {
+      const msg = "Vui lòng đăng nhập Google trước khi ngắt kết nối Gmail.";
+      setMailError(msg);
+      alert(msg);
+      return;
+    }
+    setMailLoading(true);
+    setMailError("");
+    try {
+      await disconnectMail(sessionId);
+      await refreshMailState(sessionId);
+    } catch (err) {
+      setMailError(err.message || "Ngắt kết nối Gmail thất bại.");
+      alert(`Lỗi ngắt kết nối Gmail: ${err.message}`);
+    } finally {
+      setMailLoading(false);
+    }
+  };
+
+  const handleMailPollNow = async () => {
+    const sessionId = currentSession;
+    if (!sessionId) return;
+    if (!canManageMail) {
+      const msg = "Vui lòng đăng nhập Google trước khi poll mail.";
+      setMailError(msg);
+      alert(msg);
+      return;
+    }
+    setMailLoading(true);
+    setMailError("");
+    try {
+      await pollMailNow(sessionId);
+      await refreshMailState(sessionId);
+      await refreshResources(sessionId);
+    } catch (err) {
+      setMailError(err.message || "Poll mail thất bại.");
+      alert(`Lỗi poll mail: ${err.message}`);
+    } finally {
+      setMailLoading(false);
+    }
+  };
+
+  const handleSaveWhitelist = async () => {
+    const sessionId = currentSession;
+    if (!sessionId) return;
+    if (!canManageMail) {
+      const msg = "Vui lòng đăng nhập Google trước khi lưu whitelist.";
+      setMailError(msg);
+      alert(msg);
+      return;
+    }
+    const senders = mailWhitelistText
+      .split("\n")
+      .map((v) => v.trim())
+      .filter(Boolean);
+    setMailLoading(true);
+    setMailError("");
+    try {
+      await setMailWhitelist(sessionId, senders);
+      await refreshMailState(sessionId);
+    } catch (err) {
+      setMailError(err.message || "Lưu whitelist thất bại.");
+      alert(`Lỗi lưu whitelist: ${err.message}`);
+    } finally {
+      setMailLoading(false);
+    }
+  };
+
+  const handleApplyCandidate = async (candidateId) => {
+    const sessionId = currentSession;
+    if (!sessionId) return;
+    if (!canManageMail) {
+      const msg = "Vui lòng đăng nhập Google trước khi apply candidate.";
+      setMailError(msg);
+      alert(msg);
+      return;
+    }
+    setMailLoading(true);
+    setMailError("");
+    try {
+      await applyMailCandidate(sessionId, candidateId);
+      await refreshMailState(sessionId);
+      await refreshResources(sessionId);
+    } catch (err) {
+      setMailError(err.message || "Apply candidate thất bại.");
+      alert(`Lỗi apply candidate: ${err.message}`);
+    } finally {
+      setMailLoading(false);
+    }
+  };
+
+  const handleRejectCandidate = async (candidateId) => {
+    const sessionId = currentSession;
+    if (!sessionId) return;
+    if (!canManageMail) {
+      const msg = "Vui lòng đăng nhập Google trước khi reject candidate.";
+      setMailError(msg);
+      alert(msg);
+      return;
+    }
+    setMailLoading(true);
+    setMailError("");
+    try {
+      await rejectMailCandidate(sessionId, candidateId, "manual_reject");
+      await refreshMailState(sessionId);
+    } catch (err) {
+      setMailError(err.message || "Reject candidate thất bại.");
+      alert(`Lỗi reject candidate: ${err.message}`);
+    } finally {
+      setMailLoading(false);
+    }
+  };
+
+  const toggleCandidateExpanded = (candidateId) => {
+    setExpandedMailCandidates((prev) => ({ ...prev, [candidateId]: !prev[candidateId] }));
+  };
+
+  const getGmailOpenUrl = (candidate, mailboxEmail) => {
+    const mailbox = String(mailboxEmail || "").trim();
+    // Gmail may rewrite authuser=email into /mail/u/<email>/... and return Temporary Error (404).
+    // Keep authuser only when it is a numeric account index (0,1,2...), otherwise open in current profile account.
+    const query = /^\d+$/.test(mailbox) ? `?authuser=${encodeURIComponent(mailbox)}` : "";
+    const base = `https://mail.google.com/mail/${query}`;
+    const threadId = String(candidate?.thread_id || "").trim();
+    if (threadId) {
+      return `${base}#inbox/${encodeURIComponent(threadId)}`;
+    }
+    const messageId = String(candidate?.message_id || "").trim();
+    if (messageId) {
+      return `${base}#all/${encodeURIComponent(messageId)}`;
+    }
+    return "";
   };
 
   const handleProgramChange = (sessionId, programId) => {
@@ -597,8 +1317,9 @@ export default function App() {
 
     const query = inputStr;
 
-    const transcriptNeedPattern = /(bang diem|tin chi|gpa|lap lich|lich hoc|mon con thieu|thieu mon|hoc ky sau)/i;
-    if (!selectedFileIds.length && transcriptNeedPattern.test(query)) {
+    const normalizedQuery = normalizeQueryForIntent(query);
+    const transcriptNeedPattern = /(bang diem|tin chi|gpa|lap lich|lich hoc|mon con thieu|con thieu mon|thieu mon|hoc ky sau)/;
+    if (!selectedFileIds.length && transcriptNeedPattern.test(normalizedQuery)) {
       updateMessages(sessionId, (prev) => [
         ...prev,
         {
@@ -660,7 +1381,8 @@ export default function App() {
       }
 
       const answer = typeof response?.answer === "string" ? response.answer : "Không có phản hồi.";
-      updateMessages(sessionId, (prev) => [...prev, { type: "bot", text: answer }]);
+      const citations = Array.isArray(response?.citations) ? response.citations : [];
+      updateMessages(sessionId, (prev) => [...prev, { type: "bot", text: answer, citations }]);
       const updatedHist = await fetchHistory(sessionId);
       setHistoryList(updatedHist);
     } catch (err) {
@@ -760,9 +1482,51 @@ export default function App() {
 
         </div>
 
-        <div className="profile">
-          <div className="avatar">U</div>
-          <div style={{ fontSize: "14px", fontWeight: "500" }}>User</div>
+        <div className="profile" style={{ alignItems: "stretch" }}>
+          <div className="avatar">
+            {((authState?.name || authState?.email || "U").trim().charAt(0) || "U").toUpperCase()}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: "14px", fontWeight: "600" }}>
+              {authState?.authenticated ? (authState?.name || "Google User") : "Guest User"}
+            </div>
+            <div
+              style={{
+                fontSize: 12,
+                color: "var(--text-secondary)",
+                marginTop: 2,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+              title={authState?.authenticated ? (authState?.email || "") : "Chưa đăng nhập Google"}
+            >
+              {authState?.authenticated ? (authState?.email || "Đã đăng nhập") : "Chưa đăng nhập Google"}
+            </div>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
+              Auth: {isGoogleSignedIn ? "Google" : "Guest"} | Mail: {mailConnected ? "Connected" : "Not connected"}
+            </div>
+            <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+              <button
+                className="chip-btn"
+                onClick={handleGoogleSignIn}
+                disabled={mailLoading || authState?.authenticated}
+                style={{ flex: 1, justifyContent: "center", fontSize: 12, padding: "6px 8px" }}
+                title="Đăng nhập Google"
+              >
+                <i className="fab fa-google"></i> Sign in
+              </button>
+              <button
+                className="chip-btn"
+                onClick={handleGoogleSignOut}
+                disabled={mailLoading || !authState?.authenticated}
+                style={{ flex: 1, justifyContent: "center", fontSize: 12, padding: "6px 8px" }}
+                title="Đăng xuất Google"
+              >
+                <i className="fas fa-sign-out-alt"></i> Sign out
+              </button>
+            </div>
+          </div>
         </div>
       </aside>
 
@@ -770,7 +1534,7 @@ export default function App() {
         {showResourcePanel && (
           <div className="resource-panel" style={{
             position: "absolute",
-            top: 20, right: 20, bottom: 20, width: 350,
+            top: 20, right: 20, bottom: 20, width: "min(380px, calc(100% - 40px))",
             background: "var(--bg-secondary)",
             border: "1px solid var(--glass-border)",
             borderRadius: 12,
@@ -778,49 +1542,31 @@ export default function App() {
             padding: 20,
             zIndex: 100,
             display: "flex", flexDirection: "column",
-            boxShadow: "0 4px 30px rgba(0,0,0,0.5)"
+            boxShadow: "0 4px 30px rgba(0,0,0,0.5)",
+            overflow: "hidden",
           }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 15 }}>
               <h3 style={{ margin: 0 }}>Tài nguyên RAG</h3>
               <button className="icon-btn" onClick={() => setShowResourcePanel(false)}><i className="fas fa-times"></i></button>
             </div>
 
-            <div style={{ flex: 1, overflowY: "auto", marginBottom: 15 }}>
-              {resourceLoading && <div style={{ textAlign: "center", color: "#94a3b8" }}><i className="fas fa-circle-notch fa-spin"></i> Loading...</div>}
-              {!resourceLoading && resources.map((res, i) => (
-                <div key={i} style={{
-                  padding: "8px 10px",
-                  background: "rgba(255,255,255,0.05)",
-                  borderRadius: 6,
-                  marginBottom: 6,
-                  fontSize: "13px",
-                  display: "flex",
-                  alignItems: "center"
-                }}>
-                  <i className={`fas ${res.type === 'url' ? 'fa-globe' : 'fa-file-pdf'}`} style={{ marginRight: 8, color: res.type === 'url' ? '#60a5fa' : '#f87171' }}></i>
-                  <span style={{ wordBreak: "break-all", flex: 1 }}>{res.name}</span>
-                  <button onClick={() => handleDeleteResource(res.id)} style={{ background: "transparent", border: "none", color: "#94a3b8", cursor: "pointer", padding: "0 5px" }}>
-                    <i className="fas fa-trash-alt"></i>
-                  </button>
-                </div>
-              ))}
-              {!resourceLoading && resources.length === 0 && <div style={{ color: "#64748b", fontSize: 13 }}>Chưa có tài nguyên nào.</div>}
-            </div>
-
-            <div style={{ borderTop: "1px solid var(--glass-border)", paddingTop: 15 }}>
-              <div style={{ marginBottom: 10, fontSize: 13, fontWeight: "bold" }}>Thêm PDF Sổ tay</div>
-              <input type="file" ref={resourceFileInputRef} accept="application/pdf" multiple style={{ display: "none" }} onChange={handleResourceUpload} />
-              <button className="chip-btn" onClick={() => resourceFileInputRef.current?.click()} style={{ width: "100%", justifyContent: "center" }}>
-                <i className="fas fa-upload"></i> Upload PDF
+            <div className="resource-panel-scroll">
+            <div>
+              <div style={{ marginBottom: 10, fontSize: 13, fontWeight: "bold" }}>Thêm Resource Local (PDF/HTML)</div>
+              <input
+                type="file"
+                ref={resourceUploadInputRef}
+                accept="application/pdf,.pdf,text/html,.html,.htm"
+                multiple
+                style={{ display: "none" }}
+                onChange={handleResourceFilesUpload}
+              />
+              <button className="chip-btn" onClick={() => resourceUploadInputRef.current?.click()} style={{ width: "100%", justifyContent: "center" }}>
+                <i className="fas fa-upload"></i> Upload Resource
               </button>
-              <div style={{ marginTop: 6, color: "#64748b", fontSize: 12 }}>Bạn có thể chọn nhiều file PDF cùng lúc.</div>
-
-              <div style={{ marginBottom: 10, marginTop: 15, fontSize: 13, fontWeight: "bold" }}>Thêm HTML Local</div>
-              <input type="file" ref={resourceHtmlInputRef} accept=".html,.htm" multiple style={{ display: "none" }} onChange={handleResourceHtmlUpload} />
-              <button className="chip-btn" onClick={() => resourceHtmlInputRef.current?.click()} style={{ width: "100%", justifyContent: "center" }}>
-                <i className="fas fa-code"></i> Upload HTML
-              </button>
-              <div style={{ marginTop: 6, color: "#64748b", fontSize: 12 }}>Bạn có thể chọn nhiều file HTML cùng lúc.</div>
+              <div style={{ marginTop: 6, color: "#64748b", fontSize: 12 }}>
+                Bạn có thể chọn nhiều file PDF/HTML cùng lúc. Hệ thống tự phân loại theo đuôi file.
+              </div>
 
               <div style={{ marginTop: 15, marginBottom: 10, fontSize: 13, fontWeight: "bold" }}>Thêm Link Quy chế</div>
               <div style={{ display: "flex", gap: 5 }}>
@@ -842,6 +1588,253 @@ export default function App() {
                   <i className="fas fa-plus"></i>
                 </button>
               </div>
+
+                <div style={{ marginTop: 18, paddingTop: 12, borderTop: "1px solid var(--glass-border)" }}>
+                <div style={{ marginBottom: 10, fontSize: 13, fontWeight: "bold" }}>Mail Updates (Review-first)</div>
+                <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                  <button className="chip-btn" onClick={handleMailPollNow} disabled={mailLoading || !canManageMail} style={{ flex: 1 }}>
+                    <i className={`fas ${mailLoading ? "fa-circle-notch fa-spin" : "fa-sync-alt"}`}></i> Poll now
+                  </button>
+                  <button className="chip-btn" onClick={handleSaveWhitelist} disabled={mailLoading || !canManageMail} style={{ flex: 1 }}>
+                    <i className="fas fa-save"></i> Save whitelist
+                  </button>
+                </div>
+                {!canManageMail && (
+                  <div style={{ color: "#fbbf24", fontSize: 12, marginBottom: 8 }}>
+                    Đăng nhập Google ở khung User để bật tính năng Mail Updates.
+                  </div>
+                )}
+                <div style={{ color: "#94a3b8", fontSize: 12, marginBottom: 8 }}>
+                  {mailStatusText}
+                </div>
+                {mailError && (
+                  <div
+                    style={{
+                      color: "#fca5a5",
+                      fontSize: 12,
+                      marginBottom: 8,
+                      padding: "6px 8px",
+                      background: "rgba(127,29,29,0.22)",
+                      border: "1px solid rgba(248,113,113,0.18)",
+                      borderRadius: 6,
+                    }}
+                  >
+                    {mailError}
+                  </div>
+                )}
+                <textarea
+                  value={mailWhitelistText}
+                  onChange={(e) => setMailWhitelistText(e.target.value)}
+                  rows={3}
+                  placeholder={"Whitelist senders/domains (mỗi dòng 1 giá trị)\nvd: daotao@uet.edu.vn\nuet.edu.vn"}
+                  style={{
+                    width: "100%",
+                    resize: "vertical",
+                    background: "rgba(0,0,0,0.2)",
+                    border: "1px solid var(--glass-border)",
+                    borderRadius: 6,
+                    padding: "8px 10px",
+                    color: "white",
+                    fontSize: 12,
+                    marginBottom: 10,
+                  }}
+                />
+                <div className="mail-candidate-list">
+                  {(mailCandidates || []).map((item) => {
+                    const openMailUrl = getGmailOpenUrl(item, mailStatus?.email || authState?.email || "");
+                    return (
+                    <div key={item.id} className="mail-candidate-card">
+                      <div className="mail-candidate-subject">{item.subject || "(No subject)"}</div>
+                      <div className="mail-candidate-meta">
+                        {item.sender_email || "unknown sender"} | artifacts: {(item.artifacts || []).length}
+                      </div>
+                      <div className="mail-candidate-classification">
+                        intent: {item?.classification?.intent || item?.intent || "other"} | confidence:{" "}
+                        {Number(item?.classification?.confidence ?? item?.confidence ?? 0).toFixed(2)} | source:{" "}
+                        {item?.classification?.source || "rule"}
+                      </div>
+
+                      {!!item.snippet && (
+                        <div className="mail-candidate-preview">
+                          <strong>Preview:</strong> {item.snippet}
+                        </div>
+                      )}
+
+                      <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+                        <button
+                          className="chip-btn"
+                          onClick={() => toggleCandidateExpanded(item.id)}
+                          style={{ flex: 1 }}
+                          title="Xem đầy đủ nội dung để review trước khi Apply"
+                        >
+                          <i className={`fas ${expandedMailCandidates[item.id] ? "fa-chevron-up" : "fa-chevron-down"}`}></i>{" "}
+                          {expandedMailCandidates[item.id] ? "Ẩn chi tiết" : "Xem chi tiết"}
+                        </button>
+                      </div>
+
+                      {expandedMailCandidates[item.id] && (
+                        <div className="mail-candidate-details">
+                          {!!item.sender_display && (
+                            <div className="mail-candidate-detail-row">
+                              <strong>From:</strong> {item.sender_display}
+                            </div>
+                          )}
+                          {!!item.body_preview && (
+                            <div className="mail-candidate-detail-row">
+                              <strong>Body:</strong>
+                              <div className="mail-candidate-detail-text">{item.body_preview}</div>
+                            </div>
+                          )}
+                          {Array.isArray(item?.classification?.reasons) && item.classification.reasons.length > 0 && (
+                            <div className="mail-candidate-detail-row">
+                              <strong>Match reasons:</strong>
+                              <div className="mail-candidate-detail-text">
+                                {item.classification.reasons.join(" | ")}
+                              </div>
+                            </div>
+                          )}
+                          {Array.isArray(item?.artifacts) && item.artifacts.length > 0 && (
+                            <div className="mail-candidate-detail-row">
+                              <strong>Artifacts:</strong>
+                              <div className="mail-candidate-detail-text">
+                                {item.artifacts
+                                  .map((artifact) => artifact?.name || artifact?.url || artifact?.type || "artifact")
+                                  .join(" | ")}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      <div style={{ display: "flex", gap: 6 }}>
+                        {!!openMailUrl && (
+                          <a
+                            className="chip-btn"
+                            href={openMailUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{ flex: 1, textAlign: "center", textDecoration: "none" }}
+                            title={`Mở email gốc trong Gmail (${mailStatus?.email || authState?.email || "current account"})`}
+                          >
+                            <i className="fas fa-external-link-alt"></i> Open Gmail
+                          </a>
+                        )}
+                        <button className="chip-btn" onClick={() => handleApplyCandidate(item.id)} disabled={mailLoading || !canManageMail} style={{ flex: 1 }}>
+                          <i className="fas fa-check"></i> Apply
+                        </button>
+                        <button className="chip-btn" onClick={() => handleRejectCandidate(item.id)} disabled={mailLoading || !canManageMail} style={{ flex: 1 }}>
+                          <i className="fas fa-times"></i> Reject
+                        </button>
+                      </div>
+                    </div>
+                  );})}
+                  {(!mailCandidates || mailCandidates.length === 0) && (
+                    <div style={{ color: "#64748b", fontSize: 12 }}>
+                      {mailLoading
+                        ? "Đang tải trạng thái mail..."
+                        : authState.loading
+                          ? "Đang kiểm tra đăng nhập Google..."
+                          : "Không có candidate pending."}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div style={{ marginTop: 18, paddingTop: 12, borderTop: "1px solid var(--glass-border)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, gap: 8 }}>
+                  <button
+                    className="chip-btn"
+                    onClick={() => setResourceListVisible((v) => !v)}
+                    style={{ flex: 1, justifyContent: "center" }}
+                  >
+                    <i className={`fas ${resourceListVisible ? "fa-folder-open" : "fa-folder"}`}></i>{" "}
+                    {resourceListVisible ? "Ẩn danh sách tài nguyên" : "Hiện danh sách tài nguyên"}
+                  </button>
+                  <div style={{ fontSize: 11, color: "#94a3b8", whiteSpace: "nowrap" }}>
+                    {filteredResources.length}/{resources.length}
+                  </div>
+                </div>
+                {resourceListVisible && (
+                  <>
+                    <div className="resource-search-wrap">
+                      <i className="fas fa-search resource-search-icon"></i>
+                      <input
+                        value={resourceSearch}
+                        onChange={(e) => setResourceSearch(e.target.value)}
+                        placeholder="Tìm theo tên file..."
+                        className="resource-search-input"
+                      />
+                    </div>
+                    <div className="resource-list-compact">
+                      {resourceLoading && (
+                        <div style={{ textAlign: "center", color: "#94a3b8", fontSize: 12 }}>
+                          <i className="fas fa-circle-notch fa-spin"></i> Loading...
+                        </div>
+                      )}
+                      {!resourceLoading && visibleResources.map((res, i) => (
+                        <div key={res.id || i} className="resource-item-card">
+                          <i
+                            className={`fas ${res.type === "url" ? "fa-globe" : "fa-file-pdf"} resource-item-icon`}
+                            style={{ color: res.type === "url" ? "#60a5fa" : "#f87171" }}
+                          ></i>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div className="resource-item-name" title={res.name}>{res.name}</div>
+                            <div style={{ marginTop: 4, display: "flex", gap: 6 }}>
+                              <span
+                                style={{
+                                  fontSize: 11,
+                                  padding: "2px 6px",
+                                  borderRadius: 999,
+                                  background:
+                                    res.scope === "global"
+                                      ? "rgba(96,165,250,0.18)"
+                                      : res.scope === "user"
+                                        ? "rgba(250,204,21,0.18)"
+                                        : "rgba(74,222,128,0.18)",
+                                  color:
+                                    res.scope === "global"
+                                      ? "#93c5fd"
+                                      : res.scope === "user"
+                                        ? "#fde68a"
+                                        : "#86efac",
+                                  border: "1px solid rgba(255,255,255,0.08)",
+                                }}
+                              >
+                                {res.scope === "global" ? "Global" : res.scope === "user" ? "Private" : "Session"}
+                              </span>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => handleDeleteResource(res.id)}
+                            style={{ background: "transparent", border: "none", color: "#94a3b8", cursor: "pointer", padding: "0 5px" }}
+                            title="Xóa tài nguyên"
+                          >
+                            <i className="fas fa-trash-alt"></i>
+                          </button>
+                        </div>
+                      ))}
+                      {!resourceLoading && filteredResources.length === 0 && (
+                        <div style={{ color: "#64748b", fontSize: 12 }}>
+                          {resources.length === 0 ? "Chưa có tài nguyên nào." : "Không tìm thấy tài nguyên phù hợp."}
+                        </div>
+                      )}
+                    </div>
+                    {!resourceLoading && filteredResources.length > resourcePreviewLimit && (
+                      <button
+                        className="chip-btn"
+                        onClick={() => setResourceListExpanded((v) => !v)}
+                        style={{ width: "100%", justifyContent: "center", marginTop: 8 }}
+                      >
+                        <i className={`fas ${resourceListExpanded ? "fa-chevron-up" : "fa-chevron-down"}`}></i>{" "}
+                        {resourceListExpanded
+                          ? "Thu gọn danh sách"
+                          : `Xem thêm ${filteredResources.length - resourcePreviewLimit} file`}
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
             </div>
           </div>
         )}
@@ -871,7 +1864,78 @@ export default function App() {
 
                   {msg.type === "bot" ? (
                     <div className="msg-content bot-text">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.text}</ReactMarkdown>
+                      {(() => {
+                        const displayText = stripSourceFooterFromMessage(msg.text);
+                        const citations = Array.isArray(msg.citations) ? msg.citations : [];
+                        const resolveLineCitations = (lineText, maxMatches = 2) => {
+                          const normalizedLine = String(lineText || "").trim();
+                          if (!normalizedLine || !citations.length) return [];
+                          if (shouldSkipCitationLine(normalizedLine)) return [];
+                          return matchLineCitations(normalizedLine, citations, maxMatches);
+                        };
+                        const markdownComponents = citations.length
+                          ? {
+                              li: ({ children, ...props }) => {
+                                const lineText = extractNodePlainText(children);
+                                const matchedCitations = resolveLineCitations(lineText, 2);
+                                return (
+                                  <li {...props}>
+                                    <span className="md-line-source-wrap">
+                                      <span className="md-line-source-text">{children}</span>
+                                      {matchedCitations.length > 0 && (
+                                        <span className="md-line-source-badges">
+                                          {matchedCitations.map((citation, matchIndex) => (
+                                            <button
+                                              key={`${citation?.id || matchIndex}-${citation?.source_file || "source"}-${matchIndex}`}
+                                              className="md-line-source-badge"
+                                              onClick={() => setCitationViewer(citation)}
+                                              title={citationDisplayLabel(citation, matchIndex)}
+                                            >
+                                              {citationAnchorLabel(citation, matchIndex)}
+                                            </button>
+                                          ))}
+                                        </span>
+                                      )}
+                                    </span>
+                                  </li>
+                                );
+                              },
+                              p: ({ children, ...props }) => {
+                                const lineText = extractNodePlainText(children);
+                                const matchedCitations = resolveLineCitations(lineText, 1);
+                                return (
+                                  <p {...props}>
+                                    <span className="md-line-source-wrap">
+                                      <span className="md-line-source-text">{children}</span>
+                                      {matchedCitations.length > 0 && (
+                                        <span className="md-line-source-badges">
+                                          {matchedCitations.map((citation, matchIndex) => (
+                                            <button
+                                              key={`${citation?.id || matchIndex}-${citation?.source_file || "source"}-p-${matchIndex}`}
+                                              className="md-line-source-badge"
+                                              onClick={() => setCitationViewer(citation)}
+                                              title={citationDisplayLabel(citation, matchIndex)}
+                                            >
+                                              {citationAnchorLabel(citation, matchIndex)}
+                                            </button>
+                                          ))}
+                                        </span>
+                                      )}
+                                    </span>
+                                  </p>
+                                );
+                              },
+                            }
+                          : undefined;
+
+                        return (
+                          <>
+                            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                              {displayText}
+                            </ReactMarkdown>
+                          </>
+                        );
+                      })()}
                     </div>
                   ) : (
                     <div className={`msg-content ${isUser ? "user-text" : "bot-text"}`}>
@@ -895,17 +1959,40 @@ export default function App() {
             })
           )}
           {loading && (
-            <div className="message-wrapper">
+            <div className="message-wrapper loading-response-wrapper">
               <div className="msg-avatar bot">
                 <i className="fas fa-bolt"></i>
               </div>
-              <div className="msg-content bot-text" style={{ color: "#94a3b8" }}>
-                <i className="fas fa-circle-notch fa-spin"></i> Ðang suy nghi...
+              <div className="msg-content bot-text loading-response-bubble">
+                <div className="loading-response-text">
+                  Đang suy nghĩ{".".repeat(loadingFrame + 1)}
+                </div>
+                <div className="loading-dot-row" aria-live="polite" aria-label="Assistant is typing">
+                  <span className={`loading-dot ${loadingFrame === 0 ? "active" : ""}`}>•</span>
+                  <span className={`loading-dot ${loadingFrame === 1 ? "active" : ""}`}>•</span>
+                  <span className={`loading-dot ${loadingFrame === 2 ? "active" : ""}`}>•</span>
+                </div>
               </div>
             </div>
           )}
           <div ref={chatEndRef}></div>
         </div>
+
+        {citationViewer && (
+          <div className="citation-viewer-backdrop" onClick={() => setCitationViewer(null)}>
+            <div className="citation-viewer-card" onClick={(e) => e.stopPropagation()}>
+              <div className="citation-viewer-head">
+                <strong>{citationDisplayLabel(citationViewer, 0)}</strong>
+                <button className="icon-btn" onClick={() => setCitationViewer(null)} title="Đóng">
+                  <i className="fas fa-times"></i>
+                </button>
+              </div>
+              <div className="citation-viewer-body">
+                <pre>{String(citationViewer?.excerpt || "(Không có nội dung nguồn)")}</pre>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="input-region">
           <div className="input-container">

@@ -13,8 +13,8 @@ import mcp_server.server as server  # noqa: E402
 
 def _make_docs(pdf_name: str) -> list[Document]:
     return [
-        Document(page_content="alpha", metadata={"file_id": pdf_name, "file_name": pdf_name, "index": 1}),
-        Document(page_content="beta", metadata={"file_id": pdf_name, "file_name": pdf_name, "index": 2}),
+        Document(page_content="alpha", metadata={"file_id": pdf_name, "file_name": pdf_name, "index": 1, "page": 3}),
+        Document(page_content="beta", metadata={"file_id": pdf_name, "file_name": pdf_name, "index": 2, "page": 4}),
     ]
 
 
@@ -104,7 +104,121 @@ def test_retrieve_chunks_formats_context(tmp_path, monkeypatch):
     contexts = server.retrieve_chunks("alpha", top_k=1, file_ids=[pdf_path.name])
     assert len(contexts) >= 1
     assert all("Chunk" in ctx for ctx in contexts)
+    assert all("Page" in ctx for ctx in contexts)
     assert any("alpha" in ctx for ctx in contexts)
+
+
+def test_retrieve_chunks_with_explicit_file_ids_does_not_merge_scoped_resources(monkeypatch):
+    captured: dict[str, list[str]] = {}
+
+    class DummyStore:
+        def retrieve(self, query, top_k=25, file_ids=None):
+            captured["file_ids"] = list(file_ids or [])
+            return []
+
+    monkeypatch.setattr(server, "_build_teacher_lookup_context", lambda **kwargs: [])
+    monkeypatch.setattr(server, "_init_vector_store", lambda: None)
+    monkeypatch.setattr(server, "_store", DummyStore())
+    monkeypatch.setattr(server, "_ensure_file_loaded", lambda fid: fid)
+    monkeypatch.setattr(server.resource_loader, "set_vector_store", lambda store: None)
+    monkeypatch.setattr(server.resource_loader, "load_resources", lambda session_id=None, user_id=None: None)
+    monkeypatch.setattr(
+        server.resource_loader,
+        "get_loaded_resource_ids",
+        lambda session_id=None, user_id=None, include_global=True: {"global_ctdt.html", "session_notes.pdf"},
+    )
+
+    server.retrieve_chunks(
+        "toi con thieu nhung mon nao",
+        top_k=5,
+        file_ids=["bang_diem1.pdf"],
+        session_id="session_1",
+    )
+
+    assert captured.get("file_ids") == ["bang_diem1.pdf"]
+
+
+def test_retrieve_chunks_uses_current_scope_resource_ids(monkeypatch):
+    captured: dict[str, list[str]] = {}
+
+    class DummyStore:
+        def retrieve(self, query, top_k=25, file_ids=None):
+            captured["file_ids"] = list(file_ids or [])
+            return []
+
+    monkeypatch.setattr(server, "_build_teacher_lookup_context", lambda **kwargs: [])
+    monkeypatch.setattr(server, "_init_vector_store", lambda: None)
+    monkeypatch.setattr(server, "_store", DummyStore())
+    monkeypatch.setattr(server.resource_loader, "set_vector_store", lambda store: None)
+    monkeypatch.setattr(server.resource_loader, "load_resources", lambda session_id=None, user_id=None: None)
+    monkeypatch.setattr(
+        server.resource_loader,
+        "get_loaded_resource_ids",
+        lambda session_id=None, user_id=None, include_global=True: (_ for _ in ()).throw(
+            AssertionError("retrieve_chunks must not rely on loaded_resource_ids")
+        ),
+    )
+
+    def fake_list_scope_resource_ids(session_id=None, user_id=None):
+        if session_id or user_id:
+            return {"session_live.pdf"}
+        return {"global_live.pdf"}
+
+    monkeypatch.setattr(server.resource_loader, "list_scope_resource_ids", fake_list_scope_resource_ids)
+
+    server.retrieve_chunks(
+        "toi can lich hoc",
+        top_k=5,
+        file_ids=[],
+        session_id="session_1",
+    )
+
+    assert set(captured.get("file_ids") or []) == {"global_live.pdf", "session_live.pdf"}
+
+
+def test_retrieve_chunks_teacher_lookup_shortcuts_before_vector_store(monkeypatch):
+    monkeypatch.setattr(
+        server,
+        "_build_teacher_lookup_context",
+        lambda question, top_k=25, session_id=None, user_id=None: ["[SCHEDULE PEC1008] K69I-CS1 PEC1008 ... Ngô Thái Hà"],
+    )
+    monkeypatch.setattr(server, "_init_vector_store", lambda: (_ for _ in ()).throw(AssertionError("should not init vector store")))
+
+    res = server.retrieve_chunks("môn kinh tế chính trị kì này có những ai dạy", top_k=25, file_ids=[], session_id="s1")
+    assert res == ["[SCHEDULE PEC1008] K69I-CS1 PEC1008 ... Ngô Thái Hà"]
+
+
+def test_build_teacher_lookup_context_infers_code_and_expands_schedule(monkeypatch):
+    sample_schedule_text = (
+        "K69I-CS1 PEC1008 Kinh tế chính trị Mác – Lênin ...\n"
+        "K69I-CS2 PEC1008 Kinh tế chính trị Mác – Lênin ...\n"
+    )
+    monkeypatch.setattr(
+        server,
+        "_load_best_schedule_text",
+        lambda force_refresh=False, session_id=None, user_id=None: (sample_schedule_text, "PHU_LUC_TKB.pdf"),
+    )
+    monkeypatch.setattr(
+        server,
+        "get_schedule",
+        lambda subject_codes, session_id=None, user_id=None: (
+            '[{"subject_code":"PEC1008","schedule_lines":['
+            '"K69I-CS1 PEC1008 ... Ngô Thái Hà Học 1 ca/10 tuần",'
+            '"K69I-CS2 PEC1008 ... Nguyễn Thị Hồng Sâm Học 1 ca/10 tuần"'
+            '],"note":""}]'
+        ),
+    )
+
+    res = server._build_teacher_lookup_context(
+        question="môn kinh tế chính trị kì này có những ai dạy",
+        top_k=25,
+        session_id="s1",
+        user_id=None,
+    )
+    assert len(res) >= 2
+    assert any("PEC1008" in line for line in res)
+    assert any("Ngô Thái Hà" in line for line in res)
+    assert any("Nguyễn Thị Hồng Sâm" in line for line in res)
 
 
 def test_consult_advisor_prioritizes_explicit_program_id(monkeypatch):
@@ -203,6 +317,269 @@ def test_consult_advisor_prioritizes_explicit_program_id(monkeypatch):
     assert advisor_context["schedule_table_columns"][2] == "Tiết + Thời gian"
 
 
+def test_consult_advisor_does_not_over_suggest_electives_when_only_mandatory_missing(monkeypatch):
+    captured = {}
+
+    class DummyMemory:
+        def get_context(self, query, session_id="default", max_rows=10):
+            return ""
+
+    monkeypatch.setattr(server, "_memory", DummyMemory())
+    monkeypatch.setattr(server, "_load_session_file_ids", lambda session_id: ["mock_transcript.pdf"])
+    monkeypatch.setattr(
+        server,
+        "_load_schedule_time_slot_map",
+        lambda force_refresh=False, session_id=None, user_id=None: ({}, ""),
+    )
+    monkeypatch.setattr(
+        server,
+        "analyze_transcript",
+        lambda ids: json.dumps(
+            {
+                "student_info": {"class": "K67-CS", "major": "Khoa hoc may tinh"},
+                "semesters": [
+                    {"semester_code": "251", "subjects": [{"code": "INT1001", "name": "Nhap mon", "credits": 3, "grade_4": 3.0}]}
+                ],
+                "completed_subjects": [{"code": "INT1001", "name": "Nhap mon", "credits": 3, "grade_4": 3.0}],
+                "overview": {"total_credits_accumulated": 129},
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        server,
+        "compute_missing_subjects",
+        lambda transcript_data, curriculum: {
+            "missing": [{"code": "INT4050", "name": "Khoa luan", "credits": 7}],
+            "completed_map": {},
+            "low_grades": [],
+            "credit_summary": {
+                "transcript_total_credits": 129,
+                "total_required_credits": 136,
+                "total_completed_applicable_credits": 129,
+                "total_missing_credits": 7,
+                "external_credits_applied": [],
+            },
+            "credit_analysis": [
+                {
+                    "block_id": "V.1",
+                    "block_name": "Khoi kien thuc nganh - bat buoc",
+                    "block_type": "required",
+                    "required_credits": 7,
+                    "completed_credits": 0,
+                    "missing_credits": 7,
+                    "candidates": [{"code": "INT4050", "name": "Khoa luan", "credits": 7}],
+                },
+                {
+                    "block_id": "V.2",
+                    "block_name": "Khoi kien thuc nganh - hoc phan tu chon",
+                    "block_type": "elective",
+                    "required_credits": 10,
+                    "completed_credits": 10,
+                    "missing_credits": 0,
+                    "candidates": [{"code": "INT3306", "name": "Web", "credits": 3}],
+                },
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        server,
+        "check_course_schedule",
+        lambda subjects, target_semester=None, class_code=None, session_id=None, user_id=None: [
+            {
+                "code": "INT4050",
+                "offered": True,
+                "snippet": "INT4050 1",
+                "resolved_day": "Thứ 5",
+                "resolved_slot": "2",
+                "resolved_time_range": "09:50 – 12:30",
+                "time_slot_map": {"2": {"period": "Tiết 4-6", "time_range": "09:50 – 12:30"}},
+                "schedule_source_file": "PHU_LUC_TKB.pdf",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        server,
+        "analyze_curriculum",
+        lambda program_hint=None: {
+            "program_name": "cs_2022",
+            "subjects": [],
+            "structure": [],
+            "total_credits": 136,
+            "source_path": None,
+            "notes": "stub",
+        },
+    )
+    monkeypatch.setattr(
+        server,
+        "get_electives_with_schedule",
+        lambda check_schedule=True, program_id=None, session_id=None, user_id=None: json.dumps(
+            {
+                "opened": [
+                    {"code": "INT3306", "name": "Web", "credits": 3, "group": "V.2.1"},
+                    {"code": "INT3323", "name": "IoT", "credits": 3, "group": "V.2.1"},
+                ]
+            }
+        ),
+    )
+
+    class DummyAdvisorAgent:
+        def run(self, prompt):
+            captured["advisor_prompt"] = prompt
+            return type("Resp", (), {"content": "advisor-ok"})()
+
+    monkeypatch.setattr(server, "get_academic_advisor_agent", lambda: DummyAdvisorAgent())
+
+    result = server.consult_advisor(
+        query="theo chuong trinh dao tao toi con thieu bao tin chi va nhung mon gi",
+        file_ids=[],
+        session_id="s200",
+        program_id="cs_2022",
+    )
+    assert result == "advisor-ok"
+
+    context_blob = captured["advisor_prompt"].split("--- CONTEXT ---\n", 1)[1].split("\n--- END ---", 1)[0]
+    advisor_context = json.loads(context_blob)
+    assert advisor_context["missing_subjects"]["recommended"] == [{"code": "INT4050", "name": "Khoa luan", "credits": 7}]
+    assert advisor_context["missing_subjects"]["elective_suggestions"] == []
+
+
+def test_consult_advisor_retries_broad_schedule_for_unresolved_rows(monkeypatch):
+    captured = {}
+    call_log = []
+
+    class DummyMemory:
+        def get_context(self, query, session_id="default", max_rows=10):
+            return ""
+
+    monkeypatch.setattr(server, "_memory", DummyMemory())
+    monkeypatch.setattr(server, "_load_session_file_ids", lambda session_id: ["mock_transcript.pdf"])
+    monkeypatch.setattr(
+        server,
+        "_load_schedule_time_slot_map",
+        lambda force_refresh=False, session_id=None, user_id=None: (
+            {"2": {"period": "Tiết 4-6", "time_range": "09:50 – 12:30"}},
+            "TKB_CV.pdf",
+        ),
+    )
+    monkeypatch.setattr(
+        server,
+        "analyze_transcript",
+        lambda ids: json.dumps(
+            {
+                "student_info": {"class": "K67-CS", "major": "Khoa hoc may tinh"},
+                "semesters": [
+                    {
+                        "semester_code": "251",
+                        "subjects": [{"code": "INT2000", "name": "Mon mau", "credits": 3, "grade_4": 2.5}],
+                    }
+                ],
+                "completed_subjects": [{"code": "INT2000", "name": "Mon mau", "credits": 3}],
+                "overview": {"total_credits_accumulated": 129},
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        server,
+        "compute_missing_subjects",
+        lambda transcript_data, curriculum: {
+            "missing": [{"code": "INT4050", "name": "Khoa luan", "credits": 7}],
+            "completed_map": {},
+            "low_grades": [],
+            "credit_summary": {
+                "transcript_total_credits": 129,
+                "total_required_credits": 136,
+                "total_completed_applicable_credits": 129,
+                "total_missing_credits": 7,
+                "external_credits_applied": [],
+            },
+            "credit_analysis": [
+                {
+                    "block_id": "V.1",
+                    "block_name": "Khoi kien thuc nganh - bat buoc",
+                    "block_type": "required",
+                    "required_credits": 7,
+                    "completed_credits": 0,
+                    "missing_credits": 7,
+                    "candidates": [{"code": "INT4050", "name": "Khoa luan", "credits": 7}],
+                }
+            ],
+        },
+    )
+
+    def fake_check_course_schedule(subjects, target_semester=None, class_code=None, session_id=None, user_id=None):
+        call_log.append({"target_semester": target_semester, "class_code": class_code, "codes": [s.get("code") for s in subjects]})
+        if target_semester is None and class_code is None:
+            return [
+                {
+                    "code": "INT4050",
+                    "offered": True,
+                    "snippet": "INT4050 1",
+                    "resolved_day": "Thứ 5",
+                    "resolved_slot": "2",
+                    "resolved_time_range": "09:50 – 12:30",
+                    "time_slot_map": {"2": {"period": "Tiết 4-6", "time_range": "09:50 – 12:30"}},
+                    "schedule_source_file": "PHU_LUC_TKB.pdf",
+                }
+            ]
+        return [
+            {
+                "code": "INT4050",
+                "offered": True,
+                "snippet": "INT4050 1",
+                "resolved_day": None,
+                "resolved_slot": None,
+                "resolved_time_range": None,
+                "time_slot_map": {"2": {"period": "Tiết 4-6", "time_range": "09:50 – 12:30"}},
+                "schedule_source_file": "PHU_LUC_TKB.pdf",
+            }
+        ]
+
+    monkeypatch.setattr(server, "check_course_schedule", fake_check_course_schedule)
+    monkeypatch.setattr(
+        server,
+        "analyze_curriculum",
+        lambda program_hint=None: {
+            "program_name": "cs_2022",
+            "subjects": [],
+            "structure": [],
+            "total_credits": 136,
+            "source_path": None,
+            "notes": "stub",
+        },
+    )
+    monkeypatch.setattr(
+        server,
+        "get_electives_with_schedule",
+        lambda check_schedule=True, program_id=None, session_id=None, user_id=None: json.dumps({"opened": []}),
+    )
+
+    class DummyAdvisorAgent:
+        def run(self, prompt):
+            captured["advisor_prompt"] = prompt
+            return type("Resp", (), {"content": "advisor-ok"})()
+
+    monkeypatch.setattr(server, "get_academic_advisor_agent", lambda: DummyAdvisorAgent())
+
+    result = server.consult_advisor(
+        query="toi con thieu bao tin chi va mon nao",
+        file_ids=[],
+        session_id="s201",
+        program_id="cs_2022",
+    )
+    assert result == "advisor-ok"
+
+    assert any(c["target_semester"] is not None for c in call_log)
+    assert any(c["target_semester"] is None and c["class_code"] is None for c in call_log)
+
+    context_blob = captured["advisor_prompt"].split("--- CONTEXT ---\n", 1)[1].split("\n--- END ---", 1)[0]
+    advisor_context = json.loads(context_blob)
+    rows = advisor_context.get("schedule_table_rows") or []
+    int4050 = next((r for r in rows if r.get("subject_code") == "INT4050"), None)
+    assert int4050 is not None
+    assert int4050.get("day") == "Thứ 5"
+    assert int4050.get("ca_hoc") == "Ca 2"
+
+
 def test_extract_time_slot_map_parses_standard_table():
     text = """
 | Buoi | Ca | Tiet | Thoi gian hoc | Ghi chu |
@@ -252,6 +629,25 @@ def test_load_schedule_time_slot_map_prefers_official_cv(monkeypatch, tmp_path):
     slot_map, source_file = server._load_schedule_time_slot_map(force_refresh=True)
     assert len(slot_map) == 4
     assert source_file == cv_path.name
+
+
+def test_load_schedule_time_slot_map_uses_default_when_extraction_empty(monkeypatch, tmp_path):
+    annex_path = tmp_path / "PHU LUC THOI KHOA BIEU HKII 2025-2026.pdf"
+    annex_path.write_text("stub", encoding="utf-8")
+
+    monkeypatch.setattr(server, "_collect_schedule_files", lambda resource_dir: [annex_path])
+    monkeypatch.setattr(server, "_SCHEDULE_TIME_SLOT_CACHE", {})
+    monkeypatch.setattr(
+        server,
+        "process_pdf",
+        lambda path: [Document(page_content="INT2041 Lop A Ca 2 Thu 5", metadata={"file_id": Path(path).name, "index": 1})],
+    )
+
+    slot_map, source_file = server._load_schedule_time_slot_map(force_refresh=True)
+    assert source_file == "DEFAULT_UET_TIME_SLOTS"
+    assert slot_map["1"]["time_range"] == "07:00 – 09:40"
+    assert slot_map["2"]["time_range"] == "09:50 – 12:30"
+    assert slot_map["4"]["period"] == "Tiet 10-12"
 
 
 def test_get_schedule_includes_time_slot_map_fields(monkeypatch, tmp_path):
@@ -304,6 +700,26 @@ def test_check_course_schedule_includes_resolved_time_range(monkeypatch):
     assert result[0]["resolved_time_range"] == "16:20 – 19:00"
     assert result[0]["time_slot_map"] == slot_map
     assert result[0]["time_source_file"] == "cv.pdf"
+
+
+def test_check_course_schedule_resolves_slot_even_when_time_map_empty(monkeypatch):
+    monkeypatch.setattr(server, "_init_vector_store", lambda: None)
+    monkeypatch.setattr(server, "_store", object())
+    monkeypatch.setattr(server.resource_loader, "set_vector_store", lambda store: None)
+    monkeypatch.setattr(server.resource_loader, "load_resources", lambda: None)
+    monkeypatch.setattr(server.resource_loader, "loaded_resources", {"dummy"}, raising=False)
+    monkeypatch.setattr(
+        server,
+        "_load_best_schedule_text",
+        lambda force_refresh=False: ("INT2041 2 LT 5 1 206-T", "appendix.pdf"),
+    )
+    monkeypatch.setattr(server, "_load_schedule_time_slot_map", lambda force_refresh=False: ({}, ""))
+
+    result = server.check_course_schedule([{"code": "INT2041"}], target_semester="252")
+    assert result[0]["offered"] is True
+    assert result[0]["resolved_day"] == "Thứ 5"
+    assert result[0]["resolved_slot"] == "1"
+    assert result[0]["resolved_time_range"] is None
 
 
 def test_check_course_schedule_strict_e_suffix_not_offered(monkeypatch):
@@ -416,3 +832,89 @@ def test_compute_missing_subjects_strict_e_suffix(monkeypatch):
     missing_info = server.compute_missing_subjects(transcript_data, curriculum)
     missing_codes = {m.get("code") for m in missing_info.get("missing", [])}
     assert "INT3404E" in missing_codes
+
+
+def test_resolve_course_alias_tool_returns_structured_payload(monkeypatch):
+    class DummyStore:
+        def resolve_course_alias(self, query):
+            return {
+                "matched_subject": {"subject_code": "HIS1001", "subject_name_vi": "Lịch sử Đảng"},
+                "confidence": 0.95,
+                "candidates": [{"subject_code": "HIS1001", "score": 0.95}],
+            }
+
+    monkeypatch.setattr(server, "_ensure_structured_schedule_ingested", lambda session_id=None, user_id=None, force=False: {})
+    monkeypatch.setattr(server, "_get_structured_schedule_store", lambda: DummyStore())
+    monkeypatch.setattr(server, "_get_program_subject_codes", lambda program_id=None, session_id=None: {"HIS1001"})
+
+    payload = json.loads(server.resolve_course_alias("lịch sử đảng", program_id="cs_2022", session_id="s1"))
+    assert payload["matched_subject"]["subject_code"] == "HIS1001"
+    assert payload["confidence"] >= 0.9
+    assert payload["program_id"] == "cs_2022"
+
+
+def test_resolve_course_alias_tool_filters_candidates_by_program_subject_codes(monkeypatch):
+    class DummyStore:
+        def resolve_course_alias(self, query):
+            return {
+                "matched_subject": {"subject_code": "CTE2059", "subject_name_vi": "Đồ họa máy tính"},
+                "confidence": 0.95,
+                "candidates": [
+                    {"subject_code": "CTE2059", "subject_name_vi": "Đồ họa máy tính", "score": 0.95},
+                    {"subject_code": "INT3403", "subject_name_vi": "Đồ họa máy tính", "score": 0.95},
+                ],
+            }
+
+    monkeypatch.setattr(server, "_ensure_structured_schedule_ingested", lambda session_id=None, user_id=None, force=False: {})
+    monkeypatch.setattr(server, "_get_structured_schedule_store", lambda: DummyStore())
+    monkeypatch.setattr(server, "_get_program_subject_codes", lambda program_id=None, session_id=None: {"INT3403"})
+
+    payload = json.loads(server.resolve_course_alias("đồ họa máy tính", program_id="cs_2022", session_id="s1"))
+    assert payload["matched_subject"]["subject_code"] == "INT3403"
+    assert payload["candidates"] == [{"subject_code": "INT3403", "subject_name_vi": "Đồ họa máy tính", "score": 0.95}]
+
+
+def test_get_teachers_by_subject_tool_uses_alias_resolution(monkeypatch):
+    class DummyStore:
+        def resolve_course_alias(self, query):
+            return {
+                "matched_subject": {"subject_code": "PEC1008", "subject_name_vi": "Kinh tế chính trị"},
+                "confidence": 0.88,
+            }
+
+        def get_teachers_by_subject(self, subject_code, semester=None):
+            return {
+                "matched_subject": {"subject_code": subject_code, "subject_name_vi": "Kinh tế chính trị"},
+                "confidence": 1.0,
+                "teachers": ["Ngô Thái Hà"],
+                "rows": [{"subject_code": subject_code, "class_code": "PEC1008 1"}],
+                "source_files": ["PHU_LUC_TKB.pdf"],
+                "coverage_note": "ok",
+            }
+
+    monkeypatch.setattr(server, "_ensure_structured_schedule_ingested", lambda session_id=None, user_id=None, force=False: {})
+    monkeypatch.setattr(server, "_get_structured_schedule_store", lambda: DummyStore())
+
+    payload = json.loads(server.get_teachers_by_subject("kinh tế chính trị", session_id="s1"))
+    assert payload["matched_subject"]["subject_code"] == "PEC1008"
+    assert payload["teachers"] == ["Ngô Thái Hà"]
+    assert payload["rows"]
+
+
+def test_get_classes_by_teacher_tool_returns_rows(monkeypatch):
+    class DummyStore:
+        def get_classes_by_teacher(self, teacher_name, semester=None):
+            return {
+                "matched_teacher": {"query": teacher_name, "canonical_names": [teacher_name]},
+                "confidence": 0.9,
+                "rows": [{"subject_code": "HIS1001", "class_code": "HIS1001 5"}],
+                "source_files": ["PHU_LUC_TKB.pdf"],
+                "coverage_note": "ok",
+            }
+
+    monkeypatch.setattr(server, "_ensure_structured_schedule_ingested", lambda session_id=None, user_id=None, force=False: {})
+    monkeypatch.setattr(server, "_get_structured_schedule_store", lambda: DummyStore())
+
+    payload = json.loads(server.get_classes_by_teacher("Vũ Thị Thu Hà", session_id="s1"))
+    assert payload["rows"][0]["subject_code"] == "HIS1001"
+

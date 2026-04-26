@@ -10,7 +10,8 @@ def _get_client(client: MCPClient | None) -> MCPClient:
     return client or MCPClient()
 
 
-def tool_retrieve(question: str, top_k: int = 15, file_ids: List[str] | None = None,
+def tool_retrieve(question: str, top_k: int = 25, file_ids: List[str] | None = None,
+                  session_id: str | None = None,
                   client: MCPClient | None = None) -> str:
     """
     Retrieve relevant chunks from the PDF store. Use when the question is about the uploaded PDF.
@@ -19,7 +20,7 @@ def tool_retrieve(question: str, top_k: int = 15, file_ids: List[str] | None = N
     mcp = _get_client(client)
     chunks: List[str] = mcp.invoke(
         "retrieve_chunks",
-        {"question": question, "top_k": top_k, "file_ids": file_ids or []},
+        {"question": question, "top_k": top_k, "file_ids": file_ids or [], "session_id": session_id},
     )
     return "\n\n".join(chunks)
 
@@ -59,7 +60,7 @@ def tool_memory_add(session_id: str, query: str, answer: str, chunk_index: int |
     )
 
 
-def tool_compare_pdfs(query: str, file_ids: List[str], top_k: int = 15, client: MCPClient | None = None) -> str:
+def tool_compare_pdfs(query: str, file_ids: List[str], top_k: int = 25, client: MCPClient | None = None) -> str:
     """
     Compare/query across multiple PDFs. Returns combined context per file.
     """
@@ -126,14 +127,14 @@ def tool_consult_advisor(
     return str(result)
 
 
-def tool_get_schedule(subject_codes: List[str], client: MCPClient | None = None) -> str:
+def tool_get_schedule(subject_codes: List[str], session_id: str | None = None, client: MCPClient | None = None) -> str:
     """
     Tim kiem lich hoc (TKB) cho danh sach cac ma mon hoc.
     Tra ve ket qua la cac dong chua ma mon hoc tu file TKB PDF toan truong.
     Input example: ["INT3306", "PEC1008"]
     """
     mcp = _get_client(client)
-    result: Any = mcp.invoke("get_schedule", {"subject_codes": subject_codes})
+    result: Any = mcp.invoke("get_schedule", {"subject_codes": subject_codes, "session_id": session_id})
     # JSON string is returned from server, so we just pass it through/ensure string
     return str(result)
 
@@ -153,7 +154,7 @@ def tool_get_available_programs(refresh: bool = False, client: MCPClient | None 
     return str(result)
 
 
-def tool_get_curriculum_lookup(group_hint: str = None, program_id: str = None, client: MCPClient | None = None) -> str:
+def tool_get_curriculum_lookup(group_hint: str = None, program_id: str = None, session_id: str | None = None, client: MCPClient | None = None) -> str:
     """
     Tra cuu danh sach cac mon hoc trong chuong trinh dao tao.
     Dung khi nguoi dung hoi ve: hoc phan tu chon, mon nao con thieu, yeu cau tot nghiep, danh sach mon hoc trong CTDT.
@@ -166,11 +167,11 @@ def tool_get_curriculum_lookup(group_hint: str = None, program_id: str = None, c
         JSON chua danh sach nhom mon va cac mon hoc tuong ung.
     """
     mcp = _get_client(client)
-    result: Any = mcp.invoke("get_curriculum_lookup", {"group_hint": group_hint, "program_id": program_id})
+    result: Any = mcp.invoke("get_curriculum_lookup", {"group_hint": group_hint, "program_id": program_id, "session_id": session_id})
     return str(result)
 
 
-def tool_get_electives_with_schedule(check_schedule: bool = True, program_id: str = None, client: MCPClient | None = None) -> str:
+def tool_get_electives_with_schedule(check_schedule: bool = True, program_id: str = None, session_id: str | None = None, client: MCPClient | None = None) -> str:
     """
     Lấy danh sách các môn TỰ CHỌN từ Chương trình Đào tạo VÀ kiểm tra xem môn nào đang MỞ trong TKB.
     Dùng khi nguoi dung hoi ve: 'hoc phan tu chon nao dang mo', 'mon tu chon trong ky nay', 
@@ -183,5 +184,82 @@ def tool_get_electives_with_schedule(check_schedule: bool = True, program_id: st
         JSON với "opened" (môn đang mở lớp) và "not_opened" (môn chưa mở)
     """
     mcp = _get_client(client)
-    result: Any = mcp.invoke("get_electives_with_schedule", {"check_schedule": check_schedule, "program_id": program_id})
+    result: Any = mcp.invoke(
+        "get_electives_with_schedule",
+        {"check_schedule": check_schedule, "program_id": program_id, "session_id": session_id},
+    )
+    return str(result)
+
+
+def tool_resolve_course_alias(
+    query: str,
+    program_id: str | None = None,
+    session_id: str | None = None,
+    client: MCPClient | None = None,
+) -> str:
+    """
+    Resolve ten mon/ma mon ve ma mon chuan trong du lieu TKB structured.
+    """
+    mcp = _get_client(client)
+    result: Any = mcp.invoke(
+        "resolve_course_alias",
+        {"query": query, "program_id": program_id, "session_id": session_id},
+    )
+    return str(result)
+
+
+def tool_get_teachers_by_subject(
+    subject_code: str,
+    semester: str | None = None,
+    session_id: str | None = None,
+    client: MCPClient | None = None,
+) -> str:
+    """
+    Lay danh sach giang vien day mot mon hoc tu TKB structured.
+    """
+    mcp = _get_client(client)
+    result: Any = mcp.invoke(
+        "get_teachers_by_subject",
+        {"subject_code": subject_code, "semester": semester, "session_id": session_id},
+    )
+    return str(result)
+
+
+def tool_get_classes_by_teacher(
+    teacher_name: str,
+    semester: str | None = None,
+    session_id: str | None = None,
+    client: MCPClient | None = None,
+) -> str:
+    """
+    Lay danh sach lop/mon theo giang vien tu TKB structured.
+    """
+    mcp = _get_client(client)
+    result: Any = mcp.invoke(
+        "get_classes_by_teacher",
+        {"teacher_name": teacher_name, "semester": semester, "session_id": session_id},
+    )
+    return str(result)
+
+
+def tool_get_schedule_rows(
+    subject_code: str | None = None,
+    teacher_name: str | None = None,
+    semester: str | None = None,
+    session_id: str | None = None,
+    client: MCPClient | None = None,
+) -> str:
+    """
+    Tra cuu dong lich hoc structured theo mon/giang vien.
+    """
+    mcp = _get_client(client)
+    result: Any = mcp.invoke(
+        "get_schedule_rows",
+        {
+            "subject_code": subject_code,
+            "teacher_name": teacher_name,
+            "semester": semester,
+            "session_id": session_id,
+        },
+    )
     return str(result)
