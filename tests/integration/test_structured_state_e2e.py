@@ -14,6 +14,7 @@ def test_structured_state_resolves_mon_nay_followup(monkeypatch, tmp_path):
     app_mod = importlib.reload(importlib.import_module("app"))
 
     monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    monkeypatch.setattr(app_mod, "STRUCTURED_TKB_ENABLED", False)
     (app_mod.SESSION_CACHE_DIR).mkdir(parents=True, exist_ok=True)
 
     planner_prompts: list[str] = []

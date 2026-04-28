@@ -47,3 +47,4 @@ reports/deep_advisor_io_*.json
 # Matrix/smoke generated reports
 reports/ctdt_matrix_fake_transcript_*.md
 reports/ctdt_matrix_fake_transcript_*.json
+.gitnexus

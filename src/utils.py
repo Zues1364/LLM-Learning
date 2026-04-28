@@ -1,4 +1,4 @@
-import json
+﻿import json
 import os
 from bs4 import BeautifulSoup
 from pathlib import Path
@@ -32,6 +32,7 @@ CACHE_DIR = BASE_DIR / "data" / "cache"
 # Versioning to invalidate stale cached chunks/embeddings when parsing logic changes
 CHUNK_CACHE_VERSION = "v5"
 EMB_CACHE_VERSION = "v3"
+VECTOR_SNAPSHOT_VERSION = "v1"
 
 # Prepare cache dir
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -50,19 +51,102 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 LOG_CHUNK_LOADING = _env_flag("LOG_CHUNK_LOADING", default=False)
 
+_CP1252_CHAR_TO_BYTE: Dict[str, int] = {}
+for _b in range(256):
+    try:
+        _ch = bytes([_b]).decode("cp1252")
+    except Exception:
+        continue
+    _CP1252_CHAR_TO_BYTE[_ch] = _b
+
+
+def _mojibake_score(text: str) -> int:
+    if not text:
+        return 0
+    score_patterns = ("Ã", "Â", "Ä", "áº", "á»", "â€“", "â€”", "â€œ", "â€")
+    score = sum(text.count(pattern) for pattern in score_patterns)
+    score += sum(1 for ch in text if 0x80 <= ord(ch) <= 0x9F) * 2
+    score += sum(text.count(ch) for ch in ("\u2018", "\u2019", "\u201c", "\u201d", "\u2039", "\u203a", "\u20ac"))
+    return score
+
+
+def _reconstruct_misdecoded_bytes(text: str) -> Optional[bytes]:
+    raw = str(text or "")
+    if not raw:
+        return b""
+    buf = bytearray()
+    for ch in raw:
+        code = ord(ch)
+        if code <= 0xFF:
+            buf.append(code)
+            continue
+        mapped = _CP1252_CHAR_TO_BYTE.get(ch)
+        if mapped is None:
+            return None
+        buf.append(mapped)
+    return bytes(buf)
+
+
+def _repair_common_mojibake(text: str) -> str:
+    raw = str(text or "")
+    if not raw:
+        return ""
+
+    best = raw
+    best_score = _mojibake_score(raw)
+    if best_score == 0:
+        return raw
+
+    reconstructed = _reconstruct_misdecoded_bytes(raw)
+    if reconstructed:
+        try:
+            candidate = reconstructed.decode("utf-8")
+            candidate_score = _mojibake_score(candidate)
+            if candidate and candidate_score < best_score:
+                best = candidate
+                best_score = candidate_score
+        except Exception:
+            pass
+
+    for source_encoding in ("latin1", "cp1252"):
+        try:
+            candidate = raw.encode(source_encoding).decode("utf-8")
+        except Exception:
+            continue
+        candidate_score = _mojibake_score(candidate)
+        if candidate and candidate_score < best_score:
+            best = candidate
+            best_score = candidate_score
+    return best
+
 
 def normalize_for_match(text: str) -> str:
     """
     Lightweight normalization for lexical matching.
+    - Repair common UTF-8/latin1 mojibake (for example: "mÃ´n" -> "mon")
     - Remove accents
     - Lowercase
     - Collapse whitespace
     """
     if not text:
         return ""
-    decomposed = unicodedata.normalize("NFD", text)
+    repaired = _repair_common_mojibake(str(text))
+    if _mojibake_score(repaired) > 0:
+        pieces = re.split(r"(\s+)", repaired)
+        repaired = "".join(
+            _repair_common_mojibake(piece) if piece and not piece.isspace() else piece
+            for piece in pieces
+        )
+    decomposed = unicodedata.normalize("NFD", repaired)
     without_accents = "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
-    lowered = without_accents.lower().replace("đ", "d")
+    lowered = (
+        without_accents
+        .lower()
+        .replace("đ", "d")
+        .replace("Đ", "d")
+        .replace("Ä‘", "d")
+        .replace("Ä", "d")
+    )
     return re.sub(r"\s+", " ", lowered).strip()
 
 
@@ -309,7 +393,7 @@ def process_pdf(file_path: str, chunk_size: int = 1000, chunk_overlap: int = 200
                     cleaned_data = clean_and_fill_table(table_data)
                     
                     # chunk_size=800 ensures small enough chunks for vector search
-                    # avoiding the issue where "Lý thuyết thông tin" is lost in a huge page
+                    # avoiding the issue where "LÃ½ thuyáº¿t thÃ´ng tin" is lost in a huge page
                     table_markdown_chunks = chunk_table_rows(cleaned_data, chunk_size=800)
                     
                     for c_idx, chunk_text in enumerate(table_markdown_chunks, start=1):
@@ -335,7 +419,7 @@ def process_pdf(file_path: str, chunk_size: int = 1000, chunk_overlap: int = 200
             # --- PROCESS TEXT ---
             # For now, use pdfplumber text but we accept duplication is better than loss.
             # To avoid total duplication, we can check if text is significantly similar,
-            # but for retrieval, having "Lý thuyết thông tin" in a Table Chunk IS the fix.
+            # but for retrieval, having "LÃ½ thuyáº¿t thÃ´ng tin" in a Table Chunk IS the fix.
             raw_text = page.extract_text() or ""
             
             # --- VISION LOGIC (Preserved) ---
@@ -500,8 +584,8 @@ def generate_summary(text: str) -> str:
             logger.info(f"Input text too long ({len(text)} chars); truncated to {max_len}.")
 
         prompt = (
-            "Bạn là chuyên gia phân tích. Hãy tóm tắt nội dung tài liệu sau bằng tiếng Việt, "
-            "tập trung vào các ý chính, kết luận và số liệu quan trọng. Độ dài khoảng 300-500 từ."
+            "Báº¡n lÃ  chuyÃªn gia phÃ¢n tÃ­ch. HÃ£y tÃ³m táº¯t ná»™i dung tÃ i liá»‡u sau báº±ng tiáº¿ng Viá»‡t, "
+            "táº­p trung vÃ o cÃ¡c Ã½ chÃ­nh, káº¿t luáº­n vÃ  sá»‘ liá»‡u quan trá»ng. Äá»™ dÃ i khoáº£ng 300-500 tá»«."
         )
         response = model.generate_content(f"{prompt}\n\n{trimmed_text}")
         summary = getattr(response, "text", "") or ""
@@ -540,7 +624,10 @@ class VietnameseEmbedder(Embeddings):
         try:
             # Enable progress bar for visibility on large batches
             embeddings = self.model.encode(texts, show_progress_bar=True)
-            return embeddings.tolist()
+            emb_np = np.asarray(embeddings, dtype="float32")
+            if emb_np.ndim == 1:
+                emb_np = np.expand_dims(emb_np, axis=0)
+            return emb_np.tolist()
         except Exception as e:
             logger.error(f"Loi khi tao embeddings cho documents: {e}")
             return [[0.0] * self.embedding_dim for _ in texts]
@@ -548,7 +635,10 @@ class VietnameseEmbedder(Embeddings):
     def embed_query(self, text: str) -> List[float]:
         try:
             embedding = self.model.encode([text], show_progress_bar=False)[0]
-            return embedding.tolist()
+            emb_np = np.asarray(embedding, dtype="float32")
+            if emb_np.ndim > 1:
+                emb_np = emb_np[0]
+            return emb_np.tolist()
         except Exception as e:
             logger.error(f"Loi khi tao embedding cho query: {e}")
             return [0.0] * self.embedding_dim
@@ -573,7 +663,11 @@ class FAISSVectorStore:
         self.index.add(self.embeddings_np)
         logger.info(f"[DEBUG] Rebuilt FAISS index with {self.index.ntotal} vectors")
 
-    def add_documents(self, documents: List[Document]):
+    def rebuild_index(self):
+        """Public wrapper for explicit single rebuild after batched appends."""
+        self._rebuild_index()
+
+    def add_documents(self, documents: List[Document], rebuild_index: bool = True):
         if not documents:
             return
 
@@ -600,9 +694,15 @@ class FAISSVectorStore:
             self.documents.extend(documents)
 
         logger.info(f"[DEBUG] Total documents now: {len(self.documents)}")
-        self._rebuild_index()
+        if rebuild_index:
+            self._rebuild_index()
 
-    def add_documents_with_embeddings(self, documents: List[Document], embeddings: np.ndarray):
+    def add_documents_with_embeddings(
+        self,
+        documents: List[Document],
+        embeddings: np.ndarray,
+        rebuild_index: bool = True,
+    ):
         """
         Add documents with precomputed (already normalized) embeddings.
         """
@@ -631,7 +731,219 @@ class FAISSVectorStore:
             self.documents.extend(documents)
 
         logger.info(f"[DEBUG] Total documents now: {len(self.documents)}")
+        if rebuild_index:
+            self._rebuild_index()
+
+    @staticmethod
+    def _sanitize_snapshot_value(
+        value: Any,
+        *,
+        _seen: Optional[Set[int]] = None,
+        _depth: int = 0,
+        _max_depth: int = 6,
+    ) -> Any:
+        """
+        Convert arbitrary metadata payload into a pickle-safe acyclic structure.
+        """
+        if _seen is None:
+            _seen = set()
+
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+
+        if isinstance(value, (np.generic,)):
+            return value.item()
+
+        if isinstance(value, Path):
+            return str(value)
+
+        if _depth >= _max_depth:
+            return str(value)
+
+        if isinstance(value, (dict, list, tuple, set, SimpleNamespace)):
+            obj_id = id(value)
+            if obj_id in _seen:
+                return "<cycle>"
+            _seen.add(obj_id)
+
+        if isinstance(value, dict):
+            sanitized: Dict[str, Any] = {}
+            for k, v in value.items():
+                key = str(k)
+                sanitized[key] = FAISSVectorStore._sanitize_snapshot_value(
+                    v,
+                    _seen=_seen,
+                    _depth=_depth + 1,
+                    _max_depth=_max_depth,
+                )
+            return sanitized
+
+        if isinstance(value, (list, tuple, set)):
+            return [
+                FAISSVectorStore._sanitize_snapshot_value(
+                    item,
+                    _seen=_seen,
+                    _depth=_depth + 1,
+                    _max_depth=_max_depth,
+                )
+                for item in value
+            ]
+
+        if isinstance(value, SimpleNamespace):
+            return FAISSVectorStore._sanitize_snapshot_value(
+                vars(value),
+                _seen=_seen,
+                _depth=_depth + 1,
+                _max_depth=_max_depth,
+            )
+
+        return str(value)
+
+    def save_snapshot(self, snapshot_path: str | Path, metadata: Optional[Dict[str, Any]] = None) -> bool:
+        """
+        Persist current vector state (documents + normalized embeddings) to disk.
+        Returns False when the store is empty.
+        """
+        if self.embeddings_np is None or self.embeddings_np.size == 0 or not self.documents:
+            logger.info("Skip saving vector snapshot: empty store.")
+            return False
+
+        snapshot_file = Path(snapshot_path)
+        snapshot_file.parent.mkdir(parents=True, exist_ok=True)
+
+        payload_docs: List[Dict[str, Any]] = []
+        for doc in self.documents:
+            raw_metadata = dict(doc.metadata or {})
+            safe_metadata = self._sanitize_snapshot_value(raw_metadata)
+            if not isinstance(safe_metadata, dict):
+                safe_metadata = {"_raw": str(safe_metadata)}
+            payload_docs.append(
+                {
+                    "page_content": doc.page_content,
+                    "metadata": safe_metadata,
+                }
+            )
+
+        safe_meta = self._sanitize_snapshot_value(dict(metadata or {}))
+        if not isinstance(safe_meta, dict):
+            safe_meta = {"_raw": str(safe_meta)}
+
+        payload = {
+            "version": VECTOR_SNAPSHOT_VERSION,
+            "metadata": safe_meta,
+            "documents": payload_docs,
+            "embeddings": np.array(self.embeddings_np, dtype="float32"),
+        }
+
+        tmp_file = snapshot_file.with_suffix(snapshot_file.suffix + ".tmp")
+        try:
+            with open(tmp_file, "wb") as f:
+                pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+            os.replace(tmp_file, snapshot_file)
+            logger.info(
+                "Saved vector snapshot: %s (docs=%s)",
+                snapshot_file,
+                len(payload_docs),
+            )
+            return True
+        except Exception as e:
+            logger.warning("Failed to save vector snapshot %s: %s", snapshot_file, e)
+            try:
+                if tmp_file.exists():
+                    tmp_file.unlink()
+            except Exception:
+                pass
+            return False
+
+    def load_snapshot(
+        self,
+        snapshot_path: str | Path,
+        expected_signature: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Load vector state from disk. Returns snapshot metadata when successful.
+        If expected_signature is provided, only restores when signature matches.
+        """
+        snapshot_file = Path(snapshot_path)
+        if not snapshot_file.exists():
+            return None
+
+        try:
+            with open(snapshot_file, "rb") as f:
+                payload = pickle.load(f)
+        except Exception as e:
+            logger.warning("Failed to read vector snapshot %s: %s", snapshot_file, e)
+            return None
+
+        if not isinstance(payload, dict):
+            logger.warning("Vector snapshot has invalid payload type: %s", type(payload))
+            return None
+
+        if payload.get("version") != VECTOR_SNAPSHOT_VERSION:
+            logger.info(
+                "Skip vector snapshot %s due to version mismatch: %s != %s",
+                snapshot_file,
+                payload.get("version"),
+                VECTOR_SNAPSHOT_VERSION,
+            )
+            return None
+
+        meta = payload.get("metadata")
+        if not isinstance(meta, dict):
+            meta = {}
+
+        if expected_signature is not None:
+            snapshot_signature = str(meta.get("resource_signature") or "")
+            if snapshot_signature != str(expected_signature):
+                logger.info(
+                    "Skip vector snapshot %s due to signature mismatch.",
+                    snapshot_file,
+                )
+                return None
+
+        raw_docs = payload.get("documents")
+        raw_embeddings = payload.get("embeddings")
+        if not isinstance(raw_docs, list) or raw_embeddings is None:
+            logger.warning("Vector snapshot %s missing documents/embeddings.", snapshot_file)
+            return None
+
+        emb_np = np.array(raw_embeddings, dtype="float32")
+        if emb_np.ndim == 1:
+            emb_np = np.expand_dims(emb_np, axis=0)
+        if emb_np.ndim != 2 or emb_np.shape[0] != len(raw_docs):
+            logger.warning(
+                "Vector snapshot %s shape mismatch: embeddings=%s docs=%s",
+                snapshot_file,
+                emb_np.shape,
+                len(raw_docs),
+            )
+            return None
+
+        documents: List[Document] = []
+        for item in raw_docs:
+            if not isinstance(item, dict):
+                continue
+            page_content = str(item.get("page_content") or "")
+            doc_metadata = item.get("metadata")
+            metadata_dict: Dict[str, Any] = dict(doc_metadata or {}) if isinstance(doc_metadata, dict) else {}
+            if "_norm_text" not in metadata_dict:
+                metadata_dict["_norm_text"] = normalize_for_match(page_content)
+            documents.append(Document(page_content=page_content, metadata=metadata_dict))
+
+        if len(documents) != emb_np.shape[0]:
+            logger.warning(
+                "Vector snapshot %s contains invalid document rows: docs=%s embeddings=%s",
+                snapshot_file,
+                len(documents),
+                emb_np.shape[0],
+            )
+            return None
+
+        self.documents = documents
+        self.embeddings_np = emb_np
         self._rebuild_index()
+        logger.info("Loaded vector snapshot: %s (docs=%s)", snapshot_file, len(documents))
+        return meta
 
     def _embed_query(self, query: str) -> np.ndarray:
         q_embedding = self.embedder.embed_query(query)
@@ -642,7 +954,7 @@ class FAISSVectorStore:
         q_norm[q_norm == 0] = 1.0
         return q_embedding / q_norm
 
-    def retrieve(self, query: str, top_k=15, threshold=SIMILARITY_THRESHOLD, file_ids: List[str] | None = None) -> List[Document]:
+    def retrieve(self, query: str, top_k=25, threshold=SIMILARITY_THRESHOLD, file_ids: List[str] | None = None) -> List[Document]:
         logger.info(f"Retrieve for query: {query}")
         if self.embeddings_np is None or self.embeddings_np.size == 0:
             logger.warning("Vector store empty.")
@@ -708,7 +1020,7 @@ class FAISSVectorStore:
                 if phrase_hit or token_hits:
                     boost = 0.0
                     if phrase_hit:
-                        boost += 2.0  # strong boost for multi-word match (e.g., course name, "loại học phần")
+                        boost += 2.0  # strong boost for multi-word match (e.g., course name, "loáº¡i há»c pháº§n")
                     if token_hits:
                         boost += min(0.05 * token_hits, 0.35)  # bounded token bonus
 
@@ -737,63 +1049,99 @@ class FAISSVectorStore:
                         # Boost by +3.0 is usually enough to overtake any semantic noise
                         new_score = prev + 3.0
                         combined_scores[idx] = new_score
-                        logger.info(f"[DEBUG] 🚀 SUBJECT CODE BOOST for Chunk {idx + 1}: {code} found -> +3.0 (Score: {new_score:.4f})")
+                        logger.info(f"[DEBUG] ðŸš€ SUBJECT CODE BOOST for Chunk {idx + 1}: {code} found -> +3.0 (Score: {new_score:.4f})")
 
         # --- HEURISTIC BOOST FOR DEFINITIONS (HANDBOOK/REGULATIONS) & SCHEDULE PENALTY ---
         # 1. Update Definition Patterns: Broaden to include general concepts, regulations, and exemption/certificates
         definition_patterns = [
-            r"là gì", r"định nghĩa", r"gồm những gì", r"thế nào là", r"như thế nào",
-            r"quy chế", r"quy định", r"điều kiện", r"bao nhiêu tín", r"học lại", 
-            r"cải thiện", r"đăng ký", r"hủy", r"tiên quyết", r"miễn", r"chứng chỉ", 
-            r"ngoại ngữ", r"ielts", r"toeic", r"các loại", r"danh sách", r"cấu trúc"
+            r"lÃ  gÃ¬", r"Ä‘á»‹nh nghÄ©a", r"gá»“m nhá»¯ng gÃ¬", r"tháº¿ nÃ o lÃ ", r"nhÆ° tháº¿ nÃ o",
+            r"quy cháº¿", r"quy Ä‘á»‹nh", r"Ä‘iá»u kiá»‡n", r"bao nhiÃªu tÃ­n", r"há»c láº¡i", 
+            r"cáº£i thiá»‡n", r"Ä‘Äƒng kÃ½", r"há»§y", r"tiÃªn quyáº¿t", r"miá»…n", r"chá»©ng chá»‰", 
+            r"ngoáº¡i ngá»¯", r"ielts", r"toeic", r"cÃ¡c loáº¡i", r"danh sÃ¡ch", r"cáº¥u trÃºc"
         ]
         is_general_query = any(re.search(p, query.lower()) for p in definition_patterns)
         language_patterns = [
             r"ielts", r"toeic", r"toefl", r"vstep", r"aptis", r"cambridge",
-            r"ngoại ngữ", r"chuan dau ra ngoai ngu", r"chuẩn đầu ra ngoại ngữ",
+            r"ngoáº¡i ngá»¯", r"chuan dau ra ngoai ngu", r"chuáº©n Ä‘áº§u ra ngoáº¡i ngá»¯",
             r"\bbac\s*3\b", r"\bbac\s*4\b", r"\bbac\s*5\b", r"knlnn"
         ]
         is_language_query = any(re.search(p, query.lower()) for p in language_patterns)
         
-        # 2. Check for Schedule Intent (Is the user explicitly asking for Time/Location?)
-        schedule_intent_patterns = [r"lịch", r"phòng", r"thứ", r"tiết", r"giờ", r"bao giờ", r"ở đâu", r"thời khóa biểu", r"tkb"]
-        is_schedule_query = any(re.search(p, query.lower()) for p in schedule_intent_patterns)
+        # 2. Check for Schedule Intent (time/location/teacher/class lookup from timetable)
+        # Use normalized query to support both accented and non-accented Vietnamese.
+        schedule_intent_patterns = [
+            r"\blich\b",
+            r"\bthoi khoa bieu\b",
+            r"\btkb\b",
+            r"\bphong\b",
+            r"\bthu\b",
+            r"\btiet\b",
+            r"\bca\b",
+            r"\bgio\b",
+            r"\bbao gio\b",
+            r"\bo dau\b",
+            r"\blop\b",
+            r"\bmo lop\b",
+        ]
+        teacher_intent_patterns = [
+            r"\bgiang vien\b",
+            r"\bgv\b",
+            r"\bai day\b",
+            r"\bco ai day\b",
+            r"\bthay nao day\b",
+            r"\bco nao day\b",
+        ]
+        is_schedule_query = any(re.search(p, norm_query) for p in schedule_intent_patterns) or any(
+            re.search(p, norm_query) for p in teacher_intent_patterns
+        )
+        is_teacher_query = any(re.search(p, norm_query) for p in teacher_intent_patterns)
         
         # Determine Boost/Penalty Strategy
-        authority_keywords = ["SỔ TAY", "QUY CHẾ", "QUY ĐỊNH", "HƯỚNG DẪN"]
-        schedule_keywords = ["TKB", "THỜI KHÓA BIỂU", "LỊCH HỌC"]
+        authority_keywords = ["Sá»” TAY", "QUY CHáº¾", "QUY Äá»ŠNH", "HÆ¯á»šNG DáºªN"]
+        schedule_keywords = ["tkb", "thoi khoa bieu", "lich hoc", "phu luc"]
 
         for idx, doc in enumerate(self.documents):
             if allowed_set and doc.metadata.get("file_id") not in allowed_set:
                 continue
             
-            source_name = str(doc.metadata.get("source", "")).upper()
-            file_id = str(doc.metadata.get("file_id", "")).upper()
+            source_name = str(doc.metadata.get("source", ""))
+            file_id = str(doc.metadata.get("file_id", ""))
+            source_name_norm = doc.metadata.get("_source_norm") or normalize_for_match(source_name)
+            file_id_norm = doc.metadata.get("_file_id_norm") or normalize_for_match(file_id)
+            doc.metadata["_source_norm"] = source_name_norm
+            doc.metadata["_file_id_norm"] = file_id_norm
             
             # A. AUTHORITY BOOST (Handbook wins for general/policy queries)
-            is_authority = any(k in source_name or k in file_id for k in authority_keywords)
+            source_name_upper = source_name.upper()
+            file_id_upper = file_id.upper()
+            is_authority = any(k in source_name_upper or k in file_id_upper for k in authority_keywords)
             if is_authority and is_general_query:
                 prev = combined_scores.get(idx, 0.0)
                 new_score = prev + 1.5 # Boost authoritative sources for definitions/policy
                 combined_scores[idx] = new_score
-                # logger.info(f"[DEBUG] 📖 AUTHORITY BOOST for Chunk {idx + 1}: +1.5")
+                # logger.info(f"[DEBUG] ðŸ“– AUTHORITY BOOST for Chunk {idx + 1}: +1.5")
 
             # B. SCHEDULE PENALTY (Schedule loses if query is NOT strictly about schedule)
             # Logic: If chunk comes from a Schedule file, BUT the query doesn't look like a schedule request -> PENALIZE
-            is_schedule_doc = any(k in source_name or k in file_id for k in schedule_keywords) or (doc.metadata.get("type") == "table" and "thứ" in doc.page_content.lower())
+            norm_doc = doc.metadata.get("_norm_text") or normalize_for_match(doc.page_content)
+            doc.metadata["_norm_text"] = norm_doc
+            is_schedule_doc = any(k in source_name_norm or k in file_id_norm for k in schedule_keywords) or (
+                doc.metadata.get("type") == "table" and "thu " in norm_doc
+            )
             
             if is_schedule_doc and not is_schedule_query:
                 prev = combined_scores.get(idx, 0.0)
                 penalty = 0.5
                 new_score = prev - penalty
                 combined_scores[idx] = new_score
-                # logger.info(f"[DEBUG] 📉 SCHEDULE PENALTY for Chunk {idx + 1}: -{penalty} (Query not requesting schedule)")
+                # logger.info(f"[DEBUG] ðŸ“‰ SCHEDULE PENALTY for Chunk {idx + 1}: -{penalty} (Query not requesting schedule)")
+            elif is_schedule_doc and is_teacher_query:
+                # Teacher lookup queries (e.g. "mon X co nhung ai day") should prioritize timetable chunks.
+                prev = combined_scores.get(idx, 0.0)
+                combined_scores[idx] = prev + 0.9
 
             # C. LANGUAGE MAPPING BOOST (IELTS/TOEFL/TOEIC/VSTEP)
             if is_language_query:
-                norm_doc = doc.metadata.get("_norm_text") or normalize_for_match(doc.page_content)
-                doc.metadata["_norm_text"] = norm_doc
-
                 has_test_mapping_signal = any(
                     token in norm_doc for token in [
                         "ielts", "toeic", "toefl", "vstep", "aptis", "cambridge",
@@ -808,7 +1156,7 @@ class FAISSVectorStore:
                     combined_scores[idx] = prev + extra
                 else:
                     # Slightly suppress unrelated HTML chunks for language-equivalence questions.
-                    is_html_chunk = source_name.endswith(".HTML") or file_id.endswith(".HTML")
+                    is_html_chunk = source_name_upper.endswith(".HTML") or file_id_upper.endswith(".HTML")
                     if is_html_chunk and not is_authority:
                         prev = combined_scores.get(idx, 0.0)
                         combined_scores[idx] = prev - 0.4
@@ -864,7 +1212,7 @@ def parse_curriculum_from_html_content(html_content: str) -> List[dict]:
         norm = normalize_for_match(text)
 
         # Only accept dedicated credit-cell formats to avoid false positives from names
-        # like "(... từ 11 đến 14)" in block descriptions.
+        # like "(... tá»« 11 Ä‘áº¿n 14)" in block descriptions.
         if not (
             re.fullmatch(r"\d{1,3}(?:\s*/\s*\d{1,3})?", text)
             or re.fullmatch(r"\d{1,3}\s*tin\s*chi", norm)
@@ -926,10 +1274,13 @@ def parse_curriculum_from_html_content(html_content: str) -> List[dict]:
 
     block_pattern = re.compile(r"^[IVX]+\s*$")
     sub_block_pattern = re.compile(r"^[IVX]+\.\d+(?:\.\d+)?\s*$")
-    subject_code_pattern = re.compile(r"^[A-Z]{2,6}\d{4}[A-Z]?$")
+    # Support both legacy codes (INT3306, MAT1101, INT3404E)
+    # and prefixed modern codes (UET.CE2020, UET.AI3064, UET.DSE3155).
+    subject_code_pattern = re.compile(r"^(?:[A-Z]{2,8}\.)?[A-Z]{2,8}\d{4}[A-Z]?$")
     note_tokens = (
         "nhom nganh",
         "tu chon",
+        "lua chon",
         "bo tro",
         "dien tu",
         "vien thong",
@@ -1070,7 +1421,7 @@ def compute_curriculum_missing_credits(structure: List[dict], completed_map: Dic
 
     def _classify_block_type(name: str, notes_norm: str = "") -> str:
         name_norm = normalize_for_match(name)
-        if "tu chon" in name_norm or "bo tro" in name_norm:
+        if "tu chon" in name_norm or "lua chon" in name_norm or "bo tro" in name_norm:
             return "elective"
         if any(token in notes_norm for token in ("nhom nganh", "kinh te", "luat", "dien tu", "vien thong")):
             return "elective"
@@ -1277,3 +1628,4 @@ def compute_curriculum_missing_credits(structure: List[dict], completed_map: Dic
             )
 
     return missing_details
+
