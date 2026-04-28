@@ -24,6 +24,11 @@ from env_loader import load_env
 load_env()
 
 from mcp_client.client import MCPClient
+from conversation_state import (
+    default_conversation_state,
+    resolve_query_with_state,
+    update_state_after_turn,
+)
 from persistent_memory import PersistentMemory
 # resource_loader import NOT needed here if we delegate to scan_resources via MCP? 
 # Use resource_loader for 'get_resources' list only? 
@@ -341,6 +346,56 @@ def _context_to_text(value: Any) -> str:
     if isinstance(value, dict):
         return json.dumps(value, ensure_ascii=False)
     return str(value)
+
+
+def _load_structured_state(session_id: str) -> Dict[str, Any]:
+    state = default_conversation_state()
+    try:
+        payload = mcp_client.invoke("memory_state_get", {"session_id": session_id})
+        if isinstance(payload, dict):
+            state.update(payload)
+            if isinstance(payload.get("entities"), dict):
+                merged_entities = state.get("entities", {}).copy()
+                merged_entities.update(payload.get("entities", {}))
+                state["entities"] = merged_entities
+            if isinstance(payload.get("referents"), dict):
+                merged_referents = state.get("referents", {}).copy()
+                merged_referents.update(payload.get("referents", {}))
+                state["referents"] = merged_referents
+    except Exception as e:
+        logger.warning("Khong tai duoc structured state cho session %s: %s", session_id, e)
+    return state
+
+
+def _save_structured_state(
+    session_id: str,
+    prev_state: Dict[str, Any],
+    raw_query: str,
+    resolved_query: str,
+    answer: str,
+    planner_source: str,
+    planner_context: str,
+    selected_program_id: Optional[str],
+) -> None:
+    try:
+        next_state = update_state_after_turn(
+            previous_state=prev_state,
+            raw_query=raw_query,
+            resolved_query=resolved_query,
+            answer=answer,
+            planner_source=planner_source,
+            planner_context=planner_context,
+            selected_program_id=selected_program_id,
+        )
+        mcp_client.invoke(
+            "memory_state_upsert",
+            {
+                "session_id": session_id,
+                "state": next_state,
+            },
+        )
+    except Exception as e:
+        logger.warning("Khong luu duoc structured state cho session %s: %s", session_id, e)
 
 
 def _fallback_planner_payload(
@@ -720,6 +775,18 @@ async def ask_question(request: QueryRequest):
     # 1) plan -> 2) parse -> 3) execute -> 4) respond
     query = request.query
     session_id = request.session_id or "user_session_1"
+    state_before = _load_structured_state(session_id)
+    resolution = resolve_query_with_state(query, state_before)
+    resolved_query = str(resolution.get("resolved_query") or query or "").strip()
+    if resolved_query and resolved_query != query:
+        logger.info(
+            "Structured state resolved query for session %s: raw='%s' -> resolved='%s' refs=%s",
+            session_id,
+            query,
+            resolved_query,
+            resolution.get("applied_referents") or [],
+        )
+
     selected_files = _normalize_file_ids(request.file_ids or [])
     session_meta = _load_session_meta(session_id)
     if not selected_files:
@@ -775,7 +842,7 @@ async def ask_question(request: QueryRequest):
         # 1) PLAN
         files_hint = f"[FILES:{','.join(selected_files)}]" if selected_files else "[FILES:none]"
         planner_agent = get_mcp_planner_agent(allow_web_search=request.allow_web_search)
-        planner_input = f"[SESSION:{session_id}] [PROGRAM:{effective_program_id}] {files_hint} {query}"
+        planner_input = f"[SESSION:{session_id}] [PROGRAM:{effective_program_id}] {files_hint} {resolved_query}"
         planner_output = planner_agent.run(planner_input).content
 
         # 2) PARSE
@@ -789,7 +856,7 @@ async def ask_question(request: QueryRequest):
                 preview[:200],
             )
             obj = _fallback_planner_payload(
-                query=query,
+                query=resolved_query,
                 session_id=session_id,
                 selected_files=selected_files,
                 program_id=effective_program_id,
@@ -809,6 +876,16 @@ async def ask_question(request: QueryRequest):
         if source == "error":
             logger.warning("Planner tra ve error: %s", context)
             friendly = context or "Khong lay duoc ke hoach. Thu lai hoac bat tim kiem web."
+            _save_structured_state(
+                session_id=session_id,
+                prev_state=state_before,
+                raw_query=query,
+                resolved_query=resolved_query,
+                answer=friendly,
+                planner_source=source,
+                planner_context=context,
+                selected_program_id=effective_program_id,
+            )
             return {"answer": friendly, "selected_program_id": effective_program_id}
 
         # 3) EXECUTE
@@ -826,6 +903,17 @@ async def ask_question(request: QueryRequest):
             )
         except Exception as e:
             logger.warning("Luu lich su loi (bo qua): %s", e)
+
+        _save_structured_state(
+            session_id=session_id,
+            prev_state=state_before,
+            raw_query=query,
+            resolved_query=resolved_query,
+            answer=answer,
+            planner_source=source,
+            planner_context=context,
+            selected_program_id=effective_program_id,
+        )
 
         # 4) RESPOND
         return {"answer": answer, "selected_program_id": effective_program_id}

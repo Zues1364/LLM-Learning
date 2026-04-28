@@ -9,6 +9,7 @@ from langchain_core.documents import Document
 sys.path.append(str(Path(__file__).resolve().parents[2] / "src"))
 
 import mcp_server.server as server  # noqa: E402
+from persistent_memory import PersistentMemory  # noqa: E402
 
 
 def _make_docs(pdf_name: str) -> list[Document]:
@@ -416,3 +417,27 @@ def test_compute_missing_subjects_strict_e_suffix(monkeypatch):
     missing_info = server.compute_missing_subjects(transcript_data, curriculum)
     missing_codes = {m.get("code") for m in missing_info.get("missing", [])}
     assert "INT3404E" in missing_codes
+
+
+def test_memory_state_tools_roundtrip(tmp_path, monkeypatch):
+    mem = PersistentMemory(db_path=str(tmp_path / "memory.db"), max_history=5)
+    monkeypatch.setattr(server, "_memory", mem)
+
+    state = server.memory_state_get("s-state")
+    assert state["turn_index"] == 0
+
+    updated = server.memory_state_upsert(
+        "s-state",
+        {
+            "turn_index": 7,
+            "entities": {"course_codes": ["INT2041"]},
+            "referents": {"last_subject_codes": ["INT2041"]},
+        },
+    )
+    assert updated["turn_index"] == 7
+    assert "INT2041" in updated["entities"]["course_codes"]
+
+    cleared = server.memory_state_clear("s-state")
+    assert cleared == "ok"
+    reset = server.memory_state_get("s-state")
+    assert reset["turn_index"] == 0

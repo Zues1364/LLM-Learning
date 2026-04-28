@@ -3097,6 +3097,22 @@ def memory_add(session_id: str, query: str, answer: str, chunk_index: int | None
     return "ok"
 
 
+@mcp_tool("memory_state_get")
+def memory_state_get(session_id: str) -> Dict[str, Any]:
+    return _memory.get_structured_state(session_id=session_id)
+
+
+@mcp_tool("memory_state_upsert")
+def memory_state_upsert(session_id: str, state: Dict[str, Any]) -> Dict[str, Any]:
+    return _memory.save_structured_state(session_id=session_id, state=state or {})
+
+
+@mcp_tool("memory_state_clear")
+def memory_state_clear(session_id: str) -> str:
+    _memory.save_structured_state(session_id=session_id, state={})
+    return "ok"
+
+
 # NEW TOOL: Scan / Refresh Resources
 @mcp_tool("scan_resources")
 def scan_resources(reset: bool = False) -> str:
