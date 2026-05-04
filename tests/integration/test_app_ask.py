@@ -8,6 +8,8 @@ import pytest
 
 sys.path.append(str(Path(__file__).resolve().parents[2] / "src"))
 
+from persistent_memory import PersistentMemory  # noqa: E402
+
 
 @pytest.fixture
 def app_module(monkeypatch, tmp_path):
@@ -178,6 +180,119 @@ def test_history_passes_authenticated_user_to_memory_get(monkeypatch, tmp_path):
     assert resp.status_code == 200
     assert captured_args["session_id"] == "shared-session"
     assert captured_args["user_id"] == "user-123"
+
+
+def test_chat_session_api_requires_auth_and_scopes_to_user(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    monkeypatch.setattr(app_mod, "memory", PersistentMemory(db_path=str(tmp_path / "memory.db"), max_history=5))
+    (app_mod.SESSION_CACHE_DIR).mkdir(parents=True, exist_ok=True)
+
+    def fake_user(raw_token, touch=True):
+        if raw_token == "auth-token-a":
+            return {"id": "user-a", "email": "a@vnu.edu.vn"}
+        if raw_token == "auth-token-b":
+            return {"id": "user-b", "email": "b@vnu.edu.vn"}
+        return None
+
+    monkeypatch.setattr(app_mod.mail_agent_service, "get_authenticated_user", fake_user)
+    client = TestClient(app_mod.app)
+
+    assert client.get("/api/chat/sessions").status_code == 401
+
+    client.cookies.set(app_mod._mail_cookie_name(), "auth-token-a")
+    created = client.post(
+        "/api/chat/sessions",
+        json={
+            "session_id": "shared-session",
+            "title": "Lịch thị giác máy",
+            "selected_program_id": "cs_2022",
+            "selected_file_ids": ["1.pdf"],
+        },
+    )
+    assert created.status_code == 200
+    assert created.json()["session"]["id"] == "shared-session"
+
+    listed = client.get("/api/chat/sessions")
+    assert listed.status_code == 200
+    assert [item["title"] for item in listed.json()["sessions"]] == ["Lịch thị giác máy"]
+
+    patched = client.patch("/api/chat/sessions/shared-session", json={"title": "Đã đổi tên"})
+    assert patched.status_code == 200
+    assert patched.json()["session"]["title"] == "Đã đổi tên"
+
+    client.cookies.set(app_mod._mail_cookie_name(), "auth-token-b")
+    assert client.get("/api/chat/sessions").json()["sessions"] == []
+    assert client.patch("/api/chat/sessions/shared-session", json={"title": "Không được"}).status_code == 404
+
+
+def test_ask_records_authenticated_chat_session_and_messages(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    monkeypatch.setattr(app_mod, "memory", PersistentMemory(db_path=str(tmp_path / "memory.db"), max_history=5))
+    (app_mod.SESSION_CACHE_DIR).mkdir(parents=True, exist_ok=True)
+
+    class DummyPlanner:
+        def run(self, prompt):
+            payload = {"source": "vector_store", "context": "ctx", "memory": "", "chunk_index": 1}
+            return type("Resp", (), {"content": json.dumps(payload)})()
+
+    class DummyAnswerAgent:
+        def run(self, query, context, source, memory_context):
+            return "bot answer"
+
+    def fake_user(raw_token, touch=True):
+        if raw_token == "auth-token":
+            return {"id": "user-123", "email": "student@vnu.edu.vn"}
+        return None
+
+    def fake_invoke(tool, args):
+        if tool == "get_available_programs":
+            return {
+                "programs": [
+                    {
+                        "id": "cs_2022",
+                        "name": "Khoa hoc may tinh",
+                        "year": "2022",
+                        "display_name": "Khoa hoc may tinh (QH-2022-2024)",
+                    }
+                ]
+            }
+        if tool == "memory_state_get":
+            return {}
+        if tool == "memory_get":
+            return []
+        if tool == "retrieve_chunks":
+            return ""
+        return "ok"
+
+    monkeypatch.setattr(app_mod.mail_agent_service, "get_authenticated_user", fake_user)
+    monkeypatch.setattr(app_mod, "answer_agent", DummyAnswerAgent())
+    monkeypatch.setattr(app_mod, "get_mcp_planner_agent", lambda allow_web_search=False: DummyPlanner())
+    monkeypatch.setattr(app_mod.mcp_client, "invoke", fake_invoke)
+
+    client = TestClient(app_mod.app)
+    client.cookies.set(app_mod._mail_cookie_name(), "auth-token")
+    resp = client.post(
+        "/ask",
+        json={
+            "query": "toi can lich hoc thi giac may",
+            "session_id": "chat-state-1",
+            "file_ids": ["1.pdf"],
+            "program_id": "cs_2022",
+        },
+    )
+    assert resp.status_code == 200
+
+    sessions = client.get("/api/chat/sessions").json()["sessions"]
+    assert sessions[0]["id"] == "chat-state-1"
+    assert sessions[0]["selected_program_id"] == "cs_2022"
+    assert sessions[0]["selected_file_ids"] == ["1.pdf"]
+
+    messages = client.get("/api/chat/sessions/chat-state-1/messages").json()["messages"]
+    assert [msg["role"] for msg in messages] == ["user", "assistant"]
+    assert messages[0]["content"] == "toi can lich hoc thi giac may"
+    assert messages[1]["content"] == "bot answer"
 
 
 def test_ask_uses_cached_program_for_next_request(app_module):

@@ -175,6 +175,22 @@ def _with_memory_owner(args: Dict[str, Any], user_id: Optional[str]) -> Dict[str
     return payload
 
 
+def _require_authenticated_user_id(request: Request) -> str:
+    user_id = _current_user_id_from_request(request)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Bạn cần đăng nhập Google để quản lý phiên chat theo tài khoản.")
+    return user_id
+
+
+def _derive_chat_title(query: str, fallback: str = "Phiên mới") -> str:
+    text = " ".join(str(query or "").split())
+    if not text:
+        return fallback
+    if len(text) <= 80:
+        return text
+    return text[:77].rstrip() + "..."
+
+
 def _resolve_mail_owner(request: Request, session_id: Optional[str]) -> Dict[str, Any]:
     user = _current_user_from_request(request)
     normalized_session = _normalize_session_id(session_id or "user_session_1")
@@ -4325,6 +4341,20 @@ class HistoryItem(BaseModel):
 class SessionRequest(BaseModel):
     session_id: str
 
+
+class ChatSessionCreateRequest(BaseModel):
+    session_id: Optional[str] = None
+    title: Optional[str] = None
+    selected_program_id: Optional[str] = None
+    selected_file_ids: List[str] | None = None
+
+
+class ChatSessionUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    selected_program_id: Optional[str] = None
+    selected_file_ids: List[str] | None = None
+
+
 class UrlRequest(BaseModel):
     url: str
     session_id: Optional[str] = None
@@ -5311,6 +5341,31 @@ async def ask_question(http_request: Request, payload: QueryRequest):
                 max_items=10,
             )
 
+        if user_id:
+            try:
+                memory.ensure_chat_session(
+                    session_id=session_id,
+                    user_id=user_id,
+                    title=_derive_chat_title(query),
+                    selected_program_id=effective_program_id,
+                    selected_file_ids=selected_files,
+                )
+                memory.add_chat_message(
+                    session_id=session_id,
+                    user_id=user_id,
+                    role="user",
+                    content=query,
+                )
+                memory.add_chat_message(
+                    session_id=session_id,
+                    user_id=user_id,
+                    role="assistant",
+                    content=answer,
+                    citations=citations,
+                )
+            except Exception as e:
+                logger.warning("Khong luu duoc chat session/messages cho user=%s session=%s: %s", user_id, session_id, e)
+
         try:
             mcp_client.invoke(
                 "memory_add",
@@ -5388,6 +5443,55 @@ async def get_history(
     except Exception as e:
         logger.error("Loi khi lay lich su: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/chat/sessions")
+async def list_chat_sessions(http_request: Request):
+    user_id = _require_authenticated_user_id(http_request)
+    return {"sessions": memory.list_chat_sessions(user_id=user_id)}
+
+
+@app.post("/api/chat/sessions")
+async def create_chat_session(http_request: Request, req: ChatSessionCreateRequest):
+    user_id = _require_authenticated_user_id(http_request)
+    session_id = str(req.session_id or "").strip() or f"session-{uuid4().hex}"
+    session = memory.ensure_chat_session(
+        session_id=session_id,
+        user_id=user_id,
+        title=req.title or "Phiên mới",
+        selected_program_id=req.selected_program_id,
+        selected_file_ids=req.selected_file_ids,
+    )
+    return {"session": session}
+
+
+@app.get("/api/chat/sessions/{session_id}/messages")
+async def get_chat_session_messages(http_request: Request, session_id: str, limit: int = 50):
+    user_id = _require_authenticated_user_id(http_request)
+    return {"messages": memory.get_chat_messages(session_id=session_id, user_id=user_id, limit=limit)}
+
+
+@app.patch("/api/chat/sessions/{session_id}")
+async def update_chat_session(http_request: Request, session_id: str, req: ChatSessionUpdateRequest):
+    user_id = _require_authenticated_user_id(http_request)
+    session = memory.update_chat_session(
+        session_id=session_id,
+        user_id=user_id,
+        title=req.title,
+        selected_program_id=req.selected_program_id,
+        selected_file_ids=req.selected_file_ids,
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="Không tìm thấy phiên chat.")
+    return {"session": session}
+
+
+@app.delete("/api/chat/sessions/{session_id}")
+async def archive_chat_session(http_request: Request, session_id: str):
+    user_id = _require_authenticated_user_id(http_request)
+    if not memory.archive_chat_session(session_id=session_id, user_id=user_id):
+        raise HTTPException(status_code=404, detail="Không tìm thấy phiên chat.")
+    return {"ok": True}
 
 
 @app.delete("/session")

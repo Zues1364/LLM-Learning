@@ -2,7 +2,7 @@
 import logging
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from conversation_state import default_conversation_state
 
@@ -58,6 +58,48 @@ class PersistentMemory:
                         state_json TEXT NOT NULL,
                         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
                     )
+                    """
+                )
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS chat_sessions (
+                        scoped_session_id TEXT PRIMARY KEY,
+                        session_id TEXT NOT NULL,
+                        user_id TEXT,
+                        title TEXT NOT NULL DEFAULT 'Phiên mới',
+                        selected_program_id TEXT,
+                        selected_file_ids_json TEXT NOT NULL DEFAULT '[]',
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        archived_at DATETIME
+                    )
+                    """
+                )
+                cursor.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_updated
+                    ON chat_sessions(user_id, updated_at DESC)
+                    """
+                )
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS chat_messages (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        scoped_session_id TEXT NOT NULL,
+                        session_id TEXT NOT NULL,
+                        user_id TEXT,
+                        role TEXT NOT NULL,
+                        content TEXT NOT NULL,
+                        citations_json TEXT,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY(scoped_session_id) REFERENCES chat_sessions(scoped_session_id)
+                    )
+                    """
+                )
+                cursor.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_chat_messages_session_created
+                    ON chat_messages(scoped_session_id, created_at ASC, id ASC)
                     """
                 )
                 conn.commit()
@@ -149,10 +191,279 @@ class PersistentMemory:
                 cursor = conn.cursor()
                 cursor.execute("DELETE FROM history WHERE session_id = ?", (scoped_session_id,))
                 cursor.execute("DELETE FROM conversation_state WHERE session_id = ?", (scoped_session_id,))
+                cursor.execute("DELETE FROM chat_messages WHERE scoped_session_id = ?", (scoped_session_id,))
                 conn.commit()
                 logger.info("Da xoa lich su cua phien %s", scoped_session_id)
         except sqlite3.Error as e:
             logger.error("Loi khi xoa lich su: %s", e)
+
+    @staticmethod
+    def _json_list(values: Optional[List[str]]) -> str:
+        cleaned = [str(item).strip() for item in (values or []) if str(item or "").strip()]
+        return json.dumps(list(dict.fromkeys(cleaned)), ensure_ascii=False)
+
+    @staticmethod
+    def _parse_json_list(value: Any) -> List[str]:
+        try:
+            parsed = json.loads(str(value or "[]"))
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(parsed, list):
+            return []
+        return [str(item).strip() for item in parsed if str(item or "").strip()]
+
+    @staticmethod
+    def _serialize_chat_session(row: sqlite3.Row | tuple) -> Dict[str, Any]:
+        data = dict(row) if isinstance(row, sqlite3.Row) else {}
+        return {
+            "id": str(data.get("session_id") or ""),
+            "session_id": str(data.get("session_id") or ""),
+            "title": str(data.get("title") or "Phiên mới"),
+            "selected_program_id": data.get("selected_program_id"),
+            "selected_file_ids": PersistentMemory._parse_json_list(data.get("selected_file_ids_json")),
+            "created_at": str(data.get("created_at") or ""),
+            "updated_at": str(data.get("updated_at") or ""),
+            "archived_at": data.get("archived_at"),
+        }
+
+    def ensure_chat_session(
+        self,
+        session_id: str,
+        user_id: Optional[str] = None,
+        title: Optional[str] = None,
+        selected_program_id: Optional[str] = None,
+        selected_file_ids: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        scoped_session_id = self._scoped_session_id(session_id=session_id, user_id=user_id)
+        sid = str(session_id or "default").strip() or "default"
+        title_value = str(title or "").strip() or "Phiên mới"
+        selected_program_value = str(selected_program_id or "").strip() or None
+        selected_files_json = self._json_list(selected_file_ids)
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                existing = conn.execute(
+                    "SELECT * FROM chat_sessions WHERE scoped_session_id = ?",
+                    (scoped_session_id,),
+                ).fetchone()
+                if existing is None:
+                    conn.execute(
+                        """
+                        INSERT INTO chat_sessions(
+                            scoped_session_id, session_id, user_id, title,
+                            selected_program_id, selected_file_ids_json, created_at, updated_at
+                        )
+                        VALUES(?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        """,
+                        (
+                            scoped_session_id,
+                            sid,
+                            str(user_id or "").strip() or None,
+                            title_value,
+                            selected_program_value,
+                            selected_files_json,
+                        ),
+                    )
+                else:
+                    existing_title = str(existing["title"] or "").strip()
+                    update_title = existing_title if existing_title and existing_title != "Phiên mới" else title_value
+                    update_program = selected_program_value or existing["selected_program_id"]
+                    update_files = selected_files_json if selected_file_ids is not None else existing["selected_file_ids_json"]
+                    conn.execute(
+                        """
+                        UPDATE chat_sessions
+                        SET title = ?,
+                            selected_program_id = ?,
+                            selected_file_ids_json = ?,
+                            updated_at = CURRENT_TIMESTAMP,
+                            archived_at = NULL
+                        WHERE scoped_session_id = ?
+                        """,
+                        (update_title, update_program, update_files, scoped_session_id),
+                    )
+                conn.commit()
+                row = conn.execute(
+                    "SELECT * FROM chat_sessions WHERE scoped_session_id = ?",
+                    (scoped_session_id,),
+                ).fetchone()
+                return self._serialize_chat_session(row)
+        except sqlite3.Error as e:
+            logger.error("Loi khi tao/cap nhat chat session %s: %s", scoped_session_id, e)
+            return {
+                "id": sid,
+                "session_id": sid,
+                "title": title_value,
+                "selected_program_id": selected_program_value,
+                "selected_file_ids": self._parse_json_list(selected_files_json),
+                "created_at": "",
+                "updated_at": "",
+                "archived_at": None,
+            }
+
+    def list_chat_sessions(self, user_id: str, include_archived: bool = False) -> List[Dict[str, Any]]:
+        uid = str(user_id or "").strip()
+        if not uid:
+            return []
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                query = """
+                    SELECT * FROM chat_sessions
+                    WHERE user_id = ?
+                """
+                params: List[Any] = [uid]
+                if not include_archived:
+                    query += " AND archived_at IS NULL"
+                query += " ORDER BY updated_at DESC, created_at DESC"
+                rows = conn.execute(query, params).fetchall()
+                return [self._serialize_chat_session(row) for row in rows]
+        except sqlite3.Error as e:
+            logger.error("Loi khi lay danh sach chat sessions cua user %s: %s", uid, e)
+            return []
+
+    def update_chat_session(
+        self,
+        session_id: str,
+        user_id: str,
+        title: Optional[str] = None,
+        selected_program_id: Optional[str] = None,
+        selected_file_ids: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        scoped_session_id = self._scoped_session_id(session_id=session_id, user_id=user_id)
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                existing = conn.execute(
+                    "SELECT * FROM chat_sessions WHERE scoped_session_id = ? AND user_id = ?",
+                    (scoped_session_id, str(user_id or "").strip()),
+                ).fetchone()
+                if existing is None:
+                    return None
+                title_value = str(title).strip() if title is not None else existing["title"]
+                program_value = (
+                    str(selected_program_id).strip()
+                    if selected_program_id is not None and str(selected_program_id).strip()
+                    else (None if selected_program_id is not None else existing["selected_program_id"])
+                )
+                files_json = (
+                    self._json_list(selected_file_ids)
+                    if selected_file_ids is not None
+                    else existing["selected_file_ids_json"]
+                )
+                conn.execute(
+                    """
+                    UPDATE chat_sessions
+                    SET title = ?, selected_program_id = ?, selected_file_ids_json = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE scoped_session_id = ? AND user_id = ?
+                    """,
+                    (title_value or "Phiên mới", program_value, files_json, scoped_session_id, user_id),
+                )
+                conn.commit()
+                row = conn.execute(
+                    "SELECT * FROM chat_sessions WHERE scoped_session_id = ? AND user_id = ?",
+                    (scoped_session_id, user_id),
+                ).fetchone()
+                return self._serialize_chat_session(row)
+        except sqlite3.Error as e:
+            logger.error("Loi khi cap nhat chat session %s: %s", scoped_session_id, e)
+            return None
+
+    def archive_chat_session(self, session_id: str, user_id: str) -> bool:
+        scoped_session_id = self._scoped_session_id(session_id=session_id, user_id=user_id)
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute(
+                    """
+                    UPDATE chat_sessions
+                    SET archived_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                    WHERE scoped_session_id = ? AND user_id = ? AND archived_at IS NULL
+                    """,
+                    (scoped_session_id, str(user_id or "").strip()),
+                )
+                conn.commit()
+                return cursor.rowcount > 0
+        except sqlite3.Error as e:
+            logger.error("Loi khi archive chat session %s: %s", scoped_session_id, e)
+            return False
+
+    def add_chat_message(
+        self,
+        session_id: str,
+        user_id: Optional[str],
+        role: str,
+        content: str,
+        citations: Optional[List[Dict[str, Any]]] = None,
+    ) -> Optional[int]:
+        scoped_session_id = self._scoped_session_id(session_id=session_id, user_id=user_id)
+        sid = str(session_id or "default").strip() or "default"
+        role_value = str(role or "").strip().lower()
+        if role_value not in {"user", "assistant", "system"}:
+            role_value = "assistant"
+        content_value = str(content or "").strip()
+        if not content_value:
+            return None
+        try:
+            citations_json = json.dumps(citations or [], ensure_ascii=False)
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO chat_messages(scoped_session_id, session_id, user_id, role, content, citations_json)
+                    VALUES(?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        scoped_session_id,
+                        sid,
+                        str(user_id or "").strip() or None,
+                        role_value,
+                        content_value,
+                        citations_json,
+                    ),
+                )
+                conn.execute(
+                    "UPDATE chat_sessions SET updated_at = CURRENT_TIMESTAMP WHERE scoped_session_id = ?",
+                    (scoped_session_id,),
+                )
+                conn.commit()
+                return int(cursor.lastrowid)
+        except sqlite3.Error as e:
+            logger.error("Loi khi luu chat message cho session %s: %s", scoped_session_id, e)
+            return None
+
+    def get_chat_messages(self, session_id: str, user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        scoped_session_id = self._scoped_session_id(session_id=session_id, user_id=user_id)
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute(
+                    """
+                    SELECT id, role, content, citations_json, created_at
+                    FROM chat_messages
+                    WHERE scoped_session_id = ? AND user_id = ?
+                    ORDER BY created_at ASC, id ASC
+                    LIMIT ?
+                    """,
+                    (scoped_session_id, str(user_id or "").strip(), max(1, min(int(limit or 50), 200))),
+                ).fetchall()
+                messages: List[Dict[str, Any]] = []
+                for row in rows:
+                    try:
+                        citations = json.loads(row["citations_json"] or "[]")
+                    except json.JSONDecodeError:
+                        citations = []
+                    messages.append(
+                        {
+                            "id": int(row["id"]),
+                            "role": str(row["role"] or ""),
+                            "content": str(row["content"] or ""),
+                            "citations": citations if isinstance(citations, list) else [],
+                            "created_at": str(row["created_at"] or ""),
+                        }
+                    )
+                return messages
+        except (sqlite3.Error, ValueError) as e:
+            logger.error("Loi khi lay chat messages cho session %s: %s", scoped_session_id, e)
+            return []
 
     def save_summary(self, file_id: str, summary: str):
         try:

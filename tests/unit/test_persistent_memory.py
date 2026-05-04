@@ -85,3 +85,45 @@ def test_get_context_respects_max_rows(tmp_path):
     ctx = mem.get_context("", session_id="s", max_rows=3)
     # Respect max_rows limit
     assert ctx.count("Query:") == 3
+
+
+def test_chat_sessions_and_messages_are_scoped_by_user(tmp_path):
+    db_path = tmp_path / "mem.db"
+    mem = PersistentMemory(db_path=str(db_path), max_history=5)
+
+    mem.ensure_chat_session(
+        session_id="shared",
+        user_id="user-a",
+        title="Chat A",
+        selected_program_id="cs_2022",
+        selected_file_ids=["1.pdf", "2.pdf"],
+    )
+    mem.ensure_chat_session(session_id="shared", user_id="user-b", title="Chat B")
+    mem.add_chat_message("shared", "user-a", "user", "hello")
+    mem.add_chat_message("shared", "user-a", "assistant", "answer", citations=[{"source_file": "a.pdf"}])
+    mem.add_chat_message("shared", "user-b", "user", "other")
+
+    sessions_a = mem.list_chat_sessions("user-a")
+    sessions_b = mem.list_chat_sessions("user-b")
+    messages_a = mem.get_chat_messages("shared", "user-a")
+    messages_b = mem.get_chat_messages("shared", "user-b")
+
+    assert len(sessions_a) == 1
+    assert sessions_a[0]["id"] == "shared"
+    assert sessions_a[0]["title"] == "Chat A"
+    assert sessions_a[0]["selected_program_id"] == "cs_2022"
+    assert sessions_a[0]["selected_file_ids"] == ["1.pdf", "2.pdf"]
+    assert sessions_b[0]["title"] == "Chat B"
+
+    assert [msg["content"] for msg in messages_a] == ["hello", "answer"]
+    assert messages_a[1]["citations"] == [{"source_file": "a.pdf"}]
+    assert [msg["content"] for msg in messages_b] == ["other"]
+
+    updated = mem.update_chat_session("shared", "user-a", title="Renamed", selected_file_ids=["3.pdf"])
+    assert updated["title"] == "Renamed"
+    assert updated["selected_file_ids"] == ["3.pdf"]
+
+    assert mem.archive_chat_session("shared", "user-a") is True
+    assert mem.list_chat_sessions("user-a") == []
+    assert len(mem.list_chat_sessions("user-a", include_archived=True)) == 1
+    assert len(mem.list_chat_sessions("user-b")) == 1
