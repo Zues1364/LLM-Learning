@@ -327,6 +327,87 @@ const writeJson = (key, value) => {
   }
 };
 
+const removeJsonKeys = (keys) => {
+  if (typeof localStorage === "undefined") return;
+  try {
+    keys.forEach((key) => localStorage.removeItem(key));
+  } catch {
+    /* ignore */
+  }
+};
+
+const GUEST_CHAT_STORAGE_KEYS = {
+  sessions: "guestSessions",
+  currentSession: "guestCurrentSession",
+  messagesBySession: "guestMessagesBySession",
+  selectedProgramBySession: "guestSelectedProgramBySession",
+  pendingProgramBySession: "guestPendingProgramBySession",
+  selectedFilesBySession: "guestSelectedFilesBySession",
+};
+
+const LEGACY_CHAT_STORAGE_KEYS = [
+  "sessions",
+  "currentSession",
+  "messagesBySession",
+  "selectedProgramBySession",
+  "pendingProgramBySession",
+  "selectedFilesBySession",
+];
+
+const emptyChatState = (sessionId = createSessionId()) => ({
+  sessions: [{ id: sessionId, title: "Phien 1" }],
+  currentSession: sessionId,
+  messagesBySession: { [sessionId]: [] },
+  selectedFilesBySession: {},
+  selectedProgramBySession: {},
+  pendingProgramBySession: {},
+});
+
+const readGuestChatState = (fallbackSessionId) => {
+  const empty = emptyChatState(fallbackSessionId);
+  const storedSessions = readJson(GUEST_CHAT_STORAGE_KEYS.sessions, null);
+  const storedMessages = readJson(GUEST_CHAT_STORAGE_KEYS.messagesBySession, null);
+  const storedCurrentSession = readJson(GUEST_CHAT_STORAGE_KEYS.currentSession, null);
+  const storedSelectedPrograms = readJson(GUEST_CHAT_STORAGE_KEYS.selectedProgramBySession, null);
+  const storedPendingPrograms = readJson(GUEST_CHAT_STORAGE_KEYS.pendingProgramBySession, null);
+  const storedSelectedFiles = readJson(GUEST_CHAT_STORAGE_KEYS.selectedFilesBySession, null);
+
+  const sessions = Array.isArray(storedSessions) && storedSessions.length
+    ? storedSessions
+        .map((item, index) => ({
+          id: String(item?.id || "").trim(),
+          title: String(item?.title || `Phien ${index + 1}`).trim() || `Phien ${index + 1}`,
+        }))
+        .filter((item) => item.id)
+    : empty.sessions;
+  const sessionIds = new Set(sessions.map((item) => item.id));
+  const currentSession =
+    typeof storedCurrentSession === "string" && sessionIds.has(storedCurrentSession)
+      ? storedCurrentSession
+      : sessions[0]?.id || empty.currentSession;
+
+  return {
+    sessions: sessions.length ? sessions : empty.sessions,
+    currentSession,
+    messagesBySession:
+      storedMessages && typeof storedMessages === "object" && !Array.isArray(storedMessages)
+        ? storedMessages
+        : { [currentSession]: [] },
+    selectedFilesBySession:
+      storedSelectedFiles && typeof storedSelectedFiles === "object" && !Array.isArray(storedSelectedFiles)
+        ? storedSelectedFiles
+        : {},
+    selectedProgramBySession:
+      storedSelectedPrograms && typeof storedSelectedPrograms === "object" && !Array.isArray(storedSelectedPrograms)
+        ? storedSelectedPrograms
+        : {},
+    pendingProgramBySession:
+      storedPendingPrograms && typeof storedPendingPrograms === "object" && !Array.isArray(storedPendingPrograms)
+        ? storedPendingPrograms
+        : {},
+  };
+};
+
 // API helpers
 async function uploadPdf(file) {
   const form = new FormData();
@@ -626,28 +707,11 @@ async function rejectMailCandidate(sessionId, candidateId, reason = "") {
 
 export default function App() {
   const initialSessionId = useRef(createSessionId()).current;
+  const initialGuestChatState = useRef(readGuestChatState(initialSessionId)).current;
 
-  const storedSessions = readJson("sessions", null);
-  const storedMessages = readJson("messagesBySession", null);
-  const storedCurrentSession = readJson("currentSession", null);
-  const storedSelectedPrograms = readJson("selectedProgramBySession", null);
-  const storedPendingPrograms = readJson("pendingProgramBySession", null);
-  const storedSelectedFiles = readJson("selectedFilesBySession", null);
-
-  const [sessions, setSessions] = useState(() =>
-    Array.isArray(storedSessions) && storedSessions.length
-      ? storedSessions
-      : [{ id: initialSessionId, title: "Phien 1" }]
-  );
-  const [currentSession, setCurrentSession] = useState(() => {
-    if (storedCurrentSession && typeof storedCurrentSession === "string") return storedCurrentSession;
-    if (Array.isArray(storedSessions) && storedSessions.length) return storedSessions[0].id;
-    return initialSessionId;
-  });
-  const [messagesBySession, setMessagesBySession] = useState(() => {
-    if (storedMessages && typeof storedMessages === "object" && !Array.isArray(storedMessages)) return storedMessages;
-    return { [initialSessionId]: [] };
-  });
+  const [sessions, setSessions] = useState(() => initialGuestChatState.sessions);
+  const [currentSession, setCurrentSession] = useState(() => initialGuestChatState.currentSession);
+  const [messagesBySession, setMessagesBySession] = useState(() => initialGuestChatState.messagesBySession);
   const [inputStr, setInputStr] = useState("");
   const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -657,14 +721,7 @@ export default function App() {
   const [uploadedFile, setUploadedFile] = useState(null);
   const [files, setFiles] = useState([]);
   const [selectedFilesBySession, setSelectedFilesBySession] = useState(() => {
-    if (
-      storedSelectedFiles &&
-      typeof storedSelectedFiles === "object" &&
-      !Array.isArray(storedSelectedFiles)
-    ) {
-      return storedSelectedFiles;
-    }
-    return {};
+    return initialGuestChatState.selectedFilesBySession;
   });
   const [processingPdf, setProcessingPdf] = useState(false);
   const [processingLabel, setProcessingLabel] = useState("");
@@ -695,24 +752,10 @@ export default function App() {
   const [programsLoading, setProgramsLoading] = useState(false);
   const [citationViewer, setCitationViewer] = useState(null);
   const [selectedProgramBySession, setSelectedProgramBySession] = useState(() => {
-    if (
-      storedSelectedPrograms &&
-      typeof storedSelectedPrograms === "object" &&
-      !Array.isArray(storedSelectedPrograms)
-    ) {
-      return storedSelectedPrograms;
-    }
-    return {};
+    return initialGuestChatState.selectedProgramBySession;
   });
   const [pendingProgramBySession, setPendingProgramBySession] = useState(() => {
-    if (
-      storedPendingPrograms &&
-      typeof storedPendingPrograms === "object" &&
-      !Array.isArray(storedPendingPrograms)
-    ) {
-      return storedPendingPrograms;
-    }
-    return {};
+    return initialGuestChatState.pendingProgramBySession;
   });
 
   const fileInputRef = useRef(null);
@@ -720,6 +763,7 @@ export default function App() {
   const chatEndRef = useRef(null);
   const filesRef = useRef([]);
   const authPopupPollRef = useRef(null);
+  const previousAuthenticatedUserRef = useRef("");
 
   const normalizeFileIds = useCallback((ids) => Array.from(new Set((ids || []).filter(Boolean))), []);
 
@@ -876,32 +920,63 @@ export default function App() {
     });
   };
 
+  const replaceChatState = useCallback((nextState) => {
+    setSessions(nextState.sessions);
+    setCurrentSession(nextState.currentSession);
+    setMessagesBySession(nextState.messagesBySession);
+    setSelectedFilesBySession(nextState.selectedFilesBySession);
+    setSelectedProgramBySession(nextState.selectedProgramBySession);
+    setPendingProgramBySession(nextState.pendingProgramBySession);
+    setHistoryList([]);
+    setUploadedFile(null);
+    setProcessingPdf(false);
+    setProcessingLabel("");
+    setInputStr("");
+  }, []);
+
+  const resetToFreshGuestChat = useCallback(() => {
+    removeJsonKeys(LEGACY_CHAT_STORAGE_KEYS);
+    const nextState = emptyChatState();
+    replaceChatState(nextState);
+    return nextState.currentSession;
+  }, [replaceChatState]);
+
   const refreshChatSessions = useCallback(async () => {
     if (!authState.authenticated) return;
     try {
       const data = await fetchChatSessions();
       const serverSessions = (data?.sessions || []).map(normalizeChatSession).filter(Boolean);
-      if (!serverSessions.length) return;
+      if (!serverSessions.length) {
+        replaceChatState(emptyChatState());
+        return;
+      }
 
       setSessions(serverSessions.map(({ id, title }) => ({ id, title })));
-      setSelectedProgramBySession((prev) => {
-        const next = { ...prev };
+      setSelectedProgramBySession(() => {
+        const next = {};
         serverSessions.forEach((session) => {
           if (session.selected_program_id) next[session.id] = session.selected_program_id;
         });
         return next;
       });
-      setPendingProgramBySession((prev) => {
-        const next = { ...prev };
+      setPendingProgramBySession(() => {
+        const next = {};
         serverSessions.forEach((session) => {
           if (session.selected_program_id) next[session.id] = session.selected_program_id;
         });
         return next;
       });
-      setSelectedFilesBySession((prev) => {
-        const next = { ...prev };
+      setSelectedFilesBySession(() => {
+        const next = {};
         serverSessions.forEach((session) => {
           if (session.selected_file_ids.length) next[session.id] = session.selected_file_ids;
+        });
+        return next;
+      });
+      setMessagesBySession((prev) => {
+        const next = {};
+        serverSessions.forEach((session) => {
+          next[session.id] = prev[session.id] || [];
         });
         return next;
       });
@@ -913,7 +988,7 @@ export default function App() {
         console.error("Fetch chat sessions failed", err);
       }
     }
-  }, [authState.authenticated, currentSession]);
+  }, [authState.authenticated, currentSession, replaceChatState]);
 
   useEffect(() => {
     if (!sessions.some((s) => s.id === currentSession)) {
@@ -922,12 +997,44 @@ export default function App() {
     }
   }, [sessions, currentSession, initialSessionId]);
 
-  useEffect(() => writeJson("sessions", sessions), [sessions]);
-  useEffect(() => writeJson("currentSession", currentSession), [currentSession]);
-  useEffect(() => writeJson("messagesBySession", messagesBySession), [messagesBySession]);
-  useEffect(() => writeJson("selectedProgramBySession", selectedProgramBySession), [selectedProgramBySession]);
-  useEffect(() => writeJson("pendingProgramBySession", pendingProgramBySession), [pendingProgramBySession]);
-  useEffect(() => writeJson("selectedFilesBySession", selectedFilesBySession), [selectedFilesBySession]);
+  useEffect(() => {
+    if (authState.authenticated) return;
+    writeJson(GUEST_CHAT_STORAGE_KEYS.sessions, sessions);
+  }, [authState.authenticated, sessions]);
+  useEffect(() => {
+    if (authState.authenticated) return;
+    writeJson(GUEST_CHAT_STORAGE_KEYS.currentSession, currentSession);
+  }, [authState.authenticated, currentSession]);
+  useEffect(() => {
+    if (authState.authenticated) return;
+    writeJson(GUEST_CHAT_STORAGE_KEYS.messagesBySession, messagesBySession);
+  }, [authState.authenticated, messagesBySession]);
+  useEffect(() => {
+    if (authState.authenticated) return;
+    writeJson(GUEST_CHAT_STORAGE_KEYS.selectedProgramBySession, selectedProgramBySession);
+  }, [authState.authenticated, selectedProgramBySession]);
+  useEffect(() => {
+    if (authState.authenticated) return;
+    writeJson(GUEST_CHAT_STORAGE_KEYS.pendingProgramBySession, pendingProgramBySession);
+  }, [authState.authenticated, pendingProgramBySession]);
+  useEffect(() => {
+    if (authState.authenticated) return;
+    writeJson(GUEST_CHAT_STORAGE_KEYS.selectedFilesBySession, selectedFilesBySession);
+  }, [authState.authenticated, selectedFilesBySession]);
+
+  useEffect(() => {
+    const authenticatedUserKey = authState.authenticated
+      ? String(authState.userId || authState.email || "authenticated")
+      : "";
+    if (authenticatedUserKey) {
+      previousAuthenticatedUserRef.current = authenticatedUserKey;
+      return;
+    }
+    if (previousAuthenticatedUserRef.current) {
+      previousAuthenticatedUserRef.current = "";
+      resetToFreshGuestChat();
+    }
+  }, [authState.authenticated, authState.email, authState.userId, resetToFreshGuestChat]);
 
   useEffect(() => {
     fetchHistory(currentSession).then(setHistoryList).catch(console.error);
@@ -1308,8 +1415,10 @@ export default function App() {
     setMailError("");
     try {
       await logoutGoogleSignIn();
-      await refreshMailState(currentSession);
-      await refreshResources(currentSession);
+      previousAuthenticatedUserRef.current = "";
+      const guestSessionId = resetToFreshGuestChat();
+      await refreshMailState(guestSessionId);
+      await refreshResources(guestSessionId);
     } catch (err) {
       setMailError(err.message || "Đăng xuất Google thất bại.");
       alert(`Lỗi đăng xuất Google: ${err.message}`);
