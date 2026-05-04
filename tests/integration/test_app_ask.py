@@ -128,6 +128,61 @@ def test_extract_retrieve_citations_parses_chunk_blocks(monkeypatch, tmp_path):
     assert citations[1]["source_line"] is None
 
 
+def test_extract_retrieve_citations_keeps_ielts_table_rows(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    (app_mod.SESSION_CACHE_DIR).mkdir(parents=True, exist_ok=True)
+
+    context = (
+        "[SỔ TAY HỌC VỤ.pdf - Chunk 73 - Page 26] ### BẢNG THAM CHIẾU KẾT QUẢ CÁC BÀI THI TIẾNG ANH\n"
+        "| KNLNVN | IELTS | TOEFL | Aptis ESOL | Cambridge Exam |\n"
+        "| :--- | :--- | :--- | :--- | :--- |\n"
+        "| Bậc 3 | 4.5 | 450 | B1 | PET |\n"
+        "| Bậc 4 | 5.5 | 500 | B2 | FCE |\n"
+        "| Bậc 5 | 7.0 | 600 | C1 | CAE |"
+    )
+    citations = app_mod._extract_retrieve_citations(
+        context,
+        max_items=3,
+        query="với 6.5 ielts tôi có đủ điều kiện tiếng anh để ra trường không",
+        answer="IELTS 6.5 cao hơn chuẩn Bậc 3 và Bậc 4.",
+    )
+
+    assert len(citations) == 1
+    excerpt = citations[0]["excerpt"]
+    assert "| KNLNVN | IELTS |" in excerpt
+    assert "| Bậc 3 | 4.5 |" in excerpt
+    assert "| Bậc 4 | 5.5 |" in excerpt
+
+
+def test_extract_retrieve_citations_keeps_ielts_rows_when_markdown_row_is_wrapped(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    (app_mod.SESSION_CACHE_DIR).mkdir(parents=True, exist_ok=True)
+
+    context = (
+        "[SỔ TAY HỌC VỤ.pdf - Chunk 73 - Page 26] ### BẢNG THAM CHIẾU KẾT QUẢ CÁC BÀI THI TIẾNG ANH\n"
+        "| KNLNVN | IELTS | TOEFL | Aptis ESOL | Cambridge Exam | VSTEP |\n"
+        "| :--- | :--- | :--- | :--- | :--- | :--- |\n"
+        "| Bậc 3 | 4.5 | 42 iBT | B1 | A2 Key:140\n"
+        "B1 Preliminary: 140\n"
+        "B2 First: 140 | VSTEP.3-5 (4.0) |\n"
+        "| Bậc 4 | 5.5 | 72 iBT | B2 | FCE | VSTEP.3-5 (6.0) |"
+    )
+    citations = app_mod._extract_retrieve_citations(
+        context,
+        max_items=3,
+        query="với 6.5 ielts tôi có đủ điều kiện tiếng anh để ra trường không",
+        answer="IELTS 6.5 cao hơn chuẩn Bậc 3 và Bậc 4.",
+    )
+
+    assert len(citations) == 1
+    excerpt = citations[0]["excerpt"]
+    assert "| KNLNVN | IELTS |" in excerpt
+    assert "| Bậc 3 | 4.5 |" in excerpt
+    assert "| Bậc 4 | 5.5 |" in excerpt
+
+
 def test_ask_vector_store_response_includes_citations(monkeypatch, tmp_path):
     app_mod = importlib.reload(importlib.import_module("app"))
     monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
@@ -1198,6 +1253,15 @@ def test_normalize_output_text_strips_trailing_source_items_with_broken_header()
     assert "INT3412E 1" in normalized
 
 
+def test_normalize_output_text_repairs_stored_ait3004_ocr_title():
+    app_mod = importlib.reload(importlib.import_module("app"))
+    text = "AIT3004 - T tạ h o ực hành phát triển hệ thống Trí tuệ nhân"
+
+    normalized = app_mod._normalize_output_text(text)
+
+    assert normalized == "AIT3004 - Thực hành phát triển hệ thống Trí tuệ nhân tạo"
+
+
 def test_normalize_output_text_strips_mojibake_source_footer_header():
     app_mod = importlib.reload(importlib.import_module("app"))
     text = (
@@ -1310,6 +1374,30 @@ def test_render_structured_schedule_answer_dedupes_teacher_rows_and_shows_subjec
     norm_answer = app_mod.normalize_for_match(answer)
     assert "int3117 - kiem thu va dam bao chat luong phan mem (software testing and quality assurance)" in norm_answer
     assert norm_answer.count("- int3117 2: thu 6, ca 4, phong 207-t") == 1
+
+
+def test_render_structured_schedule_answer_repairs_ait3004_ocr_title():
+    app_mod = importlib.reload(importlib.import_module("app"))
+    payload = {
+        "rows": [
+            {
+                "subject_code": "AIT3004",
+                "subject_name_vi": "T tạ h o ực hành phát triển hệ thống Trí tuệ nhân",
+                "subject_name_en": "",
+                "class_code": "AIT3004 1",
+                "day_of_week": "Thứ 2",
+                "slot": "2",
+                "room": "503-A",
+                "teacher_name": "Trịnh Ngọc Huỳnh",
+            }
+        ],
+        "matched_teacher": {"query": "Trịnh Ngọc Huỳnh"},
+    }
+    answer = app_mod._render_structured_schedule_answer("thầy Huỳnh dạy gì", json.dumps(payload, ensure_ascii=False))
+
+    assert "AIT3004 - Thực hành phát triển hệ thống Trí tuệ nhân tạo" in answer
+    assert "T tạ h o ực" not in answer
+
 
 def test_render_structured_schedule_answer_appends_missing_subject_note_for_multi_subject_query():
     app_mod = importlib.reload(importlib.import_module("app"))

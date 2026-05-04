@@ -43,7 +43,7 @@ from utils import process_pdf, normalize_for_match  # Backward-compatible import
 # Or just duplicate the listing logic to avoid dependency issues if separate process?
 # They likely share the 'data' dir.
 from resource_loader import resource_loader 
-from mail_agent import mail_agent_service
+from mail_agent import MailOAuthRefreshError, mail_agent_service
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -706,6 +706,77 @@ def _compact_citation_excerpt(
     if len(lines) <= 4:
         return "\n".join(lines)[:max_chars]
 
+    table_focus_keywords = {
+        "ielts",
+        "toeic",
+        "toefl",
+        "aptis",
+        "cambridge",
+        "vstep",
+        "ngoai ngu",
+        "knlnvn",
+    }
+    def _is_tableish_line(value: str) -> bool:
+        stripped = str(value or "").strip()
+        if not stripped:
+            return False
+        if stripped.startswith("|"):
+            return True
+        # Some OCR/markdown conversions may drop leading/trailing pipes
+        # but still keep multiple cell separators.
+        return stripped.count("|") >= 2
+
+    if force_keywords & table_focus_keywords:
+        best_table_excerpt: Optional[str] = None
+        best_table_score: Tuple[int, int] = (-1, -1)
+        for idx, line in enumerate(lines):
+            if not _is_tableish_line(line):
+                continue
+            table_start = idx
+            while table_start - 1 >= 0 and _is_tableish_line(lines[table_start - 1]):
+                table_start -= 1
+            table_end = idx
+            while table_end + 1 < len(lines):
+                next_idx = table_end + 1
+                next_line = lines[next_idx]
+                if _is_tableish_line(next_line):
+                    table_end = next_idx
+                    continue
+
+                # Some table cells may be OCR'd into a standalone continuation line.
+                # Keep a single bridge line if the following line returns to table format.
+                if next_idx + 1 < len(lines) and _is_tableish_line(lines[next_idx + 1]):
+                    continuation = next_line.strip()
+                    if continuation and not continuation.startswith(("#", "[", "Page ")):
+                        table_end = next_idx
+                        continue
+                break
+
+            nearby_start = max(0, table_start - 2)
+            nearby_text = "\n".join(lines[nearby_start : table_end + 1])
+            nearby_norm = normalize_for_match(nearby_text)
+            if not any(keyword in nearby_norm for keyword in table_focus_keywords):
+                continue
+
+            selected: List[str] = []
+            if table_start - 1 >= 0 and lines[table_start - 1].lstrip("#").strip():
+                selected.append(lines[table_start - 1])
+            selected.extend(lines[table_start : table_end + 1])
+            tableish_count = sum(1 for ln in selected if _is_tableish_line(ln))
+            if tableish_count <= 2:
+                # Header-only extraction is usually not useful for equivalency tables.
+                continue
+            candidate = "\n".join(selected).strip()
+            candidate_score = (tableish_count, len(candidate))
+            if candidate_score > best_table_score:
+                best_table_score = candidate_score
+                best_table_excerpt = candidate
+        if best_table_excerpt:
+            return best_table_excerpt[:max_chars]
+        # Fallback: keep raw excerpt when table layout is malformed instead of
+        # over-compacting to header/separator only.
+        return raw_excerpt[:max_chars]
+
     scored_lines: List[Tuple[float, int]] = []
     for idx, line in enumerate(lines):
         line_score = _score_citation_excerpt(
@@ -1098,6 +1169,11 @@ def _normalize_output_text(text: str) -> str:
                 raw = decoded
         except Exception:
             pass
+
+    raw = raw.replace(
+        "AIT3004 - T tạ h o ực hành phát triển hệ thống Trí tuệ nhân",
+        "AIT3004 - Thực hành phát triển hệ thống Trí tuệ nhân tạo",
+    )
 
     def _normalize_footer_line(line: str) -> str:
         cleaned = str(line or "").strip()
@@ -3396,9 +3472,23 @@ def _render_structured_schedule_answer(query: str, context: str) -> str:
             return " ".join(left_tokens).strip(), " ".join(right_tokens).strip()
         return vi, ""
 
+    def _repair_subject_name(code: str, name: str) -> str:
+        cleaned = " ".join(str(name or "").replace("\n", " ").split())
+        if not cleaned:
+            return ""
+        normalized = normalize_for_match(cleaned)
+        # OCR from the timetable sometimes splits "Thực" into noisy single-letter fragments.
+        if str(code or "").strip().upper() == "AIT3004" and (
+            "t ta h o uc hanh" in normalized
+            or "h o uc hanh" in normalized
+            or "uc hanh phat trien he thong tri tue nhan" in normalized
+        ):
+            return "Thực hành phát triển hệ thống Trí tuệ nhân tạo"
+        return cleaned
+
     def _format_subject_title(code: str, name_vi_or_mix: str = "", name_en: str = "") -> str:
         code_clean = str(code or "").strip().upper()
-        vi, en = _split_bilingual_name(name_vi_or_mix, name_en)
+        vi, en = _split_bilingual_name(_repair_subject_name(code_clean, name_vi_or_mix), name_en)
         if vi and en:
             name_text = f"{vi} ({en})"
         else:
@@ -4690,6 +4780,9 @@ async def poll_mail_now(req: MailSessionRequest, request: Request):
         if callable(poll_owner):
             return poll_owner(owner_ctx, max_messages=20)
         return mail_agent_service.poll_session(sid)
+    except MailOAuthRefreshError as e:
+        logger.warning("Gmail OAuth refresh requires reconnect: %s", e)
+        raise HTTPException(status_code=401, detail=str(e))
     except Exception as e:
         logger.error("Error polling mail manually: %s", e)
         raise HTTPException(status_code=400, detail=str(e))

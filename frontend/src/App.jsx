@@ -22,6 +22,20 @@ const MAIL_CONNECT_CALLBACK_URI = `${API_BASE}/api/mail/connect/callback`;
 const createSessionId = () =>
   (crypto?.randomUUID ? crypto.randomUUID() : `session-${Date.now()}-${Math.random().toString(16).slice(2)}`);
 
+const readApiErrorMessage = async (res) => {
+  const text = await res.text();
+  if (!text) return res.statusText || "Request failed";
+  try {
+    const data = JSON.parse(text);
+    if (typeof data?.detail === "string") return data.detail;
+    if (data?.detail) return JSON.stringify(data.detail);
+    if (typeof data?.message === "string") return data.message;
+  } catch {
+    // Keep the original response text when it is not JSON.
+  }
+  return text;
+};
+
 const normalizeQueryForIntent = (text) =>
   String(text || "")
     .normalize("NFD")
@@ -500,7 +514,7 @@ async function pollMailNow(sessionId) {
     credentials: "include",
     body: JSON.stringify({ session_id: sessionId }),
   });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw new Error(await readApiErrorMessage(res));
   return res.json();
 }
 
@@ -848,7 +862,7 @@ export default function App() {
   }, [clearAuthPopupPoll]);
 
   const openOAuthPopupAndRefresh = useCallback(
-    (authUrl) => {
+    (authUrl, waitFor = "auth") => {
       if (!authUrl) throw new Error("Thiếu URL xác thực OAuth.");
 
       clearAuthPopupPoll();
@@ -865,9 +879,18 @@ export default function App() {
       const startedAt = Date.now();
       authPopupPollRef.current = window.setInterval(() => {
         const timedOut = Date.now() - startedAt > 5 * 60 * 1000;
-        Promise.resolve(fetchAuthMe())
-          .then(async (authData) => {
-            if (authData?.authenticated) {
+        const waitForMail = waitFor === "mail";
+        const statusPromise = waitForMail
+          ? Promise.all([fetchAuthMe(), fetchMailStatus(currentSession)]).then(([authData, mailData]) => ({
+              authData,
+              mailData,
+            }))
+          : fetchAuthMe().then((authData) => ({ authData, mailData: null }));
+
+        statusPromise
+          .then(async ({ authData, mailData }) => {
+            const completed = waitForMail ? Boolean(mailData?.connected) : Boolean(authData?.authenticated);
+            if (completed) {
               clearAuthPopupPoll();
               try {
                 if (!popup.closed) popup.close();
@@ -1093,7 +1116,7 @@ export default function App() {
     try {
       const data = await startMailConnect(sessionId, MAIL_CONNECT_CALLBACK_URI);
       if (data?.auth_url) {
-        openOAuthPopupAndRefresh(data.auth_url);
+        openOAuthPopupAndRefresh(data.auth_url, "mail");
       } else {
         alert("Không tạo được URL OAuth.");
       }
@@ -1166,6 +1189,12 @@ export default function App() {
     if (!sessionId) return;
     if (!canManageMail) {
       const msg = "Vui lòng đăng nhập Google trước khi poll mail.";
+      setMailError(msg);
+      alert(msg);
+      return;
+    }
+    if (!mailConnected) {
+      const msg = "Vui lòng bấm Connect Gmail trước khi poll mail.";
       setMailError(msg);
       alert(msg);
       return;
@@ -1592,7 +1621,7 @@ export default function App() {
                 <div style={{ marginTop: 18, paddingTop: 12, borderTop: "1px solid var(--glass-border)" }}>
                 <div style={{ marginBottom: 10, fontSize: 13, fontWeight: "bold" }}>Mail Updates (Review-first)</div>
                 <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-                  <button className="chip-btn" onClick={handleMailPollNow} disabled={mailLoading || !canManageMail} style={{ flex: 1 }}>
+                  <button className="chip-btn" onClick={handleMailPollNow} disabled={mailLoading || !canManageMail || !mailConnected} style={{ flex: 1 }}>
                     <i className={`fas ${mailLoading ? "fa-circle-notch fa-spin" : "fa-sync-alt"}`}></i> Poll now
                   </button>
                   <button className="chip-btn" onClick={handleSaveWhitelist} disabled={mailLoading || !canManageMail} style={{ flex: 1 }}>
@@ -1607,6 +1636,31 @@ export default function App() {
                 <div style={{ color: "#94a3b8", fontSize: 12, marginBottom: 8 }}>
                   {mailStatusText}
                 </div>
+                <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                  <button
+                    className="chip-btn"
+                    onClick={handleMailConnect}
+                    disabled={mailLoading || !canManageMail || mailConnected}
+                    style={{ flex: 1 }}
+                    title="Cấp quyền Gmail readonly để hệ thống có thể poll mail học vụ"
+                  >
+                    <i className="fas fa-link"></i> Connect Gmail
+                  </button>
+                  <button
+                    className="chip-btn"
+                    onClick={handleMailDisconnect}
+                    disabled={mailLoading || !canManageMail || !mailConnected}
+                    style={{ flex: 1 }}
+                    title="Ngắt kết nối Gmail khỏi Mail Updates"
+                  >
+                    <i className="fas fa-unlink"></i> Disconnect
+                  </button>
+                </div>
+                {canManageMail && !mailConnected && (
+                  <div style={{ color: "#fbbf24", fontSize: 12, marginBottom: 8 }}>
+                    Bạn đã đăng nhập Google nhưng chưa cấp quyền Gmail cho Mail Updates. Bấm Connect Gmail trước khi Poll now.
+                  </div>
+                )}
                 {mailError && (
                   <div
                     style={{

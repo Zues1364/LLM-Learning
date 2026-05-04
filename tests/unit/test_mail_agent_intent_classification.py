@@ -1,8 +1,10 @@
 import sys
 from pathlib import Path
+import sqlite3
 
 sys.path.append(str(Path(__file__).resolve().parents[2] / "src"))
 
+import mail_agent as mail_agent_mod
 from mail_agent import MailAgentService
 
 
@@ -35,6 +37,31 @@ def test_schedule_email_is_classified_as_relevant(monkeypatch):
     assert classification["is_relevant"] is True
     assert classification["intent"] in {"schedule_update", "registration_notice", "academic_notice"}
     assert reasons
+
+
+def test_save_mail_connection_first_insert_sets_connected_at(monkeypatch, tmp_path):
+    monkeypatch.setattr(mail_agent_mod, "MAIL_DB_PATH", tmp_path / "memory.db")
+    monkeypatch.setenv("APP_SESSION_SECRET", "test-secret")
+    svc = MailAgentService()
+
+    svc._save_mail_connection(
+        user_id="u1",
+        gmail_email="student@vnu.edu.vn",
+        refresh_token="refresh-token",
+        access_token="access-token",
+        access_expiry=123,
+        scope="https://www.googleapis.com/auth/gmail.readonly",
+    )
+
+    connection = svc._get_mail_connection("u1")
+    assert connection is not None
+    assert connection["refresh_token"] == "refresh-token"
+    assert connection["connected_at"]
+
+    with sqlite3.connect(tmp_path / "memory.db") as conn:
+        row = conn.execute("SELECT connected_at FROM mail_connections WHERE user_id = 'u1'").fetchone()
+    assert row is not None
+    assert row[0]
 
 
 def test_job_fair_email_is_rejected_even_if_keyword_exists(monkeypatch):

@@ -22,6 +22,16 @@ from utils import normalize_for_match
 
 logger = logging.getLogger(__name__)
 
+
+class MailOAuthRefreshError(ValueError):
+    """Raised when a stored Gmail OAuth refresh token cannot be refreshed."""
+
+    def __init__(self, message: str, *, invalid_grant: bool = False, detail: Optional[Dict[str, Any]] = None):
+        super().__init__(message)
+        self.invalid_grant = invalid_grant
+        self.detail = detail or {}
+
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 MAIL_DIR = BASE_DIR / "data" / "mail"
 MAIL_SESSION_DIR = MAIL_DIR / "sessions"
@@ -737,6 +747,7 @@ class MailAgentService:
                 "SELECT connected_at FROM mail_connections WHERE user_id = ?",
                 (str(user_id),),
             ).fetchone()
+            existing_connected_at = str(existing["connected_at"] or "") if existing is not None else ""
             conn.execute(
                 """
                 INSERT OR REPLACE INTO mail_connections (
@@ -750,7 +761,7 @@ class MailAgentService:
                     access_token or "",
                     int(access_expiry or 0),
                     scope or self.gmail_scope,
-                    connected_at or str(existing["connected_at"] or "") or _utc_now_iso(),
+                    connected_at or existing_connected_at or _utc_now_iso(),
                     _utc_now_iso(),
                 ),
             )
@@ -1212,7 +1223,22 @@ class MailAgentService:
             timeout=30,
         )
         if resp.status_code >= 400:
-            raise ValueError(f"OAuth refresh failed: {resp.text}")
+            try:
+                detail = resp.json()
+            except Exception:
+                detail = {"raw": resp.text}
+            error_code = str(detail.get("error") or "").strip()
+            if error_code == "invalid_grant":
+                raise MailOAuthRefreshError(
+                    "Kết nối Gmail đã hết hạn hoặc refresh token bị Google thu hồi. Vui lòng kết nối Gmail lại.",
+                    invalid_grant=True,
+                    detail=detail,
+                )
+            raise MailOAuthRefreshError(
+                f"Không refresh được OAuth token Gmail: {detail.get('error_description') or detail.get('error') or resp.text}",
+                invalid_grant=False,
+                detail=detail,
+            )
         return resp.json()
 
     def _ensure_access_token(
@@ -1231,7 +1257,11 @@ class MailAgentService:
             expiry_ts = int(connection.get("access_expiry") or 0)
             if access_token and now_ts < max(0, expiry_ts - 30):
                 return access_token
-            token_data = self._refresh_access_token(str(connection.get("refresh_token") or ""))
+            try:
+                token_data = self._refresh_access_token(str(connection.get("refresh_token") or ""))
+            except MailOAuthRefreshError:
+                self._delete_mail_connection(user_id)
+                raise
             new_access_token = str(token_data.get("access_token") or "")
             new_expiry = now_ts + int(token_data.get("expires_in") or 3600) - 30
             self._save_mail_connection(
@@ -1255,7 +1285,12 @@ class MailAgentService:
         if access_token and now_ts < max(0, expiry_ts - 30):
             return access_token
 
-        token_data = self._refresh_access_token(str(refresh_token))
+        try:
+            token_data = self._refresh_access_token(str(refresh_token))
+        except MailOAuthRefreshError:
+            state["oauth"] = {}
+            self._save_state(str(ctx.get("session_id") or "user_session_1"), state)
+            raise
         oauth["access_token"] = token_data.get("access_token")
         oauth["token_type"] = token_data.get("token_type", "Bearer")
         oauth["scope"] = token_data.get("scope", oauth.get("scope", self.gmail_scope))

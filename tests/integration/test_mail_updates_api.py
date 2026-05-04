@@ -116,3 +116,23 @@ def test_mail_status_keeps_additive_owner_fields(monkeypatch):
     body = status.json()
     assert body["owner_type"] == "user"
     assert body["mode"] == "user"
+
+
+def test_mail_poll_returns_reconnect_message_for_invalid_refresh_token(monkeypatch):
+    app_mod = importlib.reload(importlib.import_module("app"))
+
+    class _ExpiredMailService(_DummyMailService):
+        def poll_owner(self, owner_ctx, max_messages=20):
+            raise app_mod.MailOAuthRefreshError(
+                "Kết nối Gmail đã hết hạn hoặc refresh token bị Google thu hồi. Vui lòng kết nối Gmail lại.",
+                invalid_grant=True,
+                detail={"error": "invalid_grant"},
+            )
+
+    monkeypatch.setattr(app_mod, "mail_agent_service", _ExpiredMailService())
+    client = TestClient(app_mod.app)
+
+    resp = client.post("/api/mail/poll", json={"session_id": "s-1"})
+
+    assert resp.status_code == 401
+    assert "Vui lòng kết nối Gmail lại" in resp.json()["detail"]
