@@ -348,6 +348,7 @@ async function askQuestionWithFiles(query, allowWebSearch, sessionId, fileIds, p
   const res = await fetch(`${API_BASE}/ask`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    credentials: "include",
     body: JSON.stringify({
       query,
       allow_web_search: allowWebSearch,
@@ -361,7 +362,9 @@ async function askQuestionWithFiles(query, allowWebSearch, sessionId, fileIds, p
 }
 
 async function fetchHistory(sessionId) {
-  const res = await fetch(`${API_BASE}/history?session_id=${encodeURIComponent(sessionId || "")}`);
+  const res = await fetch(`${API_BASE}/history?session_id=${encodeURIComponent(sessionId || "")}`, {
+    credentials: "include",
+  });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -376,9 +379,81 @@ async function deleteSessionApi(sessionId) {
   const res = await fetch(`${API_BASE}/session`, {
     method: "DELETE",
     headers: { "Content-Type": "application/json" },
+    credentials: "include",
     body: JSON.stringify({ session_id: sessionId }),
   });
   if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+const normalizeChatSession = (item, index = 0) => {
+  const id = String(item?.id || item?.session_id || "").trim();
+  if (!id) return null;
+  return {
+    id,
+    title: String(item?.title || `Phien ${index + 1}`).trim() || `Phien ${index + 1}`,
+    selected_program_id: item?.selected_program_id || "",
+    selected_file_ids: Array.isArray(item?.selected_file_ids) ? item.selected_file_ids.filter(Boolean) : [],
+  };
+};
+
+const normalizeChatMessage = (item) => {
+  const role = String(item?.role || "").toLowerCase();
+  const type = role === "user" ? "user" : role === "system" ? "system" : "bot";
+  return {
+    type,
+    text: String(item?.content || ""),
+    citations: Array.isArray(item?.citations) ? item.citations : [],
+  };
+};
+
+async function fetchChatSessions() {
+  const res = await fetch(`${API_BASE}/api/chat/sessions`, { credentials: "include" });
+  if (!res.ok) throw new Error(await readApiErrorMessage(res));
+  return res.json();
+}
+
+async function createChatSessionApi(sessionId, title, selectedProgramId = "", selectedFileIds = []) {
+  const res = await fetch(`${API_BASE}/api/chat/sessions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({
+      session_id: sessionId,
+      title,
+      selected_program_id: selectedProgramId || null,
+      selected_file_ids: selectedFileIds || [],
+    }),
+  });
+  if (!res.ok) throw new Error(await readApiErrorMessage(res));
+  return res.json();
+}
+
+async function fetchChatMessages(sessionId) {
+  const res = await fetch(`${API_BASE}/api/chat/sessions/${encodeURIComponent(sessionId)}/messages`, {
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error(await readApiErrorMessage(res));
+  return res.json();
+}
+
+async function updateChatSessionApi(sessionId, payload) {
+  const res = await fetch(`${API_BASE}/api/chat/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(payload || {}),
+  });
+  if (!res.ok) throw new Error(await readApiErrorMessage(res));
+  return res.json();
+}
+
+async function archiveChatSessionApi(sessionId) {
+  const res = await fetch(`${API_BASE}/api/chat/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error(await readApiErrorMessage(res));
   return res.json();
 }
 
@@ -801,6 +876,45 @@ export default function App() {
     });
   };
 
+  const refreshChatSessions = useCallback(async () => {
+    if (!authState.authenticated) return;
+    try {
+      const data = await fetchChatSessions();
+      const serverSessions = (data?.sessions || []).map(normalizeChatSession).filter(Boolean);
+      if (!serverSessions.length) return;
+
+      setSessions(serverSessions.map(({ id, title }) => ({ id, title })));
+      setSelectedProgramBySession((prev) => {
+        const next = { ...prev };
+        serverSessions.forEach((session) => {
+          if (session.selected_program_id) next[session.id] = session.selected_program_id;
+        });
+        return next;
+      });
+      setPendingProgramBySession((prev) => {
+        const next = { ...prev };
+        serverSessions.forEach((session) => {
+          if (session.selected_program_id) next[session.id] = session.selected_program_id;
+        });
+        return next;
+      });
+      setSelectedFilesBySession((prev) => {
+        const next = { ...prev };
+        serverSessions.forEach((session) => {
+          if (session.selected_file_ids.length) next[session.id] = session.selected_file_ids;
+        });
+        return next;
+      });
+      if (!serverSessions.some((session) => session.id === currentSession)) {
+        setCurrentSession(serverSessions[0].id);
+      }
+    } catch (err) {
+      if (!String(err?.message || "").includes("401")) {
+        console.error("Fetch chat sessions failed", err);
+      }
+    }
+  }, [authState.authenticated, currentSession]);
+
   useEffect(() => {
     if (!sessions.some((s) => s.id === currentSession)) {
       const fallback = sessions[0]?.id || initialSessionId;
@@ -818,6 +932,26 @@ export default function App() {
   useEffect(() => {
     fetchHistory(currentSession).then(setHistoryList).catch(console.error);
   }, [currentSession]);
+
+  useEffect(() => {
+    refreshChatSessions();
+  }, [authState.authenticated, authState.userId, refreshChatSessions]);
+
+  useEffect(() => {
+    if (!authState.authenticated || !currentSession) return;
+    fetchChatMessages(currentSession)
+      .then((data) => {
+        const serverMessages = (data?.messages || []).map(normalizeChatMessage).filter((msg) => msg.text);
+        if (serverMessages.length) {
+          setMessagesBySession((prev) => ({ ...prev, [currentSession]: serverMessages }));
+        }
+      })
+      .catch((err) => {
+        if (!String(err?.message || "").includes("401") && !String(err?.message || "").includes("404")) {
+          console.error("Fetch chat messages failed", err);
+        }
+      });
+  }, [authState.authenticated, authState.userId, currentSession]);
 
   useEffect(() => {
     refreshFiles();
@@ -923,9 +1057,21 @@ export default function App() {
     [clearAuthPopupPoll, currentSession, refreshMailState, refreshResources]
   );
 
-  const handleNewChat = () => {
-    const newId = createSessionId();
-    const newTitle = `Phien ${sessions.length + 1}`;
+  const handleNewChat = async () => {
+    let newId = createSessionId();
+    let newTitle = `Phien ${sessions.length + 1}`;
+    if (authState.authenticated) {
+      try {
+        const created = await createChatSessionApi(newId, newTitle, programs[0]?.id || "", []);
+        const serverSession = normalizeChatSession(created?.session, sessions.length);
+        if (serverSession) {
+          newId = serverSession.id;
+          newTitle = serverSession.title;
+        }
+      } catch (err) {
+        console.error("Create server chat session failed", err);
+      }
+    }
     setSessions((prev) => [...prev, { id: newId, title: newTitle }]);
     setCurrentSession(newId);
     setMessagesBySession((prev) => ({ ...prev, [newId]: [] }));
@@ -966,6 +1112,9 @@ export default function App() {
 
   const handleDeleteSession = async (sessionId) => {
     try {
+      if (authState.authenticated) {
+        await archiveChatSessionApi(sessionId);
+      }
       await deleteSessionApi(sessionId);
     } catch (err) {
       console.error("Delete session failed", err);
@@ -1004,11 +1153,18 @@ export default function App() {
     }
   };
 
-  const handleRenameSession = (sessionId) => {
+  const handleRenameSession = async (sessionId) => {
     const target = sessions.find((s) => s.id === sessionId);
     if (!target) return;
     const nextTitle = window.prompt("Nhap ten phien", target.title)?.trim();
     if (!nextTitle) return;
+    if (authState.authenticated) {
+      try {
+        await updateChatSessionApi(sessionId, { title: nextTitle });
+      } catch (err) {
+        console.error("Rename server chat session failed", err);
+      }
+    }
     setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, title: nextTitle } : s)));
   };
 
@@ -1320,6 +1476,12 @@ export default function App() {
     }
     setSelectedProgramBySession((prev) => ({ ...prev, [currentSession]: selected }));
     setPendingProgramBySession((prev) => ({ ...prev, [currentSession]: selected }));
+    if (authState.authenticated) {
+      updateChatSessionApi(currentSession, {
+        selected_program_id: selected,
+        selected_file_ids: selectedFileIds,
+      }).catch((err) => console.error("Update server chat program failed", err));
+    }
     const selectedName = programs.find((p) => p.id === selected)?.display_name || selected;
     updateMessages(currentSession, (prev) => [
       ...prev,
@@ -1414,6 +1576,15 @@ export default function App() {
       updateMessages(sessionId, (prev) => [...prev, { type: "bot", text: answer, citations }]);
       const updatedHist = await fetchHistory(sessionId);
       setHistoryList(updatedHist);
+      if (authState.authenticated) {
+        await refreshChatSessions();
+        const serverMessages = await fetchChatMessages(sessionId)
+          .then((data) => (data?.messages || []).map(normalizeChatMessage).filter((msg) => msg.text))
+          .catch(() => []);
+        if (serverMessages.length) {
+          setMessagesBySession((prev) => ({ ...prev, [sessionId]: serverMessages }));
+        }
+      }
     } catch (err) {
       updateMessages(sessionId, (prev) => [...prev, { type: "bot", text: `Loi: ${err.message}` }]);
     } finally {
