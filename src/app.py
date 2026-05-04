@@ -160,6 +160,21 @@ def _current_user_from_request(request: Request) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _current_user_id_from_request(request: Request) -> Optional[str]:
+    user = _current_user_from_request(request)
+    if not user:
+        return None
+    user_id = str(user.get("id") or "").strip()
+    return user_id or None
+
+
+def _with_memory_owner(args: Dict[str, Any], user_id: Optional[str]) -> Dict[str, Any]:
+    payload = dict(args or {})
+    if user_id:
+        payload["user_id"] = user_id
+    return payload
+
+
 def _resolve_mail_owner(request: Request, session_id: Optional[str]) -> Dict[str, Any]:
     user = _current_user_from_request(request)
     normalized_session = _normalize_session_id(session_id or "user_session_1")
@@ -496,10 +511,13 @@ def _context_to_text(value: Any) -> str:
     return str(value)
 
 
-def _load_structured_state(session_id: str) -> Dict[str, Any]:
+def _load_structured_state(session_id: str, user_id: Optional[str] = None) -> Dict[str, Any]:
     state = default_conversation_state()
     try:
-        payload = mcp_client.invoke("memory_state_get", {"session_id": session_id})
+        payload = mcp_client.invoke(
+            "memory_state_get",
+            _with_memory_owner({"session_id": session_id}, user_id),
+        )
         if isinstance(payload, dict):
             state.update(payload)
             if isinstance(payload.get("entities"), dict):
@@ -524,6 +542,7 @@ def _save_structured_state(
     planner_source: str,
     planner_context: str,
     selected_program_id: Optional[str],
+    user_id: Optional[str] = None,
 ) -> None:
     try:
         next_state = update_state_after_turn(
@@ -537,10 +556,13 @@ def _save_structured_state(
         )
         mcp_client.invoke(
             "memory_state_upsert",
-            {
-                "session_id": session_id,
-                "state": next_state,
-            },
+            _with_memory_owner(
+                {
+                    "session_id": session_id,
+                    "state": next_state,
+                },
+                user_id,
+            ),
         )
     except Exception as e:
         logger.warning("Khong luu duoc structured state cho session %s: %s", session_id, e)
@@ -1310,9 +1332,16 @@ def _safe_json_loads(value: Any) -> Dict[str, Any]:
     return {"raw": str(value)}
 
 
-def _load_memory_context_for_session(session_id: str, max_rows: int = 10) -> str:
+def _load_memory_context_for_session(
+    session_id: str,
+    max_rows: int = 10,
+    user_id: Optional[str] = None,
+) -> str:
     try:
-        memory_result = mcp_client.invoke("memory_get", {"session_id": session_id, "max_rows": max_rows})
+        memory_result = mcp_client.invoke(
+            "memory_get",
+            _with_memory_owner({"session_id": session_id, "max_rows": max_rows}, user_id),
+        )
         return _context_to_text(memory_result)
     except Exception as mem_err:
         logger.warning("memory_get failed for session=%s: %s", session_id, mem_err)
@@ -2681,8 +2710,9 @@ def _build_structured_route_payload(
     intent: str,
     confidence: float,
     memory_context: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
-    memory_text = memory_context if memory_context is not None else _load_memory_context_for_session(session_id=session_id, max_rows=10)
+    memory_text = memory_context if memory_context is not None else _load_memory_context_for_session(session_id=session_id, max_rows=10, user_id=user_id)
     semester_code = _infer_schedule_semester_code(query)
 
     def _payload(source: str, context_obj: Any, tool_used: str, fallback_stage: str) -> Dict[str, Any]:
@@ -3960,8 +3990,9 @@ def _fallback_planner_payload(
     program_id: Optional[str],
     structured_prefetch: Optional[Dict[str, Any]] = None,
     force_advisor: bool = False,
+    user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    memory_context = _load_memory_context_for_session(session_id=session_id, max_rows=10)
+    memory_context = _load_memory_context_for_session(session_id=session_id, max_rows=10, user_id=user_id)
 
     if structured_prefetch and _context_to_text(structured_prefetch.get("context")) and not force_advisor:
         merged = dict(structured_prefetch)
@@ -4024,11 +4055,14 @@ def _fallback_planner_payload(
 
     # Transcript-intensive advisory queries must not silently degrade to vector retrieval,
     # otherwise users receive misleading "khong du du lieu CTDT" answers.
+    advisor_args = {"query": query, "file_ids": selected_files, "session_id": session_id, "program_id": program_id}
+    if user_id:
+        advisor_args["user_id"] = user_id
     if force_advisor or transcript_intensive:
         tool_chain = [
             (
                 "consult_advisor",
-                {"query": query, "file_ids": selected_files, "session_id": session_id, "program_id": program_id},
+                advisor_args,
                 "academic_advisor",
             )
         ]
@@ -4036,7 +4070,7 @@ def _fallback_planner_payload(
         tool_chain = [
             (
                 "consult_advisor",
-                {"query": query, "file_ids": selected_files, "session_id": session_id, "program_id": program_id},
+                advisor_args,
                 "academic_advisor",
             ),
             (
@@ -4054,7 +4088,7 @@ def _fallback_planner_payload(
             ),
             (
                 "consult_advisor",
-                {"query": query, "file_ids": selected_files, "session_id": session_id, "program_id": program_id},
+                advisor_args,
                 "academic_advisor",
             ),
         ]
@@ -4921,12 +4955,13 @@ async def upload_multiple_pdfs(files: List[UploadFile] = File(...)):
     return {"uploaded": results, "errors": errors}
 
 @app.post("/ask")
-async def ask_question(request: QueryRequest):
+async def ask_question(http_request: Request, payload: QueryRequest):
     # Orchestrator flow:
     # 1) plan -> 2) parse -> 3) execute -> 4) respond
-    query = request.query
-    session_id = request.session_id or "user_session_1"
-    state_before = _load_structured_state(session_id)
+    query = payload.query
+    session_id = payload.session_id or "user_session_1"
+    user_id = _current_user_id_from_request(http_request)
+    state_before = _load_structured_state(session_id, user_id=user_id)
     resolution = resolve_query_with_state(query, state_before)
     resolved_query = str(resolution.get("resolved_query") or query or "").strip()
     if resolved_query and resolved_query != query:
@@ -4937,7 +4972,7 @@ async def ask_question(request: QueryRequest):
             resolved_query,
             resolution.get("applied_referents") or [],
         )
-    selected_files = _normalize_file_ids(request.file_ids or [])
+    selected_files = _normalize_file_ids(payload.file_ids or [])
     session_meta = _load_session_meta(session_id)
     if not selected_files:
         cached_files = session_meta.get("file_ids") or []
@@ -4955,7 +4990,7 @@ async def ask_question(request: QueryRequest):
             "selected_program_id": None,
         }
 
-    requested_program_id = str(request.program_id).strip() if request.program_id else None
+    requested_program_id = str(payload.program_id).strip() if payload.program_id else None
     cached_program_id = str(session_meta.get("program_id")).strip() if session_meta.get("program_id") else None
     effective_program_id = requested_program_id or cached_program_id
 
@@ -5015,7 +5050,7 @@ async def ask_question(request: QueryRequest):
         else:
             logger.info("[route] structured TKB disabled by flag for session=%s", session_id)
 
-        memory_context = _load_memory_context_for_session(session_id=session_id, max_rows=10)
+        memory_context = _load_memory_context_for_session(session_id=session_id, max_rows=10, user_id=user_id)
         planner_orchestration_required = (
             STRUCTURED_TKB_ENABLED
             and _query_requires_planner_orchestration(query=resolved_query, route_intent=route_intent)
@@ -5036,6 +5071,7 @@ async def ask_question(request: QueryRequest):
                 intent=route_intent,
                 confidence=route_confidence,
                 memory_context=memory_context,
+                user_id=user_id,
             )
 
         obj: Dict[str, Any]
@@ -5070,11 +5106,12 @@ async def ask_question(request: QueryRequest):
                 program_id=effective_program_id,
                 structured_prefetch=structured_prefetch,
                 force_advisor=advisor_priority_query,
+                user_id=user_id,
             )
         else:
             # 1) PLAN
             files_hint = f"[FILES:{','.join(selected_files)}]" if selected_files else "[FILES:none]"
-            planner_agent = get_mcp_planner_agent(allow_web_search=request.allow_web_search)
+            planner_agent = get_mcp_planner_agent(allow_web_search=payload.allow_web_search)
             planner_input = f"[SESSION:{session_id}] [PROGRAM:{effective_program_id}] {files_hint} {resolved_query}"
             planner_output = ""
             planner_error: Optional[Exception] = None
@@ -5106,6 +5143,7 @@ async def ask_question(request: QueryRequest):
                     program_id=effective_program_id,
                     structured_prefetch=structured_prefetch,
                     force_advisor=advisor_priority_query,
+                    user_id=user_id,
                 )
             else:
                 obj = _parse_planner_output(planner_output)
@@ -5124,6 +5162,7 @@ async def ask_question(request: QueryRequest):
                         program_id=effective_program_id,
                         structured_prefetch=structured_prefetch,
                         force_advisor=advisor_priority_query,
+                        user_id=user_id,
                     )
                 elif (
                     STRUCTURED_TKB_ENABLED
@@ -5275,12 +5314,15 @@ async def ask_question(request: QueryRequest):
         try:
             mcp_client.invoke(
                 "memory_add",
-                {
-                    "session_id": session_id,
-                    "query": query,
-                    "answer": answer,
-                    "chunk_index": chunk_index,
-                },
+                _with_memory_owner(
+                    {
+                        "session_id": session_id,
+                        "query": query,
+                        "answer": answer,
+                        "chunk_index": chunk_index,
+                    },
+                    user_id,
+                ),
             )
         except Exception as e:
             logger.warning("Luu lich su loi (bo qua): %s", e)
@@ -5294,6 +5336,7 @@ async def ask_question(request: QueryRequest):
             planner_source=source,
             planner_context=context,
             selected_program_id=effective_program_id,
+            user_id=user_id,
         )
 
         # 4) RESPOND
@@ -5312,10 +5355,17 @@ async def ask_question(request: QueryRequest):
 
 
 @app.get("/history", response_model=List[HistoryItem])
-async def get_history(session_id: str = "user_session_1", page: int = 1, per_page: int = 25):
+async def get_history(
+    http_request: Request,
+    session_id: str = "user_session_1",
+    page: int = 1,
+    per_page: int = 25,
+):
+    user_id = _current_user_id_from_request(http_request)
     try:
         history_lines = mcp_client.invoke(
-            "memory_get", {"session_id": session_id, "max_rows": per_page}
+            "memory_get",
+            _with_memory_owner({"session_id": session_id, "max_rows": per_page}, user_id),
         )
         history_items = []
         for line in history_lines:
@@ -5341,9 +5391,10 @@ async def get_history(session_id: str = "user_session_1", page: int = 1, per_pag
 
 
 @app.delete("/session")
-async def delete_session(req: SessionRequest):
+async def delete_session(http_request: Request, req: SessionRequest):
+    user_id = _current_user_id_from_request(http_request)
     try:
-        memory.clear_session(req.session_id)
+        memory.clear_session(req.session_id, user_id=user_id)
         session_dir = _session_dir(req.session_id)
         if session_dir.exists():
             shutil.rmtree(session_dir, ignore_errors=True)

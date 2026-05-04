@@ -38,3 +38,16 @@ def test_clear_session_also_clears_structured_state(tmp_path):
     loaded = mem.get_structured_state("s2")
     assert loaded["turn_index"] == 0
     assert loaded["entities"]["course_codes"] == []
+
+
+def test_structured_state_can_be_scoped_by_user_and_session(tmp_path):
+    db_path = tmp_path / "memory.db"
+    mem = PersistentMemory(db_path=str(db_path), max_history=5)
+
+    mem.save_structured_state("shared", {"turn_index": 1}, user_id="user-a")
+    mem.save_structured_state("shared", {"turn_index": 2}, user_id="user-b")
+    mem.save_structured_state("shared", {"turn_index": 3})
+
+    assert mem.get_structured_state("shared", user_id="user-a")["turn_index"] == 1
+    assert mem.get_structured_state("shared", user_id="user-b")["turn_index"] == 2
+    assert mem.get_structured_state("shared")["turn_index"] == 3

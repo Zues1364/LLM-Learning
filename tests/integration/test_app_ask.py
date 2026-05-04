@@ -87,6 +87,99 @@ def test_ask_returns_answer_with_program_and_injects_prompt(app_module):
     assert "[PROGRAM:cs_2022]" in app_module._planner_prompts[-1]
 
 
+def test_ask_passes_authenticated_user_to_memory_tools(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    (app_mod.SESSION_CACHE_DIR).mkdir(parents=True, exist_ok=True)
+
+    class DummyPlanner:
+        def run(self, prompt):
+            payload = {"source": "vector_store", "context": "ctx", "memory": "", "chunk_index": 1}
+            return type("Resp", (), {"content": json.dumps(payload)})()
+
+    class DummyAnswerAgent:
+        def run(self, query, context, source, memory_context):
+            return "scoped answer"
+
+    captured_memory_calls = []
+
+    def fake_user(raw_token, touch=True):
+        if raw_token == "auth-token":
+            return {"id": "user-123", "email": "student@vnu.edu.vn"}
+        return None
+
+    def fake_invoke(tool, args):
+        if tool.startswith("memory"):
+            captured_memory_calls.append((tool, dict(args)))
+        if tool == "get_available_programs":
+            return {
+                "programs": [
+                    {
+                        "id": "cs_2022",
+                        "name": "Khoa hoc may tinh",
+                        "year": "2022",
+                        "display_name": "Khoa hoc may tinh (QH-2022-2024)",
+                    }
+                ]
+            }
+        if tool == "memory_state_get":
+            return {}
+        if tool == "memory_get":
+            return []
+        if tool == "retrieve_chunks":
+            return ""
+        return "ok"
+
+    monkeypatch.setattr(app_mod.mail_agent_service, "get_authenticated_user", fake_user)
+    monkeypatch.setattr(app_mod, "answer_agent", DummyAnswerAgent())
+    monkeypatch.setattr(app_mod, "get_mcp_planner_agent", lambda allow_web_search=False: DummyPlanner())
+    monkeypatch.setattr(app_mod.mcp_client, "invoke", fake_invoke)
+
+    client = TestClient(app_mod.app)
+    client.cookies.set(app_mod._mail_cookie_name(), "auth-token")
+    resp = client.post(
+        "/ask",
+        json={"query": "hello", "session_id": "shared-session", "file_ids": [], "program_id": "cs_2022"},
+    )
+
+    assert resp.status_code == 200
+    memory_args = {tool: args for tool, args in captured_memory_calls}
+    assert memory_args["memory_state_get"]["user_id"] == "user-123"
+    assert memory_args["memory_get"]["user_id"] == "user-123"
+    assert memory_args["memory_add"]["user_id"] == "user-123"
+    assert memory_args["memory_state_upsert"]["user_id"] == "user-123"
+
+
+def test_history_passes_authenticated_user_to_memory_get(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    (app_mod.SESSION_CACHE_DIR).mkdir(parents=True, exist_ok=True)
+
+    captured_args = {}
+
+    def fake_user(raw_token, touch=True):
+        if raw_token == "auth-token":
+            return {"id": "user-123", "email": "student@vnu.edu.vn"}
+        return None
+
+    def fake_invoke(tool, args):
+        if tool == "memory_get":
+            captured_args.update(args)
+            return []
+        return "ok"
+
+    monkeypatch.setattr(app_mod.mail_agent_service, "get_authenticated_user", fake_user)
+    monkeypatch.setattr(app_mod.mcp_client, "invoke", fake_invoke)
+
+    client = TestClient(app_mod.app)
+    client.cookies.set(app_mod._mail_cookie_name(), "auth-token")
+    resp = client.get("/history?session_id=shared-session")
+
+    assert resp.status_code == 200
+    assert captured_args["session_id"] == "shared-session"
+    assert captured_args["user_id"] == "user-123"
+
+
 def test_ask_uses_cached_program_for_next_request(app_module):
     client = TestClient(app_module.app)
     session_id = "s3"

@@ -16,6 +16,14 @@ class PersistentMemory:
         self.embedder = embedder  # kept for compatibility, but not used
         self._init_db()
 
+    @staticmethod
+    def _scoped_session_id(session_id: str = "default", user_id: Optional[str] = None) -> str:
+        sid = str(session_id or "default").strip() or "default"
+        uid = str(user_id or "").strip()
+        if not uid:
+            return sid
+        return f"user:{uid}:session:{sid}"
+
     def _init_db(self):
         try:
             db_parent = Path(self.db_path).resolve().parent
@@ -64,25 +72,32 @@ class PersistentMemory:
         response: str,
         session_id: str = "default",
         chunk_index: Optional[int] = None,
+        user_id: Optional[str] = None,
     ):
+        scoped_session_id = self._scoped_session_id(session_id=session_id, user_id=user_id)
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT INTO history (session_id, query, response, chunk_index) VALUES (?, ?, ?, ?)",
-                    (session_id, query, response, chunk_index),
+                    (scoped_session_id, query, response, chunk_index),
                 )
                 conn.commit()
                 cursor.execute(
                     """
-                    DELETE FROM history WHERE id NOT IN (
-                        SELECT id FROM history ORDER BY timestamp DESC LIMIT ?
-                    )
+                    DELETE FROM history
+                    WHERE session_id = ?
+                      AND id NOT IN (
+                          SELECT id FROM history
+                          WHERE session_id = ?
+                          ORDER BY timestamp DESC, id DESC
+                          LIMIT ?
+                      )
                     """,
-                    (self.max_history,),
+                    (scoped_session_id, scoped_session_id, self.max_history),
                 )
                 conn.commit()
-                logger.debug("Da them vao lich su: Query=%s, Session=%s", query, session_id)
+                logger.debug("Da them vao lich su: Query=%s, Session=%s", query, scoped_session_id)
         except sqlite3.Error as e:
             logger.error("Loi khi them vao lich su: %s", e)
 
@@ -92,9 +107,11 @@ class PersistentMemory:
         session_id: str = "default",
         chunk_index: Optional[int] = None,
         max_rows: int = 10,
+        user_id: Optional[str] = None,
     ) -> str:
         _ = query
         _ = chunk_index
+        scoped_session_id = self._scoped_session_id(session_id=session_id, user_id=user_id)
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
@@ -102,14 +119,14 @@ class PersistentMemory:
                     """
                     SELECT query, response, timestamp FROM history
                     WHERE session_id = ?
-                    ORDER BY timestamp DESC LIMIT ?
+                    ORDER BY timestamp DESC, id DESC LIMIT ?
                     """,
-                    (session_id, max_rows),
+                    (scoped_session_id, max_rows),
                 )
                 rows = cursor.fetchall()
                 logger.info(
                     "[DEBUG] get_context: session_id='%s', found %s rows. DB path: %s",
-                    session_id,
+                    scoped_session_id,
                     len(rows),
                     self.db_path,
                 )
@@ -125,14 +142,15 @@ class PersistentMemory:
             logger.error("Loi khi truy xuat lich su: %s", e)
             return ""
 
-    def clear_session(self, session_id: str = "default"):
+    def clear_session(self, session_id: str = "default", user_id: Optional[str] = None):
+        scoped_session_id = self._scoped_session_id(session_id=session_id, user_id=user_id)
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
-                cursor.execute("DELETE FROM history WHERE session_id = ?", (session_id,))
-                cursor.execute("DELETE FROM conversation_state WHERE session_id = ?", (session_id,))
+                cursor.execute("DELETE FROM history WHERE session_id = ?", (scoped_session_id,))
+                cursor.execute("DELETE FROM conversation_state WHERE session_id = ?", (scoped_session_id,))
                 conn.commit()
-                logger.info("Da xoa lich su cua phien %s", session_id)
+                logger.info("Da xoa lich su cua phien %s", scoped_session_id)
         except sqlite3.Error as e:
             logger.error("Loi khi xoa lich su: %s", e)
 
@@ -163,14 +181,15 @@ class PersistentMemory:
             logger.error("Loi khi lay summary cho %s: %s", file_id, e)
             return None
 
-    def get_structured_state(self, session_id: str = "default") -> Dict[str, Any]:
+    def get_structured_state(self, session_id: str = "default", user_id: Optional[str] = None) -> Dict[str, Any]:
         base = default_conversation_state()
+        scoped_session_id = self._scoped_session_id(session_id=session_id, user_id=user_id)
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "SELECT state_json FROM conversation_state WHERE session_id = ?",
-                    (session_id,),
+                    (scoped_session_id,),
                 )
                 row = cursor.fetchone()
                 if not row or not row[0]:
@@ -192,10 +211,16 @@ class PersistentMemory:
                 merged["referents"] = referents
                 return merged
         except (sqlite3.Error, json.JSONDecodeError) as e:
-            logger.error("Loi khi lay structured state cho session %s: %s", session_id, e)
+            logger.error("Loi khi lay structured state cho session %s: %s", scoped_session_id, e)
             return base
 
-    def save_structured_state(self, session_id: str, state: Dict[str, Any]) -> Dict[str, Any]:
+    def save_structured_state(
+        self,
+        session_id: str,
+        state: Dict[str, Any],
+        user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        scoped_session_id = self._scoped_session_id(session_id=session_id, user_id=user_id)
         base = default_conversation_state()
         if isinstance(state, dict):
             base.update(state)
@@ -225,10 +250,10 @@ class PersistentMemory:
                         state_json = excluded.state_json,
                         updated_at = CURRENT_TIMESTAMP
                     """,
-                    (session_id, payload),
+                    (scoped_session_id, payload),
                 )
                 conn.commit()
             return base
         except sqlite3.Error as e:
-            logger.error("Loi khi luu structured state cho session %s: %s", session_id, e)
-            return self.get_structured_state(session_id=session_id)
+            logger.error("Loi khi luu structured state cho session %s: %s", scoped_session_id, e)
+            return self.get_structured_state(session_id=session_id, user_id=user_id)

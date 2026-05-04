@@ -3861,7 +3861,7 @@ def consult_advisor(
     explicit_program_id = str(program_id).strip() if program_id else None
     safe_user = _normalize_user_id(user_id)
     
-    try: history = _memory.get_context("", session_id=session_id, max_rows=5)
+    try: history = _memory.get_context("", session_id=session_id, max_rows=5, user_id=user_id)
     except: history = ""
     
     transcript = ""
@@ -4643,23 +4643,33 @@ def get_file_summaries(file_ids: List[str]) -> List[str]:
 _memory = PersistentMemory(db_path=str(MEMORY_DB), max_history=25)
 
 @mcp_tool("memory_get")
-def memory_get(session_id: str, max_rows: int = 10) -> List[str]:
-    return _memory.get_context("", session_id=session_id, max_rows=max_rows).splitlines()
+def memory_get(session_id: str, max_rows: int = 10, user_id: str | None = None) -> List[str]:
+    return _memory.get_context("", session_id=session_id, max_rows=max_rows, user_id=user_id).splitlines()
 
 @mcp_tool("memory_add")
-def memory_add(session_id: str, query: str, answer: str, chunk_index: int | None = None):
-    _memory.add_to_history(query, answer, session_id, chunk_index)
+def memory_add(
+    session_id: str,
+    query: str,
+    answer: str,
+    chunk_index: int | None = None,
+    user_id: str | None = None,
+):
+    _memory.add_to_history(query, answer, session_id, chunk_index, user_id=user_id)
     return "ok"
 
 
 @mcp_tool("memory_state_get")
-def memory_state_get(session_id: str) -> Dict[str, Any]:
-    return _memory.get_structured_state(session_id=session_id)
+def memory_state_get(session_id: str, user_id: str | None = None) -> Dict[str, Any]:
+    return _memory.get_structured_state(session_id=session_id, user_id=user_id)
 
 
 @mcp_tool("memory_state_upsert")
-def memory_state_upsert(session_id: str, state: Dict[str, Any]) -> Dict[str, Any]:
-    return _memory.save_structured_state(session_id=session_id, state=state or {})
+def memory_state_upsert(
+    session_id: str,
+    state: Dict[str, Any],
+    user_id: str | None = None,
+) -> Dict[str, Any]:
+    return _memory.save_structured_state(session_id=session_id, state=state or {}, user_id=user_id)
 
 
 @mcp_tool("memory_state_clear")
