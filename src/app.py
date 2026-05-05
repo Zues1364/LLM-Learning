@@ -109,6 +109,20 @@ if APP_COOKIE_SAMESITE not in {"lax", "strict", "none"}:
     APP_COOKIE_SAMESITE = "lax"
 
 
+def _read_int_env(env_name: str, default: int) -> int:
+    raw = str(os.getenv(env_name, str(default)) or "").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        value = default
+    return value if value > 0 else default
+
+
+MAX_TRANSCRIPT_UPLOAD_BYTES = _read_int_env("MAX_TRANSCRIPT_UPLOAD_MB", 50) * 1024 * 1024
+MAX_RESOURCE_UPLOAD_BYTES = _read_int_env("MAX_RESOURCE_UPLOAD_MB", 100) * 1024 * 1024
+MAX_BATCH_UPLOAD_FILES = _read_int_env("MAX_BATCH_UPLOAD_FILES", 25)
+
+
 def _read_timeout_env(env_name: str, default_seconds: float) -> Optional[float]:
     raw = str(os.getenv(env_name, str(default_seconds)) or "").strip()
     try:
@@ -4467,23 +4481,71 @@ def _is_allowed_extension(filename: Optional[str], allowed_exts: Set[str]) -> bo
     return suffix in allowed_exts
 
 
+def _http_error_message(exc: Exception) -> str:
+    if isinstance(exc, HTTPException):
+        return str(exc.detail)
+    return str(exc)
+
+
+def _validate_batch_size(files: List[UploadFile]) -> None:
+    if len(files) > MAX_BATCH_UPLOAD_FILES:
+        raise HTTPException(status_code=413, detail=f"Chi cho phep upload toi da {MAX_BATCH_UPLOAD_FILES} file moi lan")
+
+
+def _validate_upload_file(
+    upload_file: UploadFile,
+    allowed_exts: Set[str],
+    allowed_mimes: Set[str],
+) -> str:
+    original_name = Path(upload_file.filename or "").name or "unnamed"
+    if not _is_allowed_extension(original_name, allowed_exts):
+        raise HTTPException(status_code=400, detail="invalid extension")
+
+    content_type = str(upload_file.content_type or "").split(";")[0].strip().lower()
+    if content_type and content_type not in allowed_mimes and content_type != "application/octet-stream":
+        raise HTTPException(status_code=400, detail=f"invalid content type: {content_type}")
+    return original_name
+
+
+def _copy_upload_to_path(upload_file: UploadFile, target_path: Path, max_bytes: int) -> int:
+    bytes_written = 0
+    try:
+        with open(target_path, "wb") as buffer:
+            while True:
+                chunk = upload_file.file.read(1024 * 1024)
+                if not chunk:
+                    break
+                bytes_written += len(chunk)
+                if bytes_written > max_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"File vuot qua gioi han {max_bytes // (1024 * 1024)}MB",
+                    )
+                buffer.write(chunk)
+    except Exception:
+        try:
+            if target_path.exists():
+                target_path.unlink()
+        finally:
+            raise
+    return bytes_written
+
+
 def _save_resource_batch(files: List[UploadFile], target_dir: Path, allowed_exts: Set[str]) -> Dict[str, Any]:
     uploaded: List[Dict[str, str]] = []
     errors: List[Dict[str, str]] = []
+    _validate_batch_size(files)
+    allowed_mimes = {"application/pdf"} if allowed_exts == {".pdf"} else {"text/html", "application/xhtml+xml"}
 
     for upload_file in files:
-        original_name = Path(upload_file.filename or "").name or "unnamed"
-        if not _is_allowed_extension(original_name, allowed_exts):
-            errors.append({"name": original_name, "error": "invalid extension"})
-            continue
-
-        target_path = target_dir / original_name
         try:
-            with open(target_path, "wb") as buffer:
-                shutil.copyfileobj(upload_file.file, buffer)
+            original_name = _validate_upload_file(upload_file, allowed_exts, allowed_mimes)
+            target_path = target_dir / original_name
+            _copy_upload_to_path(upload_file, target_path, MAX_RESOURCE_UPLOAD_BYTES)
             uploaded.append({"name": original_name})
         except Exception as e:
-            errors.append({"name": original_name, "error": str(e)})
+            name = Path(upload_file.filename or "").name or "unnamed"
+            errors.append({"name": name, "error": _http_error_message(e)})
 
     return {
         "uploaded": uploaded,
@@ -4500,6 +4562,7 @@ def _save_resource_mixed_batch(
 ) -> Dict[str, Any]:
     uploaded: List[Dict[str, str]] = []
     errors: List[Dict[str, str]] = []
+    _validate_batch_size(files)
 
     for upload_file in files:
         original_name = Path(upload_file.filename or "").name or "unnamed"
@@ -4507,20 +4570,24 @@ def _save_resource_mixed_batch(
         if suffix == ".pdf":
             target_dir = pdf_dir
             file_type = "pdf"
+            allowed_exts = {".pdf"}
+            allowed_mimes = {"application/pdf"}
         elif suffix in {".html", ".htm"}:
             target_dir = html_dir
             file_type = "html"
+            allowed_exts = {".html", ".htm"}
+            allowed_mimes = {"text/html", "application/xhtml+xml"}
         else:
             errors.append({"name": original_name, "error": "invalid extension"})
             continue
 
-        target_path = target_dir / original_name
         try:
-            with open(target_path, "wb") as buffer:
-                shutil.copyfileobj(upload_file.file, buffer)
+            original_name = _validate_upload_file(upload_file, allowed_exts, allowed_mimes)
+            target_path = target_dir / original_name
+            _copy_upload_to_path(upload_file, target_path, MAX_RESOURCE_UPLOAD_BYTES)
             uploaded.append({"name": original_name, "type": file_type})
         except Exception as e:
-            errors.append({"name": original_name, "error": str(e)})
+            errors.append({"name": original_name, "error": _http_error_message(e)})
 
     return {
         "uploaded": uploaded,
@@ -4547,19 +4614,15 @@ async def get_programs(refresh: bool = False):
 
 @app.post("/api/resources/pdf")
 async def upload_resource_pdf(request: Request, file: UploadFile = File(...), session_id: Optional[str] = Form(default=None)):
-    if not _is_allowed_extension(file.filename, {".pdf"}):
-        raise HTTPException(status_code=400, detail="File phai la PDF")
-    
     try:
+        file_name = _validate_upload_file(file, {".pdf"}, {"application/pdf"})
         normalized_session = _normalize_session_id(session_id) if session_id else None
         user = _current_user_from_request(request)
         user_id = str(user.get("id") or "") if user else None
         pdf_dir, _, _ = resource_loader._scope_dirs(session_id=normalized_session, user_id=user_id)
-        file_name = Path(file.filename or "").name or "uploaded.pdf"
         # Save directly to resource dir
         target_path = pdf_dir / file_name
-        with open(target_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        _copy_upload_to_path(file, target_path, MAX_RESOURCE_UPLOAD_BYTES)
             
         # Notify MCP Server to scan
         try:
@@ -4573,25 +4636,23 @@ async def upload_resource_pdf(request: Request, file: UploadFile = File(...), se
             "session_id": normalized_session,
             "user_id": user_id,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error adding PDF resource: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/resources/html")
 async def upload_resource_html(request: Request, file: UploadFile = File(...), session_id: Optional[str] = Form(default=None)):
-    if not _is_allowed_extension(file.filename, {".html", ".htm"}):
-        raise HTTPException(status_code=400, detail="File phai la HTML")
-    
     try:
+        file_name = _validate_upload_file(file, {".html", ".htm"}, {"text/html", "application/xhtml+xml"})
         normalized_session = _normalize_session_id(session_id) if session_id else None
         user = _current_user_from_request(request)
         user_id = str(user.get("id") or "") if user else None
         _, html_dir, _ = resource_loader._scope_dirs(session_id=normalized_session, user_id=user_id)
-        file_name = Path(file.filename or "").name or "uploaded.html"
         # Save directly to resource dir
         target_path = html_dir / file_name
-        with open(target_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        _copy_upload_to_path(file, target_path, MAX_RESOURCE_UPLOAD_BYTES)
             
         # Notify MCP Server to scan
         try:
@@ -4605,6 +4666,8 @@ async def upload_resource_html(request: Request, file: UploadFile = File(...), s
             "session_id": normalized_session,
             "user_id": user_id,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error adding HTML resource: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -4986,18 +5049,14 @@ async def reject_mail_candidate(candidate_id: str, req: MailCandidateActionReque
 @app.post("/upload_pdf")
 async def upload_pdf(file: UploadFile = File(...)):
     global last_file_id, last_uploaded_file_ids
-    if not file.filename.endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="File phai la PDF")
-
     try:
-        original_name = Path(file.filename).name or "uploaded.pdf"
+        original_name = _validate_upload_file(file, {".pdf"}, {"application/pdf"})
         stem = Path(original_name).stem
         ext = Path(original_name).suffix or ".pdf"
         file_id = f"{stem}_{uuid4().hex[:8]}{ext}"
         dest_path = PDF_DIR / file_id
 
-        with open(dest_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        _copy_upload_to_path(file, dest_path, MAX_TRANSCRIPT_UPLOAD_BYTES)
         logger.info("Da luu PDF %s, se xu ly khi truy van dau tien", file_id)
 
         file_meta[file_id] = original_name
@@ -5005,6 +5064,8 @@ async def upload_pdf(file: UploadFile = File(...)):
         last_uploaded_file_ids = [file_id]
 
         return {"message": "PDF da duoc xu ly thanh cong", "file_id": file_id, "file_name": original_name}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Loi khi xu ly PDF: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
@@ -5020,23 +5081,23 @@ async def upload_multiple_pdfs(files: List[UploadFile] = File(...)):
     global last_file_id, last_uploaded_file_ids
     if not files:
         raise HTTPException(status_code=400, detail="Chua chon file PDF")
+    _validate_batch_size(files)
 
     results = []
     errors = []
 
     def handle_one(upload_file: UploadFile):
-        original_name = Path(upload_file.filename).name or "uploaded.pdf"
+        original_name = _validate_upload_file(upload_file, {".pdf"}, {"application/pdf"})
         stem = Path(original_name).stem
         ext = Path(original_name).suffix or ".pdf"
         file_id_local = f"{stem}_{uuid4().hex[:8]}{ext}"
         dest_path = PDF_DIR / file_id_local
-        with open(dest_path, "wb") as buffer:
-            shutil.copyfileobj(upload_file.file, buffer)
+        _copy_upload_to_path(upload_file, dest_path, MAX_TRANSCRIPT_UPLOAD_BYTES)
         logger.info("Da luu PDF %s, se xu ly khi truy van dau tien", file_id_local)
         return file_id_local, original_name
 
     with ThreadPoolExecutor(max_workers=min(len(files), 4)) as executor:
-        future_map = {executor.submit(handle_one, f): f.filename for f in files if f.filename.endswith(".pdf")}
+        future_map = {executor.submit(handle_one, f): f.filename for f in files}
         for fut in as_completed(future_map):
             try:
                 fid, fname = fut.result()
@@ -5045,10 +5106,11 @@ async def upload_multiple_pdfs(files: List[UploadFile] = File(...)):
                 last_file_id = fid
                 results.append({"file_id": fid, "file_name": fname})
             except Exception as exc:
-                errors.append(str(exc))
+                errors.append(_http_error_message(exc))
 
     if not results and errors:
-        raise HTTPException(status_code=500, detail="; ".join(errors))
+        status_code = 413 if any("gioi han" in err.lower() for err in errors) else 400
+        raise HTTPException(status_code=status_code, detail="; ".join(errors))
     if results:
         last_uploaded_file_ids = [item["file_id"] for item in results]
 

@@ -102,6 +102,23 @@ def test_health_and_readiness_endpoints(app_module):
     assert ready.json()["checks"]["memory_db"] == "ok"
 
 
+def test_upload_pdf_rejects_invalid_type_and_size(app_module, monkeypatch):
+    client = TestClient(app_module.app)
+
+    bad_type = client.post(
+        "/upload_pdf",
+        files={"file": ("transcript.txt", b"not a pdf", "text/plain")},
+    )
+    assert bad_type.status_code == 400
+
+    monkeypatch.setattr(app_module, "MAX_TRANSCRIPT_UPLOAD_BYTES", 4)
+    too_large = client.post(
+        "/upload_pdf",
+        files={"file": ("transcript.pdf", b"12345", "application/pdf")},
+    )
+    assert too_large.status_code == 413
+
+
 def test_ask_passes_authenticated_user_to_memory_tools(monkeypatch, tmp_path):
     app_mod = importlib.reload(importlib.import_module("app"))
     monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
