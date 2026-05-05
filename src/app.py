@@ -188,8 +188,21 @@ async def readyz() -> Dict[str, Any]:
     return {"status": "ready", "checks": checks}
 
 
-def _session_dir(session_id: str) -> Path:
+def _owner_cache_segment(user_id: Optional[str]) -> Optional[str]:
+    if not user_id:
+        return None
+    return re.sub(r"[^A-Za-z0-9._-]", "_", str(user_id).strip()) or None
+
+
+def _legacy_session_dir(session_id: str) -> Path:
     return SESSION_CACHE_DIR / _normalize_session_id(session_id)
+
+
+def _session_dir(session_id: str, user_id: Optional[str] = None) -> Path:
+    owner_segment = _owner_cache_segment(user_id)
+    if owner_segment:
+        return SESSION_CACHE_DIR / "users" / owner_segment / _normalize_session_id(session_id)
+    return _legacy_session_dir(session_id)
 
 
 def _normalize_session_id(session_id: str) -> str:
@@ -290,15 +303,21 @@ def _scan_resources_with_owner(session_id: Optional[str], user_id: Optional[str]
         else:
             raise
 
-def _session_meta_path(session_id: str) -> Path:
-    return _session_dir(session_id) / "meta.json"
+def _session_meta_path(session_id: str, user_id: Optional[str] = None) -> Path:
+    return _session_dir(session_id, user_id=user_id) / "meta.json"
 
 def _normalize_file_ids(file_ids: List[str] | None) -> List[str]:
     return list(dict.fromkeys([f for f in (file_ids or []) if f]))
 
-def _load_session_meta(session_id: str) -> Dict[str, Any]:
+def _load_session_meta(session_id: str, user_id: Optional[str] = None) -> Dict[str, Any]:
     default_meta: Dict[str, Any] = {"file_ids": [], "program_id": None}
-    meta_path = _session_meta_path(session_id)
+    meta_path = _session_meta_path(session_id, user_id=user_id)
+    if user_id and not meta_path.exists():
+        # Backward-compatible read for sessions created before cache ownership
+        # was namespaced. Writes always go to the owner-scoped location.
+        legacy_path = _session_meta_path(session_id)
+        if legacy_path.exists():
+            meta_path = legacy_path
     if not meta_path.exists():
         return default_meta
     try:
@@ -316,11 +335,11 @@ def _load_session_meta(session_id: str) -> Dict[str, Any]:
     except Exception:
         return default_meta
 
-def _write_session_meta(session_id: str, data: Dict[str, Any]):
+def _write_session_meta(session_id: str, data: Dict[str, Any], user_id: Optional[str] = None):
     try:
-        dir_path = _session_dir(session_id)
+        dir_path = _session_dir(session_id, user_id=user_id)
         dir_path.mkdir(parents=True, exist_ok=True)
-        meta_path = _session_meta_path(session_id)
+        meta_path = _session_meta_path(session_id, user_id=user_id)
         payload = {
             "file_ids": _normalize_file_ids(data.get("file_ids", [])),
             "program_id": (str(data.get("program_id")).strip() if data.get("program_id") else None),
@@ -329,21 +348,21 @@ def _write_session_meta(session_id: str, data: Dict[str, Any]):
     except Exception as e:
         logger.warning("Khong luu duoc session meta cho %s: %s", session_id, e)
 
-def _load_session_files(session_id: str) -> List[str]:
-    return _load_session_meta(session_id).get("file_ids", [])
+def _load_session_files(session_id: str, user_id: Optional[str] = None) -> List[str]:
+    return _load_session_meta(session_id, user_id=user_id).get("file_ids", [])
 
-def _save_session_files(session_id: str, file_ids: List[str]):
-    meta = _load_session_meta(session_id)
+def _save_session_files(session_id: str, file_ids: List[str], user_id: Optional[str] = None):
+    meta = _load_session_meta(session_id, user_id=user_id)
     meta["file_ids"] = _normalize_file_ids(file_ids)
-    _write_session_meta(session_id, meta)
+    _write_session_meta(session_id, meta, user_id=user_id)
 
-def _load_session_program(session_id: str) -> Optional[str]:
-    return _load_session_meta(session_id).get("program_id")
+def _load_session_program(session_id: str, user_id: Optional[str] = None) -> Optional[str]:
+    return _load_session_meta(session_id, user_id=user_id).get("program_id")
 
-def _save_session_program(session_id: str, program_id: Optional[str]):
-    meta = _load_session_meta(session_id)
+def _save_session_program(session_id: str, program_id: Optional[str], user_id: Optional[str] = None):
+    meta = _load_session_meta(session_id, user_id=user_id)
     meta["program_id"] = str(program_id).strip() if program_id else None
-    _write_session_meta(session_id, meta)
+    _write_session_meta(session_id, meta, user_id=user_id)
 
 
 def _get_session_lock(session_id: str) -> Lock:
@@ -5135,7 +5154,7 @@ async def ask_question(http_request: Request, payload: QueryRequest):
             resolution.get("applied_referents") or [],
         )
     selected_files = _normalize_file_ids(payload.file_ids or [])
-    session_meta = _load_session_meta(session_id)
+    session_meta = _load_session_meta(session_id, user_id=user_id)
     if not selected_files:
         cached_files = session_meta.get("file_ids") or []
         if cached_files:
@@ -5175,25 +5194,25 @@ async def ask_question(http_request: Request, payload: QueryRequest):
             )
 
         if not programs:
-            _save_session_program(session_id, None)
+            _save_session_program(session_id, None, user_id=user_id)
             if selected_files:
-                _save_session_files(session_id, selected_files)
+                _save_session_files(session_id, selected_files, user_id=user_id)
             return _program_selection_response([])
 
         valid_program_ids = {p.get("id") for p in programs if p.get("id")}
         if effective_program_id and valid_program_ids and effective_program_id not in valid_program_ids:
             logger.warning("Program ID khong hop le hoac da thay doi: %s", effective_program_id)
             effective_program_id = None
-            _save_session_program(session_id, None)
+            _save_session_program(session_id, None, user_id=user_id)
 
         if not effective_program_id:
             if selected_files:
-                _save_session_files(session_id, selected_files)
+                _save_session_files(session_id, selected_files, user_id=user_id)
             return _program_selection_response(programs)
 
         if selected_files:
-            _save_session_files(session_id, selected_files)
-        _save_session_program(session_id, effective_program_id)
+            _save_session_files(session_id, selected_files, user_id=user_id)
+        _save_session_program(session_id, effective_program_id, user_id=user_id)
 
         route: Dict[str, Any] = {"intent": None, "confidence": 0.0, "signals": []}
         route_intent = ""
@@ -5671,7 +5690,7 @@ async def delete_session(http_request: Request, req: SessionRequest):
     user_id = _current_user_id_from_request(http_request)
     try:
         memory.clear_session(req.session_id, user_id=user_id)
-        session_dir = _session_dir(req.session_id)
+        session_dir = _session_dir(req.session_id, user_id=user_id)
         if session_dir.exists():
             shutil.rmtree(session_dir, ignore_errors=True)
         return {"message": f"Da xoa lich su session {req.session_id}"}

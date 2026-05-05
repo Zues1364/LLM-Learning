@@ -119,6 +119,60 @@ def test_upload_pdf_rejects_invalid_type_and_size(app_module, monkeypatch):
     assert too_large.status_code == 413
 
 
+def test_session_meta_is_owner_scoped_with_legacy_fallback(app_module):
+    app_module._write_session_meta(
+        "shared-session",
+        {"file_ids": ["owner.pdf"], "program_id": "cs_2022"},
+        user_id="user/a",
+    )
+    app_module._write_session_meta(
+        "shared-session",
+        {"file_ids": ["guest.pdf"], "program_id": "guest_program"},
+    )
+
+    assert app_module._load_session_meta("shared-session", user_id="user/a") == {
+        "file_ids": ["owner.pdf"],
+        "program_id": "cs_2022",
+    }
+    assert app_module._load_session_meta("shared-session") == {
+        "file_ids": ["guest.pdf"],
+        "program_id": "guest_program",
+    }
+
+    owner_path = app_module.SESSION_CACHE_DIR / "users" / "user_a" / "shared-session" / "meta.json"
+    legacy_path = app_module.SESSION_CACHE_DIR / "shared-session" / "meta.json"
+    assert owner_path.exists()
+    assert legacy_path.exists()
+
+
+def test_delete_session_only_removes_authenticated_owner_cache(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    monkeypatch.setattr(app_mod, "memory", PersistentMemory(db_path=str(tmp_path / "memory.db"), max_history=5))
+    (app_mod.SESSION_CACHE_DIR).mkdir(parents=True, exist_ok=True)
+
+    app_mod._write_session_meta("same-session", {"file_ids": ["legacy.pdf"], "program_id": "legacy"})
+    app_mod._write_session_meta(
+        "same-session",
+        {"file_ids": ["owner.pdf"], "program_id": "owner"},
+        user_id="user-a",
+    )
+
+    def fake_user(raw_token, touch=True):
+        if raw_token == "auth-token-a":
+            return {"id": "user-a", "email": "a@vnu.edu.vn"}
+        return None
+
+    monkeypatch.setattr(app_mod.mail_agent_service, "get_authenticated_user", fake_user)
+    client = TestClient(app_mod.app)
+    client.cookies.set(app_mod._mail_cookie_name(), "auth-token-a")
+    resp = client.request("DELETE", "/session", json={"session_id": "same-session"})
+
+    assert resp.status_code == 200
+    assert not (app_mod.SESSION_CACHE_DIR / "users" / "user-a" / "same-session").exists()
+    assert (app_mod.SESSION_CACHE_DIR / "same-session" / "meta.json").exists()
+
+
 def test_ask_passes_authenticated_user_to_memory_tools(monkeypatch, tmp_path):
     app_mod = importlib.reload(importlib.import_module("app"))
     monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
