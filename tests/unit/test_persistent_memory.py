@@ -127,3 +127,27 @@ def test_chat_sessions_and_messages_are_scoped_by_user(tmp_path):
     assert mem.list_chat_sessions("user-a") == []
     assert len(mem.list_chat_sessions("user-a", include_archived=True)) == 1
     assert len(mem.list_chat_sessions("user-b")) == 1
+
+
+def test_migrate_legacy_history_to_chat_sessions_claims_raw_sessions(tmp_path):
+    db_path = tmp_path / "mem.db"
+    mem = PersistentMemory(db_path=str(db_path), max_history=5)
+
+    mem.add_to_history("legacy q1", "legacy a1", session_id="legacy-session")
+    mem.add_to_history("legacy q2", "legacy a2", session_id="legacy-session")
+    mem.add_to_history("other q", "other a", session_id="other-session")
+    mem.add_to_history("scoped q", "scoped a", session_id="legacy-session", user_id="existing-user")
+
+    assert mem.migrate_legacy_history_to_chat_sessions("user-a") == 2
+    sessions = mem.list_chat_sessions("user-a")
+    assert {item["id"] for item in sessions} == {"legacy-session", "other-session"}
+    assert sessions[0]["title"] in {"legacy q1", "other q"}
+
+    messages = mem.get_chat_messages("legacy-session", "user-a")
+    assert [msg["role"] for msg in messages] == ["user", "assistant", "user", "assistant"]
+    assert [msg["content"] for msg in messages] == ["legacy q1", "legacy a1", "legacy q2", "legacy a2"]
+
+    assert mem.migrate_legacy_history_to_chat_sessions("user-a") == 0
+    assert mem.migrate_legacy_history_to_chat_sessions("user-b") == 0
+    assert mem.list_chat_sessions("user-b") == []
+    assert mem.get_context("", session_id="legacy-session", user_id="existing-user") != ""

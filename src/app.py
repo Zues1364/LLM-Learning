@@ -5448,7 +5448,11 @@ async def get_history(
 @app.get("/api/chat/sessions")
 async def list_chat_sessions(http_request: Request):
     user_id = _require_authenticated_user_id(http_request)
-    return {"sessions": memory.list_chat_sessions(user_id=user_id)}
+    sessions = memory.list_chat_sessions(user_id=user_id)
+    if not sessions:
+        memory.migrate_legacy_history_to_chat_sessions(user_id=user_id)
+        sessions = memory.list_chat_sessions(user_id=user_id)
+    return {"sessions": sessions}
 
 
 @app.post("/api/chat/sessions")

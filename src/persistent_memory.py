@@ -102,6 +102,15 @@ class PersistentMemory:
                     ON chat_messages(scoped_session_id, created_at ASC, id ASC)
                     """
                 )
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS legacy_chat_migrations (
+                        session_id TEXT PRIMARY KEY,
+                        user_id TEXT NOT NULL,
+                        migrated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
+                )
                 conn.commit()
                 logger.info("Khoi tao co so du lieu lich su thanh cong.")
         except sqlite3.Error as e:
@@ -320,6 +329,177 @@ class PersistentMemory:
         except sqlite3.Error as e:
             logger.error("Loi khi lay danh sach chat sessions cua user %s: %s", uid, e)
             return []
+
+    @staticmethod
+    def _legacy_chat_title(query: Any) -> str:
+        text = " ".join(str(query or "").split())
+        if not text:
+            return "Phiên cũ"
+        return text[:77] + "..." if len(text) > 80 else text
+
+    def migrate_legacy_history_to_chat_sessions(
+        self,
+        user_id: str,
+        limit_sessions: int = 50,
+        max_pairs_per_session: int = 50,
+    ) -> int:
+        """Recover pre-account chat history rows into account-scoped chat sessions.
+
+        Older frontend builds stored the sidebar in browser localStorage and only
+        persisted Q/A pairs in `history` keyed by raw session_id. Once account
+        sessions became the source of truth, those rows need a one-time adoption
+        path so logout/login does not make old conversations disappear.
+        """
+        uid = str(user_id or "").strip()
+        if not uid:
+            return 0
+
+        try:
+            limit = max(1, min(int(limit_sessions or 50), 200))
+            max_pairs = max(1, min(int(max_pairs_per_session or 50), 200))
+        except (TypeError, ValueError):
+            limit = 50
+            max_pairs = 50
+
+        migrated = 0
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                legacy_sessions = conn.execute(
+                    """
+                    SELECT session_id,
+                           MIN(timestamp) AS created_at,
+                           MAX(timestamp) AS updated_at,
+                           COUNT(*) AS row_count
+                    FROM history
+                    WHERE session_id IS NOT NULL
+                      AND TRIM(session_id) != ''
+                      AND session_id NOT LIKE 'user:%:session:%'
+                    GROUP BY session_id
+                    ORDER BY updated_at DESC, created_at DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+
+                for legacy in legacy_sessions:
+                    sid = str(legacy["session_id"] or "").strip()
+                    if not sid:
+                        continue
+                    claim = conn.execute(
+                        "SELECT user_id FROM legacy_chat_migrations WHERE session_id = ?",
+                        (sid,),
+                    ).fetchone()
+                    if claim is not None and str(claim["user_id"] or "").strip() != uid:
+                        continue
+                    scoped_session_id = self._scoped_session_id(session_id=sid, user_id=uid)
+                    existing = conn.execute(
+                        "SELECT 1 FROM chat_sessions WHERE scoped_session_id = ?",
+                        (scoped_session_id,),
+                    ).fetchone()
+                    if existing is not None:
+                        continue
+
+                    first_row = conn.execute(
+                        """
+                        SELECT query FROM history
+                        WHERE session_id = ?
+                        ORDER BY timestamp ASC, id ASC
+                        LIMIT 1
+                        """,
+                        (sid,),
+                    ).fetchone()
+
+                    selected_program_id = None
+                    selected_file_ids: List[str] = []
+                    state_row = conn.execute(
+                        "SELECT state_json FROM conversation_state WHERE session_id = ?",
+                        (sid,),
+                    ).fetchone()
+                    if state_row is not None:
+                        try:
+                            state = json.loads(state_row["state_json"] or "{}")
+                        except json.JSONDecodeError:
+                            state = {}
+                        if isinstance(state, dict):
+                            selected_program_id = (
+                                state.get("selected_program_id")
+                                or state.get("current_program_id")
+                                or state.get("program_id")
+                            )
+                            raw_file_ids = state.get("selected_file_ids") or state.get("file_ids") or []
+                            if isinstance(raw_file_ids, list):
+                                selected_file_ids = [str(item).strip() for item in raw_file_ids if str(item or "").strip()]
+
+                    conn.execute(
+                        """
+                        INSERT INTO chat_sessions(
+                            scoped_session_id, session_id, user_id, title,
+                            selected_program_id, selected_file_ids_json,
+                            created_at, updated_at, archived_at
+                        )
+                        VALUES(?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                        """,
+                        (
+                            scoped_session_id,
+                            sid,
+                            uid,
+                            self._legacy_chat_title(first_row["query"] if first_row else ""),
+                            str(selected_program_id or "").strip() or None,
+                            self._json_list(selected_file_ids),
+                            legacy["created_at"] or None,
+                            legacy["updated_at"] or None,
+                        ),
+                    )
+
+                    rows = conn.execute(
+                        """
+                        SELECT query, response, timestamp FROM history
+                        WHERE session_id = ?
+                        ORDER BY timestamp ASC, id ASC
+                        LIMIT ?
+                        """,
+                        (sid, max_pairs),
+                    ).fetchall()
+                    for row in rows:
+                        query_text = str(row["query"] or "").strip()
+                        response_text = str(row["response"] or "").strip()
+                        created_at = row["timestamp"] or None
+                        if query_text:
+                            conn.execute(
+                                """
+                                INSERT INTO chat_messages(
+                                    scoped_session_id, session_id, user_id, role, content, citations_json, created_at
+                                )
+                                VALUES(?, ?, ?, 'user', ?, '[]', ?)
+                                """,
+                                (scoped_session_id, sid, uid, query_text, created_at),
+                            )
+                        if response_text:
+                            conn.execute(
+                                """
+                                INSERT INTO chat_messages(
+                                    scoped_session_id, session_id, user_id, role, content, citations_json, created_at
+                                )
+                                VALUES(?, ?, ?, 'assistant', ?, '[]', ?)
+                                """,
+                                (scoped_session_id, sid, uid, response_text, created_at),
+                            )
+                    conn.execute(
+                        """
+                        INSERT OR IGNORE INTO legacy_chat_migrations(session_id, user_id, migrated_at)
+                        VALUES(?, ?, CURRENT_TIMESTAMP)
+                        """,
+                        (sid, uid),
+                    )
+                    migrated += 1
+                conn.commit()
+                if migrated:
+                    logger.info("Migrated %s legacy history sessions into chat_sessions for user %s", migrated, uid)
+                return migrated
+        except sqlite3.Error as e:
+            logger.error("Loi khi migrate legacy history sang chat sessions cho user %s: %s", uid, e)
+            return migrated
 
     def update_chat_session(
         self,

@@ -226,6 +226,38 @@ def test_chat_session_api_requires_auth_and_scopes_to_user(monkeypatch, tmp_path
     assert client.patch("/api/chat/sessions/shared-session", json={"title": "Không được"}).status_code == 404
 
 
+def test_chat_session_api_recovers_legacy_history_for_authenticated_user(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    test_memory = PersistentMemory(db_path=str(tmp_path / "memory.db"), max_history=5)
+    test_memory.add_to_history("cau hoi cu", "tra loi cu", session_id="legacy-session")
+    monkeypatch.setattr(app_mod, "memory", test_memory)
+    (app_mod.SESSION_CACHE_DIR).mkdir(parents=True, exist_ok=True)
+
+    def fake_user(raw_token, touch=True):
+        if raw_token == "auth-token-a":
+            return {"id": "user-a", "email": "a@vnu.edu.vn"}
+        if raw_token == "auth-token-b":
+            return {"id": "user-b", "email": "b@vnu.edu.vn"}
+        return None
+
+    monkeypatch.setattr(app_mod.mail_agent_service, "get_authenticated_user", fake_user)
+    client = TestClient(app_mod.app)
+
+    client.cookies.set(app_mod._mail_cookie_name(), "auth-token-a")
+    listed = client.get("/api/chat/sessions")
+    assert listed.status_code == 200
+    assert listed.json()["sessions"][0]["id"] == "legacy-session"
+    assert listed.json()["sessions"][0]["title"] == "cau hoi cu"
+
+    messages = client.get("/api/chat/sessions/legacy-session/messages")
+    assert messages.status_code == 200
+    assert [msg["role"] for msg in messages.json()["messages"]] == ["user", "assistant"]
+
+    client.cookies.set(app_mod._mail_cookie_name(), "auth-token-b")
+    assert client.get("/api/chat/sessions").json()["sessions"] == []
+
+
 def test_ask_records_authenticated_chat_session_and_messages(monkeypatch, tmp_path):
     app_mod = importlib.reload(importlib.import_module("app"))
     monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
