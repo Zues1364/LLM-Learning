@@ -258,6 +258,72 @@ def test_chat_session_api_recovers_legacy_history_for_authenticated_user(monkeyp
     assert client.get("/api/chat/sessions").json()["sessions"] == []
 
 
+def test_chat_migrate_api_imports_browser_sessions_for_authenticated_user(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    monkeypatch.setattr(app_mod, "memory", PersistentMemory(db_path=str(tmp_path / "memory.db"), max_history=5))
+    (app_mod.SESSION_CACHE_DIR).mkdir(parents=True, exist_ok=True)
+
+    def fake_user(raw_token, touch=True):
+        if raw_token == "auth-token-a":
+            return {"id": "user-a", "email": "a@vnu.edu.vn"}
+        if raw_token == "auth-token-b":
+            return {"id": "user-b", "email": "b@vnu.edu.vn"}
+        return None
+
+    monkeypatch.setattr(app_mod.mail_agent_service, "get_authenticated_user", fake_user)
+    client = TestClient(app_mod.app)
+    client.cookies.set(app_mod._mail_cookie_name(), "auth-token-a")
+
+    migrated = client.post(
+        "/api/chat/migrate",
+        json={
+            "sessions": [
+                {
+                    "session_id": "browser-session",
+                    "title": "Browser chat",
+                    "selected_program_id": "cs_2022",
+                    "selected_file_ids": ["1.pdf"],
+                    "messages": [
+                        {"role": "user", "content": "old question"},
+                        {"type": "bot", "text": "old answer", "citations": [{"source_file": "old.pdf"}]},
+                    ],
+                }
+            ]
+        },
+    )
+    assert migrated.status_code == 200
+    assert migrated.json()["imported_sessions"] == 1
+    assert migrated.json()["imported_messages"] == 2
+
+    repeated = client.post(
+        "/api/chat/migrate",
+        json={
+            "sessions": [
+                {
+                    "session_id": "browser-session",
+                    "title": "Browser chat",
+                    "messages": [{"role": "user", "content": "duplicate"}],
+                }
+            ]
+        },
+    )
+    assert repeated.status_code == 200
+    assert repeated.json()["imported_messages"] == 0
+
+    sessions = client.get("/api/chat/sessions").json()["sessions"]
+    assert sessions[0]["id"] == "browser-session"
+    assert sessions[0]["selected_program_id"] == "cs_2022"
+    assert sessions[0]["selected_file_ids"] == ["1.pdf"]
+
+    messages = client.get("/api/chat/sessions/browser-session/messages").json()["messages"]
+    assert [msg["content"] for msg in messages] == ["old question", "old answer"]
+    assert messages[1]["citations"] == [{"source_file": "old.pdf"}]
+
+    client.cookies.set(app_mod._mail_cookie_name(), "auth-token-b")
+    assert client.get("/api/chat/sessions").json()["sessions"] == []
+
+
 def test_ask_records_authenticated_chat_session_and_messages(monkeypatch, tmp_path):
     app_mod = importlib.reload(importlib.import_module("app"))
     monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")

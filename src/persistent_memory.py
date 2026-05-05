@@ -645,6 +645,102 @@ class PersistentMemory:
             logger.error("Loi khi lay chat messages cho session %s: %s", scoped_session_id, e)
             return []
 
+    def import_chat_session(
+        self,
+        session_id: str,
+        user_id: str,
+        title: Optional[str] = None,
+        selected_program_id: Optional[str] = None,
+        selected_file_ids: Optional[List[str]] = None,
+        messages: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """Attach a browser-local chat session to an authenticated account.
+
+        This path is intentionally idempotent: if the account/session already has
+        messages, it only refreshes session metadata and skips message import.
+        """
+        uid = str(user_id or "").strip()
+        sid = str(session_id or "").strip()
+        if not uid or not sid:
+            return {"session_id": sid, "status": "skipped", "imported_messages": 0}
+
+        clean_messages: List[Dict[str, Any]] = []
+        for item in messages or []:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role") or item.get("type") or "").strip().lower()
+            if role == "bot":
+                role = "assistant"
+            if role not in {"user", "assistant", "system"}:
+                role = "assistant"
+            content = str(item.get("content") or item.get("text") or "").strip()
+            if not content:
+                continue
+            citations = item.get("citations") if isinstance(item.get("citations"), list) else []
+            clean_messages.append({"role": role, "content": content, "citations": citations})
+
+        session = self.ensure_chat_session(
+            session_id=sid,
+            user_id=uid,
+            title=title or (clean_messages[0]["content"] if clean_messages else "Phiên cũ"),
+            selected_program_id=selected_program_id,
+            selected_file_ids=selected_file_ids,
+        )
+
+        scoped_session_id = self._scoped_session_id(session_id=sid, user_id=uid)
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                existing_count = conn.execute(
+                    "SELECT COUNT(*) FROM chat_messages WHERE scoped_session_id = ? AND user_id = ?",
+                    (scoped_session_id, uid),
+                ).fetchone()[0]
+                if existing_count:
+                    return {
+                        "session_id": sid,
+                        "status": "exists",
+                        "imported_messages": 0,
+                        "session": session,
+                    }
+
+                imported = 0
+                for item in clean_messages[:500]:
+                    conn.execute(
+                        """
+                        INSERT INTO chat_messages(scoped_session_id, session_id, user_id, role, content, citations_json)
+                        VALUES(?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            scoped_session_id,
+                            sid,
+                            uid,
+                            item["role"],
+                            item["content"],
+                            json.dumps(item["citations"], ensure_ascii=False),
+                        ),
+                    )
+                    imported += 1
+                if imported:
+                    conn.execute(
+                        "UPDATE chat_sessions SET updated_at = CURRENT_TIMESTAMP WHERE scoped_session_id = ?",
+                        (scoped_session_id,),
+                    )
+                conn.commit()
+                return {
+                    "session_id": sid,
+                    "status": "imported" if imported else "metadata_only",
+                    "imported_messages": imported,
+                    "session": self.ensure_chat_session(
+                        session_id=sid,
+                        user_id=uid,
+                        title=title,
+                        selected_program_id=selected_program_id,
+                        selected_file_ids=selected_file_ids,
+                    ),
+                }
+        except sqlite3.Error as e:
+            logger.error("Loi khi import chat session %s cho user %s: %s", sid, uid, e)
+            return {"session_id": sid, "status": "error", "imported_messages": 0, "error": str(e)}
+
     def save_summary(self, file_id: str, summary: str):
         try:
             with sqlite3.connect(self.db_path) as conn:

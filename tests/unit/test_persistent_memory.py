@@ -151,3 +151,40 @@ def test_migrate_legacy_history_to_chat_sessions_claims_raw_sessions(tmp_path):
     assert mem.migrate_legacy_history_to_chat_sessions("user-b") == 0
     assert mem.list_chat_sessions("user-b") == []
     assert mem.get_context("", session_id="legacy-session", user_id="existing-user") != ""
+
+
+def test_import_chat_session_is_idempotent(tmp_path):
+    db_path = tmp_path / "mem.db"
+    mem = PersistentMemory(db_path=str(db_path), max_history=5)
+
+    first = mem.import_chat_session(
+        session_id="browser-session",
+        user_id="user-a",
+        title="Local chat",
+        selected_program_id="cs_2022",
+        selected_file_ids=["1.pdf"],
+        messages=[
+            {"role": "user", "content": "hello"},
+            {"type": "bot", "text": "answer", "citations": [{"source_file": "a.pdf"}]},
+        ],
+    )
+    second = mem.import_chat_session(
+        session_id="browser-session",
+        user_id="user-a",
+        title="Local chat renamed",
+        messages=[{"role": "user", "content": "duplicate"}],
+    )
+
+    assert first["status"] == "imported"
+    assert first["imported_messages"] == 2
+    assert second["status"] == "exists"
+    assert second["imported_messages"] == 0
+
+    sessions = mem.list_chat_sessions("user-a")
+    assert sessions[0]["selected_program_id"] == "cs_2022"
+    assert sessions[0]["selected_file_ids"] == ["1.pdf"]
+
+    messages = mem.get_chat_messages("browser-session", "user-a")
+    assert [msg["role"] for msg in messages] == ["user", "assistant"]
+    assert [msg["content"] for msg in messages] == ["hello", "answer"]
+    assert messages[1]["citations"] == [{"source_file": "a.pdf"}]

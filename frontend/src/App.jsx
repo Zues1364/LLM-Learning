@@ -408,6 +408,83 @@ const readGuestChatState = (fallbackSessionId) => {
   };
 };
 
+const readStoredChatState = (keys) => {
+  const sessions = readJson(keys.sessions, []);
+  const messagesBySession = readJson(keys.messagesBySession, {});
+  const selectedProgramBySession = readJson(keys.selectedProgramBySession, {});
+  const selectedFilesBySession = readJson(keys.selectedFilesBySession, {});
+  return {
+    sessions: Array.isArray(sessions) ? sessions : [],
+    messagesBySession:
+      messagesBySession && typeof messagesBySession === "object" && !Array.isArray(messagesBySession)
+        ? messagesBySession
+        : {},
+    selectedProgramBySession:
+      selectedProgramBySession && typeof selectedProgramBySession === "object" && !Array.isArray(selectedProgramBySession)
+        ? selectedProgramBySession
+        : {},
+    selectedFilesBySession:
+      selectedFilesBySession && typeof selectedFilesBySession === "object" && !Array.isArray(selectedFilesBySession)
+        ? selectedFilesBySession
+        : {},
+  };
+};
+
+const normalizeBrowserMigrationMessage = (item) => {
+  const type = String(item?.type || item?.role || "").toLowerCase();
+  const role = type === "user" ? "user" : type === "system" ? "system" : "assistant";
+  const content = String(item?.text || item?.content || "").trim();
+  if (!content) return null;
+  return {
+    role,
+    content,
+    citations: Array.isArray(item?.citations) ? item.citations : [],
+  };
+};
+
+const buildBrowserChatMigrationSessions = (currentState) => {
+  const sources = [
+    readStoredChatState({
+      sessions: "sessions",
+      messagesBySession: "messagesBySession",
+      selectedProgramBySession: "selectedProgramBySession",
+      selectedFilesBySession: "selectedFilesBySession",
+    }),
+    readStoredChatState(GUEST_CHAT_STORAGE_KEYS),
+    currentState || {},
+  ];
+  const byId = new Map();
+  for (const source of sources) {
+    const sourceSessions = Array.isArray(source?.sessions) ? source.sessions : [];
+    const sourceMessages = source?.messagesBySession || {};
+    const sourcePrograms = source?.selectedProgramBySession || {};
+    const sourceFiles = source?.selectedFilesBySession || {};
+    for (const item of sourceSessions) {
+      const sessionId = String(item?.id || item?.session_id || "").trim();
+      if (!sessionId) continue;
+      const messages = (Array.isArray(sourceMessages[sessionId]) ? sourceMessages[sessionId] : [])
+        .map(normalizeBrowserMigrationMessage)
+        .filter(Boolean);
+      const selectedFileIds = Array.isArray(sourceFiles[sessionId]) ? sourceFiles[sessionId].filter(Boolean) : [];
+      const selectedProgramId = String(sourcePrograms[sessionId] || "").trim();
+      const shouldKeep = messages.length || selectedProgramId || selectedFileIds.length;
+      if (!shouldKeep) continue;
+      const candidate = {
+        session_id: sessionId,
+        title: String(item?.title || "Phiên cũ").trim() || "Phiên cũ",
+        selected_program_id: selectedProgramId || null,
+        selected_file_ids: selectedFileIds,
+        messages,
+      };
+      const existing = byId.get(sessionId);
+      if (!existing || candidate.messages.length > existing.messages.length) {
+        byId.set(sessionId, candidate);
+      }
+    }
+  }
+  return Array.from(byId.values()).slice(0, 100);
+};
+
 // API helpers
 async function uploadPdf(file) {
   const form = new FormData();
@@ -533,6 +610,17 @@ async function archiveChatSessionApi(sessionId) {
   const res = await fetch(`${API_BASE}/api/chat/sessions/${encodeURIComponent(sessionId)}`, {
     method: "DELETE",
     credentials: "include",
+  });
+  if (!res.ok) throw new Error(await readApiErrorMessage(res));
+  return res.json();
+}
+
+async function migrateChatSessionsApi(sessions) {
+  const res = await fetch(`${API_BASE}/api/chat/migrate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ sessions: sessions || [] }),
   });
   if (!res.ok) throw new Error(await readApiErrorMessage(res));
   return res.json();
@@ -764,6 +852,7 @@ export default function App() {
   const filesRef = useRef([]);
   const authPopupPollRef = useRef(null);
   const previousAuthenticatedUserRef = useRef("");
+  const migratedBrowserChatUsersRef = useRef(new Set());
 
   const normalizeFileIds = useCallback((ids) => Array.from(new Set((ids || []).filter(Boolean))), []);
 
@@ -941,6 +1030,41 @@ export default function App() {
     return nextState.currentSession;
   }, [replaceChatState]);
 
+  const migrateBrowserChatSessionsForAccount = useCallback(async () => {
+    if (!authState.authenticated) return;
+    const userKey = String(authState.userId || authState.email || "authenticated");
+    if (migratedBrowserChatUsersRef.current.has(userKey)) return;
+    migratedBrowserChatUsersRef.current.add(userKey);
+
+    const sessionsToMigrate = buildBrowserChatMigrationSessions({
+      sessions,
+      messagesBySession,
+      selectedProgramBySession,
+      selectedFilesBySession,
+    });
+    if (!sessionsToMigrate.length) return;
+
+    try {
+      const result = await migrateChatSessionsApi(sessionsToMigrate);
+      const importedSessions = Number(result?.imported_sessions || 0);
+      const importedMessages = Number(result?.imported_messages || 0);
+      if (importedSessions > 0 || importedMessages > 0) {
+        removeJsonKeys([...LEGACY_CHAT_STORAGE_KEYS, ...Object.values(GUEST_CHAT_STORAGE_KEYS)]);
+      }
+    } catch (err) {
+      migratedBrowserChatUsersRef.current.delete(userKey);
+      console.error("Migrate browser chat sessions failed", err);
+    }
+  }, [
+    authState.authenticated,
+    authState.email,
+    authState.userId,
+    messagesBySession,
+    selectedFilesBySession,
+    selectedProgramBySession,
+    sessions,
+  ]);
+
   const refreshChatSessions = useCallback(async () => {
     if (!authState.authenticated) return;
     try {
@@ -1041,8 +1165,23 @@ export default function App() {
   }, [currentSession]);
 
   useEffect(() => {
-    refreshChatSessions();
-  }, [authState.authenticated, authState.userId, refreshChatSessions]);
+    if (!authState.authenticated) return undefined;
+    let cancelled = false;
+    (async () => {
+      await migrateBrowserChatSessionsForAccount();
+      if (!cancelled) {
+        await refreshChatSessions();
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    authState.authenticated,
+    authState.userId,
+    migrateBrowserChatSessionsForAccount,
+    refreshChatSessions,
+  ]);
 
   useEffect(() => {
     if (!authState.authenticated || !currentSession) return;
@@ -1416,6 +1555,7 @@ export default function App() {
     try {
       await logoutGoogleSignIn();
       previousAuthenticatedUserRef.current = "";
+      migratedBrowserChatUsersRef.current = new Set();
       const guestSessionId = resetToFreshGuestChat();
       await refreshMailState(guestSessionId);
       await refreshResources(guestSessionId);

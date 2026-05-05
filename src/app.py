@@ -4355,6 +4355,26 @@ class ChatSessionUpdateRequest(BaseModel):
     selected_file_ids: List[str] | None = None
 
 
+class ChatMigrationMessage(BaseModel):
+    role: Optional[str] = None
+    type: Optional[str] = None
+    content: Optional[str] = None
+    text: Optional[str] = None
+    citations: List[Dict[str, Any]] | None = None
+
+
+class ChatMigrationSession(BaseModel):
+    session_id: str
+    title: Optional[str] = None
+    selected_program_id: Optional[str] = None
+    selected_file_ids: List[str] | None = None
+    messages: List[ChatMigrationMessage] | None = None
+
+
+class ChatMigrationRequest(BaseModel):
+    sessions: List[ChatMigrationSession] | None = None
+
+
 class UrlRequest(BaseModel):
     url: str
     session_id: Optional[str] = None
@@ -5467,6 +5487,42 @@ async def create_chat_session(http_request: Request, req: ChatSessionCreateReque
         selected_file_ids=req.selected_file_ids,
     )
     return {"session": session}
+
+
+@app.post("/api/chat/migrate")
+async def migrate_browser_chat_sessions(http_request: Request, req: ChatMigrationRequest):
+    user_id = _require_authenticated_user_id(http_request)
+    sessions = list(req.sessions or [])[:100]
+    results: List[Dict[str, Any]] = []
+    for item in sessions:
+        session_id = str(item.session_id or "").strip()
+        if not session_id:
+            continue
+        messages = [
+            {
+                "role": msg.role,
+                "type": msg.type,
+                "content": msg.content,
+                "text": msg.text,
+                "citations": msg.citations or [],
+            }
+            for msg in list(item.messages or [])[:500]
+        ]
+        results.append(
+            memory.import_chat_session(
+                session_id=session_id,
+                user_id=user_id,
+                title=item.title,
+                selected_program_id=item.selected_program_id,
+                selected_file_ids=item.selected_file_ids,
+                messages=messages,
+            )
+        )
+    return {
+        "results": results,
+        "imported_sessions": sum(1 for item in results if item.get("status") in {"imported", "metadata_only"}),
+        "imported_messages": sum(int(item.get("imported_messages") or 0) for item in results),
+    }
 
 
 @app.get("/api/chat/sessions/{session_id}/messages")
