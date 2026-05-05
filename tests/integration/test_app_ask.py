@@ -89,6 +89,19 @@ def test_ask_returns_answer_with_program_and_injects_prompt(app_module):
     assert "[PROGRAM:cs_2022]" in app_module._planner_prompts[-1]
 
 
+def test_health_and_readiness_endpoints(app_module):
+    client = TestClient(app_module.app)
+
+    health = client.get("/healthz")
+    ready = client.get("/readyz")
+
+    assert health.status_code == 200
+    assert health.json() == {"status": "ok"}
+    assert ready.status_code == 200
+    assert ready.json()["status"] == "ready"
+    assert ready.json()["checks"]["memory_db"] == "ok"
+
+
 def test_ask_passes_authenticated_user_to_memory_tools(monkeypatch, tmp_path):
     app_mod = importlib.reload(importlib.import_module("app"))
     monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")

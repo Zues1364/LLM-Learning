@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import shutil
+import sqlite3
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
@@ -94,6 +95,20 @@ _mail_poller_thread: Optional[Thread] = None
 STRUCTURED_TKB_ENABLED = os.getenv("STRUCTURED_TKB_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
 
 
+def _read_bool_env(env_name: str, default: bool = False) -> bool:
+    raw = str(os.getenv(env_name, "") or "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
+APP_COOKIE_SECURE = _read_bool_env("APP_COOKIE_SECURE", False)
+APP_COOKIE_SAMESITE = str(os.getenv("APP_COOKIE_SAMESITE", "lax") or "lax").strip().lower()
+if APP_COOKIE_SAMESITE not in {"lax", "strict", "none"}:
+    logger.warning("Invalid APP_COOKIE_SAMESITE=%r, falling back to 'lax'.", APP_COOKIE_SAMESITE)
+    APP_COOKIE_SAMESITE = "lax"
+
+
 def _read_timeout_env(env_name: str, default_seconds: float) -> Optional[float]:
     raw = str(os.getenv(env_name, str(default_seconds)) or "").strip()
     try:
@@ -123,6 +138,41 @@ def _invoke_mcp_tool(tool: str, args: Dict[str, Any], timeout_seconds: Optional[
     except TypeError:
         # Backward-compatible with monkeypatched test doubles / legacy client signature.
         return mcp_client.invoke(tool, args)
+
+
+@app.get("/healthz")
+async def healthz() -> Dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.get("/readyz")
+async def readyz() -> Dict[str, Any]:
+    checks: Dict[str, str] = {}
+    try:
+        db_path = Path(memory.db_path)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(str(db_path)) as conn:
+            conn.execute("SELECT 1")
+        checks["memory_db"] = "ok"
+    except Exception as exc:
+        checks["memory_db"] = str(exc)
+        raise HTTPException(status_code=503, detail={"status": "not_ready", "checks": checks})
+
+    for path_name, path in {
+        "pdf_dir": PDF_DIR,
+        "resource_pdf_dir": RESOURCE_PDF_DIR,
+        "resource_html_dir": RESOURCE_HTML_DIR,
+        "session_cache_dir": SESSION_CACHE_DIR,
+    }.items():
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            checks[path_name] = "ok"
+        except Exception as exc:
+            checks[path_name] = str(exc)
+            raise HTTPException(status_code=503, detail={"status": "not_ready", "checks": checks})
+
+    return {"status": "ready", "checks": checks}
+
 
 def _session_dir(session_id: str) -> Path:
     return SESSION_CACHE_DIR / _normalize_session_id(session_id)
@@ -4714,8 +4764,8 @@ async def complete_google_auth_callback(
             key=mail_agent_service.app_session_cookie_name,
             value=result["app_session_token"],
             httponly=True,
-            samesite="lax",
-            secure=False,
+            samesite=APP_COOKIE_SAMESITE,
+            secure=APP_COOKIE_SECURE,
             max_age=mail_agent_service.app_session_ttl_days * 24 * 60 * 60,
             path="/",
         )
