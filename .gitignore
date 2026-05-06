@@ -22,6 +22,9 @@ Thumbs.db
 # Cache
 *.log
 .cache/
+.pytest_tmp/
+.pytest_tmp_local/
+tmp/
 
 # Data
 *.pdf
@@ -39,6 +42,29 @@ figures/
 # Docs and architectuire diagrams
 diagram/
 latex/
+docs/thesis/
+
+# LaTeX build artifacts in docs
+docs/**/*.aux
+docs/**/*.bbl
+docs/**/*.bcf
+docs/**/*.blg
+docs/**/*.fdb_latexmk
+docs/**/*.fls
+docs/**/*.lof
+docs/**/*.lot
+docs/**/*.nav
+docs/**/*.out
+docs/**/*.run.xml
+docs/**/*.snm
+docs/**/*.synctex.gz
+docs/**/*.toc
+docs/**/*.vrb
+# Local docs bundles
+docs/bao_cao_do_an_latex/
+
+# Claude local skills
+.claude/skills/
 
 # Deep advisor reports
 reports/deep_advisor_io_*.md
@@ -47,4 +73,16 @@ reports/deep_advisor_io_*.json
 # Matrix/smoke generated reports
 reports/ctdt_matrix_fake_transcript_*.md
 reports/ctdt_matrix_fake_transcript_*.json
+reports/e2e_focus_user_flow_*.md
+reports/e2e_focus_user_flow_*.json
+reports/e2e_live_user_flow_*.md
+reports/e2e_live_user_flow_*.json
+reports/e2e_user_flow_*.md
+reports/e2e_user_flow_*.json
+reports/e2e_user_flow_clean_*.md
+reports/e2e_user_flow_clean_*.json
+reports/full_regression_report_*.md
+reports/premerge_full_gate_*.md
+reports/premerge_full_gate_*.json
+reports/v2_group_audit_*.json
 .gitnexus
