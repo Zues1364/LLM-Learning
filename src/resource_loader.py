@@ -10,12 +10,11 @@ import shutil
 from utils import FAISSVectorStore, VietnameseEmbedder, process_pdf, load_embeddings_with_cache
 from crawler import crawl_url
 from langchain_core.documents import Document
+from runtime_paths import BASE_DIR, RESOURCE_DIR
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-RESOURCE_DIR = BASE_DIR / "data" / "resources"
 PDF_DIR = RESOURCE_DIR / "pdfs"
 HTML_DIR = RESOURCE_DIR / "html"
 CONFIG_FILE = RESOURCE_DIR / "config.json"

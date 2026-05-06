@@ -19,6 +19,7 @@ from uuid import uuid4
 import requests
 
 from utils import normalize_for_match
+from runtime_paths import BASE_DIR, DATA_DIR, MEMORY_DB, RESOURCE_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -32,13 +33,12 @@ class MailOAuthRefreshError(ValueError):
         self.detail = detail or {}
 
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-MAIL_DIR = BASE_DIR / "data" / "mail"
+MAIL_DIR = DATA_DIR / "mail"
 MAIL_SESSION_DIR = MAIL_DIR / "sessions"
 MAIL_OAUTH_STATE_FILE = MAIL_DIR / "oauth_states.json"
-MAIL_DB_PATH = BASE_DIR / "data" / "memory.db"
-RESOURCE_SESSION_DIR = BASE_DIR / "data" / "resources" / "sessions"
-RESOURCE_USER_DIR = BASE_DIR / "data" / "resources" / "users"
+MAIL_DB_PATH = MEMORY_DB
+RESOURCE_SESSION_DIR = RESOURCE_DIR / "sessions"
+RESOURCE_USER_DIR = RESOURCE_DIR / "users"
 
 SUPPORTED_EXTENSIONS = {".pdf", ".html", ".htm", ".docx", ".xlsx", ".xls"}
 DEFAULT_KEYWORDS = [

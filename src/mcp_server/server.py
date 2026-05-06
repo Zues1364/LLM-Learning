@@ -8,7 +8,8 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import logging
 from bs4 import BeautifulSoup
@@ -34,6 +35,7 @@ from persistent_memory import PersistentMemory
 from agents import get_academic_advisor_agent
 from resource_loader import resource_loader # NEW IMPORT
 import google.generativeai as genai
+from runtime_paths import BASE_DIR, DATA_DIR, MEMORY_DB, PDF_DIR, RESOURCE_DIR
 
 # Logging
 logging.basicConfig(level=logging.INFO)
@@ -42,6 +44,27 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="RAG-Tools MCP Server")
 
 TOOL_REGISTRY: Dict[str, callable] = {}
+MCP_API_KEY = str(os.getenv("MCP_API_KEY", "") or "").strip()
+MCP_REQUIRE_API_KEY = str(os.getenv("MCP_REQUIRE_API_KEY", "false") or "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
+
+@app.middleware("http")
+async def require_mcp_api_key(request: Request, call_next):
+    if request.url.path.startswith("/mcp/") and MCP_REQUIRE_API_KEY:
+        if not MCP_API_KEY:
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "MCP_API_KEY is required when MCP_REQUIRE_API_KEY=true"},
+            )
+        provided = str(request.headers.get("X-MCP-API-Key") or "").strip()
+        if provided != MCP_API_KEY:
+            return JSONResponse(status_code=401, content={"detail": "Invalid MCP API key"})
+    return await call_next(request)
 
 
 def mcp_tool(name: str):
@@ -95,13 +118,9 @@ def web_search_tool(query: str, num_results: int = 10) -> List[str]:
         raise
 
 
-BASE_DIR = Path(__file__).resolve().parents[2]
-PDF_DIR = BASE_DIR / "data" / "pdfs"
-RESOURCE_DIR = BASE_DIR / "data" / "resources"
 CURRICULUM_HTML_DIR = RESOURCE_DIR / "html"
 CURRICULUM_PDF_DIR = RESOURCE_DIR / "pdfs"
-MEMORY_DB = BASE_DIR / "data" / "memory.db"
-VECTOR_SNAPSHOT_DIR = BASE_DIR / "data" / "cache" / "vector_snapshots"
+VECTOR_SNAPSHOT_DIR = DATA_DIR / "cache" / "vector_snapshots"
 GLOBAL_VECTOR_SNAPSHOT_FILE = VECTOR_SNAPSHOT_DIR / "global_resources_snapshot.pkl"
 
 _embedder: Optional[VietnameseEmbedder] = None
@@ -385,7 +404,7 @@ def _invoke_with_optional_session(
 def _get_structured_schedule_store() -> StructuredScheduleStore:
     global _structured_schedule_store
     if _structured_schedule_store is None:
-        db_path = BASE_DIR / "data" / "structured_schedule.db"
+        db_path = DATA_DIR / "structured_schedule.db"
         _structured_schedule_store = StructuredScheduleStore(db_path=db_path)
     return _structured_schedule_store
 
@@ -395,7 +414,7 @@ def _ensure_structured_schedule_ingested(
     user_id: Optional[str] = None,
     force: bool = False,
 ) -> Dict[str, Any]:
-    resource_dir = BASE_DIR / "data" / "resources" / "pdfs"
+    resource_dir = RESOURCE_DIR / "pdfs"
     safe_session = _normalize_session_id(session_id)
     safe_user = _normalize_user_id(user_id)
     candidates = _invoke_with_optional_session(
@@ -491,10 +510,10 @@ def _collect_schedule_files(
     safe_user = _normalize_user_id(user_id)
     safe_session = _normalize_session_id(session_id)
     if safe_user:
-        user_pdf_dir = BASE_DIR / "data" / "resources" / "users" / safe_user / "pdfs"
+        user_pdf_dir = RESOURCE_DIR / "users" / safe_user / "pdfs"
         scan_dirs.insert(1, user_pdf_dir)
     elif safe_session:
-        session_pdf_dir = BASE_DIR / "data" / "resources" / "sessions" / safe_session / "pdfs"
+        session_pdf_dir = RESOURCE_DIR / "sessions" / safe_session / "pdfs"
         scan_dirs.insert(1, session_pdf_dir)
     for folder in scan_dirs:
         if not folder.exists():
@@ -536,7 +555,7 @@ def _load_best_schedule_text(
         "file_name": None,
         "text": "",
     }
-    resource_dir = BASE_DIR / "data" / "resources" / "pdfs"
+    resource_dir = RESOURCE_DIR / "pdfs"
     safe_user = _normalize_user_id(user_id)
     safe_session = _normalize_session_id(session_id)
     candidates = _invoke_with_optional_session(
@@ -767,7 +786,7 @@ def _load_schedule_time_slot_map(
         "slot_map": {},
         "checksum": None,
     }
-    resource_dir = BASE_DIR / "data" / "resources" / "pdfs"
+    resource_dir = RESOURCE_DIR / "pdfs"
     safe_user = _normalize_user_id(user_id)
     safe_session = _normalize_session_id(session_id)
     candidates = _invoke_with_optional_session(
@@ -1490,7 +1509,7 @@ def get_schedule(subject_codes: List[str], session_id: Optional[str] = None, use
     safe_user = _normalize_user_id(user_id)
     logger.info("get_schedule invoked for: %s (session=%s, user=%s)", subject_codes, safe_session, safe_user)
 
-    resource_dir = BASE_DIR / "data" / "resources" / "pdfs"
+    resource_dir = RESOURCE_DIR / "pdfs"
     tkb_candidates = _invoke_with_optional_session(
         _collect_schedule_files,
         resource_dir,
@@ -2013,7 +2032,7 @@ def _load_session_file_ids(session_id: str) -> List[str]:
     if not sid:
         return []
 
-    meta_path = BASE_DIR / "data" / "session_cache" / sid / "meta.json"
+    meta_path = DATA_DIR / "session_cache" / sid / "meta.json"
     if not meta_path.exists():
         return []
 

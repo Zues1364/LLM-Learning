@@ -20,15 +20,13 @@ import hashlib
 import unicodedata
 import re
 from types import SimpleNamespace
+from runtime_paths import BASE_DIR, CACHE_DIR
 
 # Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 SIMILARITY_THRESHOLD = 0.2
-# Absolute cache dir to avoid CWD mismatch between services
-BASE_DIR = Path(__file__).resolve().parent.parent
-CACHE_DIR = BASE_DIR / "data" / "cache"
 # Versioning to invalidate stale cached chunks/embeddings when parsing logic changes
 CHUNK_CACHE_VERSION = "v5"
 EMB_CACHE_VERSION = "v3"

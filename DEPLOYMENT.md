@@ -5,7 +5,7 @@ MCP server directly to the public Internet.
 
 ## Required runtime state
 
-Mount or persist this directory:
+Mount or persist the runtime data directory. Locally the default is:
 
 ```text
 data/
@@ -14,6 +14,20 @@ data/
 It contains SQLite databases, uploaded transcripts, local resources, cache files,
 and per-session metadata. If the container is recreated without this volume,
 chat/resource state is lost.
+
+The backend and MCP server read the runtime root from:
+
+```text
+APP_DATA_DIR=data
+```
+
+For Docker/container deployment, mount one persistent volume to that path for
+both backend and MCP. The sample compose file uses:
+
+```text
+APP_DATA_DIR=/app/data
+./data:/app/data
+```
 
 ## Local container run
 
@@ -54,7 +68,12 @@ npm run dev
 - Keep `MCP_SERVER_URL` on a private network, for example `http://mcp:8000`.
 - Bind MCP to private/internal network only. The sample compose binds to
   `127.0.0.1` for local safety.
+- For public/staging deployments, enable MCP API-key protection:
+  `MCP_REQUIRE_API_KEY=true` and set the same strong `MCP_API_KEY` for backend
+  and MCP services. The backend forwards it as `X-MCP-API-Key`.
 - Set `CORS_ALLOW_ORIGINS` to the real frontend origin only.
+- Set `APP_ENV=production`.
+- Set `VITE_API_BASE` to the deployed backend HTTPS origin.
 - Persist `data/` using a Docker volume, host mount, managed disk, or migrate to
   DB/object storage.
 - Rotate OAuth/API keys if `.env` has ever been shared.

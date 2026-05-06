@@ -45,11 +45,23 @@ from utils import process_pdf, normalize_for_match  # Backward-compatible import
 # They likely share the 'data' dir.
 from resource_loader import resource_loader 
 from mail_agent import MailOAuthRefreshError, mail_agent_service
+from runtime_paths import (
+    BASE_DIR,
+    DATA_DIR,
+    MEMORY_DB,
+    PDF_DIR,
+    RESOURCE_HTML_DIR,
+    RESOURCE_PDF_DIR,
+    SESSION_CACHE_DIR,
+    ensure_runtime_dirs,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
+APP_ENV = str(os.getenv("APP_ENV", "development") or "development").strip().lower()
+APP_IS_PRODUCTION = APP_ENV in {"prod", "production"}
 
 # CORS origins for credentialed requests (cookies). Do not use wildcard with allow_credentials=True.
 _cors_origins_env = os.getenv(
@@ -57,6 +69,12 @@ _cors_origins_env = os.getenv(
     "http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:9000,http://localhost:9000",
 )
 _cors_origins = [origin.strip() for origin in _cors_origins_env.split(",") if origin.strip()]
+if APP_IS_PRODUCTION:
+    if not _cors_origins or any(origin == "*" for origin in _cors_origins):
+        raise RuntimeError("CORS_ALLOW_ORIGINS must list explicit HTTPS frontend origins in production.")
+    local_origins = [origin for origin in _cors_origins if "localhost" in origin or "127.0.0.1" in origin]
+    if local_origins:
+        logger.warning("Production CORS_ALLOW_ORIGINS contains local origins: %s", local_origins)
 
 # CORS
 app.add_middleware(
@@ -68,18 +86,10 @@ app.add_middleware(
 )
 
 # Paths
-BASE_DIR = Path(__file__).resolve().parent.parent
-PDF_DIR = BASE_DIR / "data" / "pdfs"
-RESOURCE_PDF_DIR = BASE_DIR / "data" / "resources" / "pdfs"
-RESOURCE_HTML_DIR = BASE_DIR / "data" / "resources" / "html"
-SESSION_CACHE_DIR = BASE_DIR / "data" / "session_cache"
-os.makedirs(PDF_DIR, exist_ok=True)
-os.makedirs(RESOURCE_PDF_DIR, exist_ok=True)
-os.makedirs(RESOURCE_HTML_DIR, exist_ok=True)
-os.makedirs(SESSION_CACHE_DIR, exist_ok=True)
+ensure_runtime_dirs()
 
 # Globals
-memory = PersistentMemory(db_path=str(BASE_DIR / "data" / "memory.db"), max_history=25)
+memory = PersistentMemory(db_path=str(MEMORY_DB), max_history=25)
 loaded_file_ids: Set[str] = set()
 file_meta: Dict[str, str] = {}  # file_id -> original filename
 last_uploaded_file_ids: List[str] = []
@@ -107,6 +117,8 @@ APP_COOKIE_SAMESITE = str(os.getenv("APP_COOKIE_SAMESITE", "lax") or "lax").stri
 if APP_COOKIE_SAMESITE not in {"lax", "strict", "none"}:
     logger.warning("Invalid APP_COOKIE_SAMESITE=%r, falling back to 'lax'.", APP_COOKIE_SAMESITE)
     APP_COOKIE_SAMESITE = "lax"
+if APP_IS_PRODUCTION and not APP_COOKIE_SECURE:
+    raise RuntimeError("APP_COOKIE_SECURE=true is required when APP_ENV=production.")
 
 
 def _read_int_env(env_name: str, default: int) -> int:
@@ -173,6 +185,7 @@ async def readyz() -> Dict[str, Any]:
         raise HTTPException(status_code=503, detail={"status": "not_ready", "checks": checks})
 
     for path_name, path in {
+        "data_dir": DATA_DIR,
         "pdf_dir": PDF_DIR,
         "resource_pdf_dir": RESOURCE_PDF_DIR,
         "resource_html_dir": RESOURCE_HTML_DIR,
