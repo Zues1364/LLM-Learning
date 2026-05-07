@@ -54,8 +54,8 @@ def test_mcp_client_sends_api_key_header(monkeypatch):
         captured["timeout"] = timeout
         return DummyResponse()
 
-    monkeypatch.setenv("MCP_API_KEY", "client-secret")
-    monkeypatch.setenv("MCP_SERVER_URL", "http://mcp:8000")
+    monkeypatch.setenv("MCP_API_KEY", '"client-secret"')
+    monkeypatch.setenv("MCP_SERVER_URL", "'http://mcp:8000'")
     monkeypatch.setattr("mcp_client.client.requests.get", fake_get)
 
     tools = MCPClient().discover(timeout=3)

@@ -7,16 +7,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from env_loader import read_bool_env, read_str_env
+
 
 def _env(name: str, default: str = "") -> str:
-    return str(os.getenv(name, default) or "").strip()
+    return read_str_env(name, default)
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
-    raw = _env(name, "")
-    if not raw:
-        return default
-    return raw.lower() in {"1", "true", "yes", "on"}
+    return read_bool_env(name, default)
 
 
 def supabase_enabled() -> bool:

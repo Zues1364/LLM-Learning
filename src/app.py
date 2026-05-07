@@ -26,7 +26,7 @@ from agents import (
     get_mcp_planner_agent,
     get_rag_agent,
 )
-from env_loader import load_env
+from env_loader import load_env, read_bool_env, read_str_env
 
 # Initial Env Load
 load_env()
@@ -70,11 +70,11 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
-APP_ENV = str(os.getenv("APP_ENV", "development") or "development").strip().lower()
+APP_ENV = read_str_env("APP_ENV", "development").lower()
 APP_IS_PRODUCTION = APP_ENV in {"prod", "production"}
 
 # CORS origins for credentialed requests (cookies). Do not use wildcard with allow_credentials=True.
-_cors_origins_env = os.getenv(
+_cors_origins_env = read_str_env(
     "CORS_ALLOW_ORIGINS",
     "http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:9000,http://localhost:9000",
 )
@@ -113,18 +113,12 @@ _session_locks: Dict[str, Lock] = {}
 _session_locks_guard = Lock()
 _mail_poller_stop = Event()
 _mail_poller_thread: Optional[Thread] = None
+_blob_sync_thread: Optional[Thread] = None
 STRUCTURED_TKB_ENABLED = os.getenv("STRUCTURED_TKB_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
 
 
-def _read_bool_env(env_name: str, default: bool = False) -> bool:
-    raw = str(os.getenv(env_name, "") or "").strip().lower()
-    if not raw:
-        return default
-    return raw in {"1", "true", "yes", "on"}
-
-
-APP_COOKIE_SECURE = _read_bool_env("APP_COOKIE_SECURE", False)
-APP_COOKIE_SAMESITE = str(os.getenv("APP_COOKIE_SAMESITE", "lax") or "lax").strip().lower()
+APP_COOKIE_SECURE = read_bool_env("APP_COOKIE_SECURE", APP_IS_PRODUCTION)
+APP_COOKIE_SAMESITE = read_str_env("APP_COOKIE_SAMESITE", "lax").lower()
 if APP_COOKIE_SAMESITE not in {"lax", "strict", "none"}:
     logger.warning("Invalid APP_COOKIE_SAMESITE=%r, falling back to 'lax'.", APP_COOKIE_SAMESITE)
     APP_COOKIE_SAMESITE = "lax"
@@ -228,7 +222,7 @@ async def readyz() -> Dict[str, Any]:
         checks["blob_store"] = blob_err
         raise HTTPException(status_code=503, detail={"status": "not_ready", "checks": checks})
 
-    mcp_server_url = str(os.getenv("MCP_SERVER_URL", "") or "").strip()
+    mcp_server_url = read_str_env("MCP_SERVER_URL")
     if not mcp_server_url:
         checks["mcp"] = "disabled"
     else:
@@ -440,15 +434,27 @@ def _mail_poller_loop():
         _mail_poller_stop.wait(timeout=max(60, mail_agent_service.poll_minutes * 60))
 
 
+def _sync_blob_to_local_safely() -> None:
+    try:
+        sync_blob_to_local()
+        logger.info("[blob_sync] Synced Supabase Storage to local runtime paths.")
+    except Exception as exc:
+        logger.warning("[blob_sync] Startup sync failed: %s", exc)
+
+
 @app.on_event("startup")
 def _start_mail_poller():
-    global _mail_poller_thread
+    global _mail_poller_thread, _blob_sync_thread
     if blob_mode_enabled():
-        try:
-            sync_blob_to_local()
-            logger.info("[blob_sync] Synced Supabase Storage to local runtime paths.")
-        except Exception as exc:
-            logger.warning("[blob_sync] Startup sync failed: %s", exc)
+        sync_mode = read_str_env("APP_BLOB_STARTUP_SYNC", "background").lower()
+        if sync_mode in {"0", "false", "no", "off", "none", "disabled"}:
+            logger.info("[blob_sync] Startup sync disabled.")
+        elif sync_mode in {"blocking", "sync"}:
+            _sync_blob_to_local_safely()
+        else:
+            _blob_sync_thread = Thread(target=_sync_blob_to_local_safely, name="blob-sync", daemon=True)
+            _blob_sync_thread.start()
+            logger.info("[blob_sync] Startup sync running in background.")
     _mail_poller_stop.clear()
     _mail_poller_thread = Thread(target=_mail_poller_loop, name="mail-poller", daemon=True)
     _mail_poller_thread.start()

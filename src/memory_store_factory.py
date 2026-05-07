@@ -1,6 +1,6 @@
-import os
 from typing import Any
 
+from env_loader import read_str_env
 from persistent_memory import PersistentMemory
 from persistent_memory_pg import PostgresPersistentMemory
 from supabase_support import pgvector_enabled
@@ -14,7 +14,7 @@ def build_memory_store(max_history: int = 25, sqlite_db_path: str = "../data/mem
     """
     if pgvector_enabled():
         return PostgresPersistentMemory(
-            db_url=str(os.getenv("SUPABASE_DB_URL", "")).strip(),
+            db_url=read_str_env("SUPABASE_DB_URL"),
             max_history=max_history,
             embedder=embedder,
         )

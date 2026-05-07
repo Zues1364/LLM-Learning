@@ -2,6 +2,36 @@ import os
 from pathlib import Path
 
 
+_TRUE_ENV_VALUES = {"1", "true", "t", "yes", "y", "on"}
+_FALSE_ENV_VALUES = {"0", "false", "f", "no", "n", "off"}
+
+
+def strip_wrapping_quotes(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1].strip()
+    return value
+
+
+def read_str_env(env_name: str, default: str = "") -> str:
+    raw = os.getenv(env_name)
+    if raw is None:
+        return default
+    value = strip_wrapping_quotes(str(raw))
+    return value or default
+
+
+def read_bool_env(env_name: str, default: bool = False) -> bool:
+    raw = read_str_env(env_name, "").lower()
+    if not raw:
+        return default
+    if raw in _TRUE_ENV_VALUES:
+        return True
+    if raw in _FALSE_ENV_VALUES:
+        return False
+    return default
+
+
 def normalize_api_keys() -> None:
     """
     Canonicalize Gemini credentials to GEMINI_API_KEY only.
@@ -9,8 +39,8 @@ def normalize_api_keys() -> None:
     - If both exist, prefer GEMINI_API_KEY.
     - Always remove GOOGLE_API_KEY to avoid SDK ambiguity.
     """
-    gemini_key = (os.getenv("GEMINI_API_KEY") or "").strip()
-    google_key = (os.getenv("GOOGLE_API_KEY") or "").strip()
+    gemini_key = read_str_env("GEMINI_API_KEY")
+    google_key = read_str_env("GOOGLE_API_KEY")
 
     if not gemini_key and google_key:
         os.environ["GEMINI_API_KEY"] = google_key
@@ -35,7 +65,7 @@ def load_env(env_path: str | Path | None = None) -> None:
             continue
         key, value = stripped.split("=", 1)
         key = key.strip()
-        value = value.strip()
+        value = strip_wrapping_quotes(value)
         if key and key not in os.environ:
             os.environ[key] = value
 

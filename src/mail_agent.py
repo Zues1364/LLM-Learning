@@ -3,7 +3,6 @@ import hashlib
 import hmac
 import json
 import logging
-import os
 import re
 import sqlite3
 import secrets
@@ -18,6 +17,7 @@ from uuid import uuid4
 
 import requests
 
+from env_loader import read_str_env
 from utils import normalize_for_match
 from runtime_paths import BASE_DIR, DATA_DIR, MEMORY_DB, RESOURCE_DIR
 
@@ -196,61 +196,61 @@ def _safe_float(raw: str, default: float) -> float:
 
 class MailAgentService:
     def __init__(self):
-        self.gmail_client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
-        self.gmail_client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
-        self.gmail_redirect_default = os.getenv("MAIL_OAUTH_REDIRECT_URI", "").strip()
+        self.gmail_client_id = read_str_env("GOOGLE_OAUTH_CLIENT_ID")
+        self.gmail_client_secret = read_str_env("GOOGLE_OAUTH_CLIENT_SECRET")
+        self.gmail_redirect_default = read_str_env("MAIL_OAUTH_REDIRECT_URI")
         self.app_auth_redirect_default = (
-            os.getenv("APP_OAUTH_REDIRECT_URI", "").strip()
+            read_str_env("APP_OAUTH_REDIRECT_URI")
             or "http://127.0.0.1:9000/api/auth/google/callback"
         )
         self.app_auth_scope = (
-            os.getenv("APP_GOOGLE_AUTH_SCOPE", "openid email profile").strip() or "openid email profile"
+            read_str_env("APP_GOOGLE_AUTH_SCOPE", "openid email profile") or "openid email profile"
         )
-        self.gmail_scope = os.getenv(
+        self.gmail_scope = read_str_env(
             "MAIL_GMAIL_SCOPE",
             "https://www.googleapis.com/auth/gmail.readonly",
-        ).strip()
-        self.poll_minutes = max(1, int(os.getenv("MAIL_POLL_MINUTES", "5") or "5"))
-        self.relevance_keywords = _normalize_keywords(os.getenv("MAIL_RELEVANCE_KEYWORDS", ""))
+        )
+        self.poll_minutes = max(1, int(read_str_env("MAIL_POLL_MINUTES", "5") or "5"))
+        self.relevance_keywords = _normalize_keywords(read_str_env("MAIL_RELEVANCE_KEYWORDS"))
         self.trusted_domains = [
             d.strip().lower()
-            for d in (os.getenv("MAIL_TRUSTED_DOMAINS", "uet.edu.vn,vnu.edu.vn").split(","))
+            for d in (read_str_env("MAIL_TRUSTED_DOMAINS", "uet.edu.vn,vnu.edu.vn").split(","))
             if d.strip()
         ]
-        self.query = os.getenv("MAIL_GMAIL_QUERY", "newer_than:7d").strip() or "newer_than:7d"
-        self.retention_days = max(1, int(os.getenv("MAIL_RETENTION_DAYS", "7") or "7"))
-        self.gemini_api_key = os.getenv("GEMINI_API_KEY", "").strip()
-        self.intent_mode = (os.getenv("MAIL_INTENT_CLASSIFIER_MODE", "hybrid") or "hybrid").strip().lower()
+        self.query = read_str_env("MAIL_GMAIL_QUERY", "newer_than:7d") or "newer_than:7d"
+        self.retention_days = max(1, int(read_str_env("MAIL_RETENTION_DAYS", "7") or "7"))
+        self.gemini_api_key = read_str_env("GEMINI_API_KEY")
+        self.intent_mode = (read_str_env("MAIL_INTENT_CLASSIFIER_MODE", "hybrid") or "hybrid").lower()
         if self.intent_mode not in {"rule_only", "llm_only", "hybrid"}:
             self.intent_mode = "hybrid"
         self.intent_llm_model = (
-            os.getenv("MAIL_INTENT_LLM_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"
-        ).strip()
+            read_str_env("MAIL_INTENT_LLM_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"
+        )
         self.intent_llm_threshold = _clip01(
-            _safe_float(os.getenv("MAIL_INTENT_LLM_THRESHOLD", "0.70") or "0.70", 0.70)
+            _safe_float(read_str_env("MAIL_INTENT_LLM_THRESHOLD", "0.70") or "0.70", 0.70)
         )
         self.oauth_state_ttl_seconds = max(
-            60, int(os.getenv("MAIL_OAUTH_STATE_TTL_SECONDS", "600") or "600")
+            60, int(read_str_env("MAIL_OAUTH_STATE_TTL_SECONDS", "600") or "600")
         )
         self.app_session_cookie_name = (
-            os.getenv("APP_SESSION_COOKIE_NAME", "rag_cosmic_session").strip() or "rag_cosmic_session"
+            read_str_env("APP_SESSION_COOKIE_NAME", "rag_cosmic_session") or "rag_cosmic_session"
         )
-        self.app_session_ttl_days = max(1, int(os.getenv("APP_SESSION_TTL_DAYS", "7") or "7"))
+        self.app_session_ttl_days = max(1, int(read_str_env("APP_SESSION_TTL_DAYS", "7") or "7"))
         self.app_session_secret = (
-            os.getenv("APP_SESSION_SECRET", "").strip()
+            read_str_env("APP_SESSION_SECRET")
             or self.gmail_client_secret
             or "rag-cosmic-dev-session-secret"
         )
         self.intent_schedule_tokens = _normalize_csv_tokens(
-            os.getenv("MAIL_SCHEDULE_TOKENS", ""),
+            read_str_env("MAIL_SCHEDULE_TOKENS"),
             DEFAULT_SCHEDULE_TOKENS,
         )
         self.intent_registration_tokens = _normalize_csv_tokens(
-            os.getenv("MAIL_REGISTRATION_TOKENS", ""),
+            read_str_env("MAIL_REGISTRATION_TOKENS"),
             DEFAULT_REGISTRATION_TOKENS,
         )
         self.intent_negative_tokens = _normalize_csv_tokens(
-            os.getenv("MAIL_NEGATIVE_TOKENS", ""),
+            read_str_env("MAIL_NEGATIVE_TOKENS"),
             DEFAULT_NEGATIVE_TOKENS,
         )
 

@@ -14,7 +14,7 @@ from pydantic import BaseModel
 import logging
 from bs4 import BeautifulSoup
 
-from env_loader import load_env
+from env_loader import load_env, read_bool_env, read_str_env
 
 # Initial Env Load
 load_env()
@@ -48,13 +48,8 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="RAG-Tools MCP Server")
 
 TOOL_REGISTRY: Dict[str, callable] = {}
-MCP_API_KEY = str(os.getenv("MCP_API_KEY", "") or "").strip()
-MCP_REQUIRE_API_KEY = str(os.getenv("MCP_REQUIRE_API_KEY", "false") or "").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
+MCP_API_KEY = read_str_env("MCP_API_KEY")
+MCP_REQUIRE_API_KEY = read_bool_env("MCP_REQUIRE_API_KEY", False)
 
 
 @app.middleware("http")
@@ -351,12 +346,7 @@ def _init_vector_store():
         _store = build_vector_store([], _embedder)
         # Link resource loader to this store
         resource_loader.set_vector_store(_store)
-        eager_load = str(os.getenv("MCP_EAGER_LOAD_RESOURCES", "false") or "").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
+        eager_load = read_bool_env("MCP_EAGER_LOAD_RESOURCES", False)
         if eager_load:
             if blob_mode_enabled():
                 try:

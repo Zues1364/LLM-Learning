@@ -10,6 +10,7 @@ from langchain_core.documents import Document
 from agno.agent import Agent
 from agno.models.google import Gemini
 import requests
+from env_loader import read_str_env
 from mcp_client.client import MCPClient
 from persistent_memory import PersistentMemory
 from utils import FAISSVectorStore, web_search
@@ -43,7 +44,7 @@ def _gemini_model(model_id: str) -> Gemini:
     Build Gemini model with explicit GEMINI_API_KEY to avoid agno fallback warnings
     that hard-check GOOGLE_API_KEY.
     """
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = read_str_env("GEMINI_API_KEY")
     if not api_key:
         logger.warning("GEMINI_API_KEY is not set; Gemini model init may fail.")
         return Gemini(id=model_id)
