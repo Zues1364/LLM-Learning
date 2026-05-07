@@ -36,6 +36,27 @@ def test_mcp_ready_endpoint_checks_dependencies(monkeypatch):
     assert payload["checks"]["vector_store"] == "lazy"
 
 
+def test_mcp_startup_defaults_to_lazy_vector_init(monkeypatch):
+    monkeypatch.delenv("MCP_STARTUP_VECTOR_INIT", raising=False)
+    monkeypatch.setattr(
+        server,
+        "_init_vector_store",
+        lambda: (_ for _ in ()).throw(AssertionError("startup should not block on vector init")),
+    )
+
+    server.startup_event()
+
+
+def test_mcp_startup_can_eager_init_vector_store(monkeypatch):
+    calls = []
+    monkeypatch.setenv("MCP_STARTUP_VECTOR_INIT", "eager")
+    monkeypatch.setattr(server, "_init_vector_store", lambda: calls.append("init"))
+
+    server.startup_event()
+
+    assert calls == ["init"]
+
+
 def _make_docs(pdf_name: str) -> list[Document]:
     return [
         Document(page_content="alpha", metadata={"file_id": pdf_name, "file_name": pdf_name, "index": 1, "page": 3}),

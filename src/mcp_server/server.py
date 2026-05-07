@@ -1063,9 +1063,14 @@ def _build_schedule_table_rows(
 # On Startup (using FastAPI event)
 @app.on_event("startup")
 def startup_event():
-    logger.info("MCP Server Startup: Initializing Vector Store...")
-    _init_vector_store()
-    logger.info("MCP Server Startup: Vector Store Initialized.")
+    vector_init_mode = read_str_env("MCP_STARTUP_VECTOR_INIT", "lazy").strip().lower()
+    if vector_init_mode in {"1", "true", "yes", "on", "eager", "blocking"}:
+        logger.info("MCP Server Startup: Initializing Vector Store...")
+        _init_vector_store()
+        logger.info("MCP Server Startup: Vector Store Initialized.")
+        return
+
+    logger.info("MCP Server Startup: lazy vector store initialization enabled.")
 
 def _resolve_pdf_path(file_id: str) -> Path:
     """

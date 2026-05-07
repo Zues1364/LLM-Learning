@@ -42,6 +42,8 @@ Required env:
 - `SUPABASE_DB_URL=<...>`
 - `SUPABASE_STORAGE_BUCKET=rag-files`
 - `GEMINI_API_KEY=<...>`
+- `MCP_STARTUP_VECTOR_INIT=lazy` (default; keeps Railway healthcheck from waiting on embedding model load)
+- `MCP_EAGER_LOAD_RESOURCES=false` unless intentionally warming the vector cache
 
 Health checks:
 - `GET /health` must return `{"status":"ok"}`
