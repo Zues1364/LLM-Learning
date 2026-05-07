@@ -22,3 +22,4 @@ supabase
 tqdm
 uvicorn[standard]
 psycopg2-binary
+.

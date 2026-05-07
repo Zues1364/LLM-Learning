@@ -16,13 +16,12 @@ RUN apt-get update \
         tesseract-ocr-vie \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt ./requirements.txt
+COPY requirements.txt pyproject.toml sitecustomize.py ./
 RUN python -m pip install --upgrade pip \
     && python -m pip install -r requirements.txt
 
 COPY src ./src
 COPY README.md ./.env.example ./
-COPY sitecustomize.py ./sitecustomize.py
 
 RUN mkdir -p /app/data/pdfs /app/data/resources/pdfs /app/data/resources/html /app/data/session_cache /app/data/cache
 
