@@ -29,7 +29,7 @@ Service name: `mcp`
 Start command:
 
 ```bash
-python -m uvicorn src.mcp_server.server:app --host 0.0.0.0 --port $PORT
+sh -c 'python -m uvicorn src.mcp_server.server:app --host :: --port ${PORT:-8000}'
 ```
 
 Required env:
@@ -54,7 +54,7 @@ Service name: `backend`
 Start command:
 
 ```bash
-python -m uvicorn app:app --app-dir src --host 0.0.0.0 --port $PORT
+sh -c 'python -m uvicorn app:app --app-dir src --host 0.0.0.0 --port ${PORT:-9000}'
 ```
 
 Required env:

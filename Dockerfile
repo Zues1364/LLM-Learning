@@ -22,6 +22,7 @@ RUN python -m pip install --upgrade pip \
 
 COPY src ./src
 COPY README.md ./.env.example ./
+COPY sitecustomize.py ./sitecustomize.py
 
 RUN mkdir -p /app/data/pdfs /app/data/resources/pdfs /app/data/resources/html /app/data/session_cache /app/data/cache
 
