@@ -4,12 +4,36 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from fastapi.testclient import TestClient
 from langchain_core.documents import Document
 
 sys.path.append(str(Path(__file__).resolve().parents[2] / "src"))
 
 import mcp_server.server as server  # noqa: E402
 from persistent_memory import PersistentMemory  # noqa: E402
+
+
+def test_mcp_health_endpoint():
+    client = TestClient(server.app)
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_mcp_ready_endpoint_checks_dependencies(monkeypatch):
+    client = TestClient(server.app)
+    monkeypatch.setattr(server, "check_postgres_ready", lambda: "disabled")
+    monkeypatch.setattr(server, "check_blob_ready", lambda store: "disabled")
+    monkeypatch.setattr(server, "_init_vector_store", lambda: None)
+
+    response = client.get("/ready")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ready"
+    assert payload["checks"]["postgres"] == "disabled"
+    assert payload["checks"]["blob_store"] == "disabled"
+    assert payload["checks"]["vector_store"] == "lazy"
 
 
 def _make_docs(pdf_name: str) -> list[Document]:
@@ -29,6 +53,11 @@ def test_ensure_file_loaded_uses_cached_embeddings(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "_loaded_files", set())
     monkeypatch.setattr(server, "_store", None)
     monkeypatch.setattr(server, "_embedder", None)
+    monkeypatch.setattr(
+        server,
+        "build_vector_store",
+        lambda documents, embedder: server.FAISSVectorStore(documents, embedder),
+    )
 
     class DummyMemory:
         def get_summary(self, fid):
@@ -75,6 +104,13 @@ def test_retrieve_chunks_formats_context(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "PDF_DIR", pdf_dir)
     monkeypatch.setattr(server, "_loaded_files", set())
     monkeypatch.setattr(server, "_store", None)
+    monkeypatch.setattr(
+        server,
+        "build_vector_store",
+        lambda documents, embedder: server.FAISSVectorStore(documents, embedder),
+    )
+    monkeypatch.setattr(server.resource_loader, "set_vector_store", lambda store: None)
+    monkeypatch.setattr(server.resource_loader, "load_resources", lambda session_id=None, user_id=None: None)
 
     class DummyMemory:
         def get_summary(self, fid):

@@ -11,6 +11,7 @@ from utils import FAISSVectorStore, VietnameseEmbedder, process_pdf, load_embedd
 from crawler import crawl_url
 from langchain_core.documents import Document
 from runtime_paths import BASE_DIR, RESOURCE_DIR
+from storage_runtime import blob_mode_enabled, build_resource_config_key, get_blob_store, local_path_from_key
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -72,6 +73,7 @@ class ResourceLoader:
     def _scope_dirs(self, session_id: Optional[str] = None, user_id: Optional[str] = None) -> Tuple[Path, Path, Path]:
         scope, safe_user, safe_session = _resolve_scope(session_id=session_id, user_id=user_id)
         if scope == "global":
+            self._sync_scope_from_blob(scope=scope, safe_user=safe_user, safe_session=safe_session)
             return PDF_DIR, HTML_DIR, CONFIG_FILE
         root = USER_DIR / safe_user if scope == "user" and safe_user else SESSION_DIR / safe_session
         pdf_dir = root / "pdfs"
@@ -82,7 +84,49 @@ class ResourceLoader:
         if not config_file.exists():
             with open(config_file, "w", encoding="utf-8") as f:
                 json.dump({"urls": []}, f, ensure_ascii=False)
+        self._sync_scope_from_blob(scope=scope, safe_user=safe_user, safe_session=safe_session)
         return pdf_dir, html_dir, config_file
+
+    def _sync_scope_from_blob(
+        self,
+        *,
+        scope: str,
+        safe_user: Optional[str],
+        safe_session: Optional[str],
+    ) -> None:
+        if not blob_mode_enabled():
+            return
+        try:
+            store = get_blob_store()
+            prefixes: List[str] = []
+            if scope == "global":
+                prefixes.extend(["resources/global/pdf/", "resources/global/html/", "resources/global/config.json"])
+            elif scope == "user" and safe_user:
+                prefixes.extend(
+                    [
+                        f"resources/users/{safe_user}/pdf/",
+                        f"resources/users/{safe_user}/html/",
+                        f"resources/users/{safe_user}/config.json",
+                    ]
+                )
+            elif scope == "session" and safe_session:
+                prefixes.extend(
+                    [
+                        f"resources/{safe_session}/pdf/",
+                        f"resources/{safe_session}/html/",
+                        f"resources/{safe_session}/config.json",
+                    ]
+                )
+            for prefix in prefixes:
+                keys = [obj.key for obj in store.list_objects(prefix)]
+                if not keys and prefix.endswith("config.json") and store.exists(prefix):
+                    keys = [prefix]
+                for key in keys:
+                    local_path = local_path_from_key(key)
+                    local_path.parent.mkdir(parents=True, exist_ok=True)
+                    store.download_to_path(key, local_path)
+        except Exception as exc:
+            logger.warning("[ResourceLoader] Scope blob sync failed: %s", exc)
 
     def _scope_prefix(self, session_id: Optional[str] = None, user_id: Optional[str] = None) -> str:
         scope, safe_user, safe_session = _resolve_scope(session_id=session_id, user_id=user_id)
@@ -229,18 +273,38 @@ class ResourceLoader:
 
     def _load_config(self, session_id: Optional[str] = None, user_id: Optional[str] = None) -> Dict:
         _, _, config_file = self._scope_dirs(session_id=session_id, user_id=user_id)
+        if blob_mode_enabled():
+            try:
+                object_key = build_resource_config_key(session_id=session_id, user_id=user_id)
+                store = get_blob_store()
+                if store.exists(object_key):
+                    config_file.parent.mkdir(parents=True, exist_ok=True)
+                    store.download_to_path(object_key, config_file)
+            except Exception as exc:
+                logger.warning("[ResourceLoader] Failed to sync config from blob: %s", exc)
         if not config_file.exists():
             return {"urls": []}
         try:
             with open(config_file, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except:
+        except Exception:
             return {"urls": []}
 
     def _save_config(self, config: Dict, session_id: Optional[str] = None, user_id: Optional[str] = None):
         _, _, config_file = self._scope_dirs(session_id=session_id, user_id=user_id)
         with open(config_file, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
+        if blob_mode_enabled():
+            try:
+                object_key = build_resource_config_key(session_id=session_id, user_id=user_id)
+                store = get_blob_store()
+                store.upload_file(
+                    object_key,
+                    config_file,
+                    content_type="application/json",
+                )
+            except Exception as exc:
+                logger.warning("[ResourceLoader] Failed to sync config to blob: %s", exc)
 
     def load_resources(self, session_id: Optional[str] = None, user_id: Optional[str] = None):
         """

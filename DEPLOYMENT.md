@@ -1,88 +1,177 @@
-# Deployment Notes
+# Public Deployment Guide
 
-This project is still optimized for local/private deployment. Do not expose the
-MCP server directly to the public Internet.
+Target architecture:
+- Frontend: Vercel
+- Backend API: Railway service `backend`
+- MCP server: Railway service `mcp`
+- Data plane: Supabase (Postgres + pgvector + Storage bucket)
 
-## Required runtime state
+## 1) Provision Supabase
 
-Mount or persist the runtime data directory. Locally the default is:
+1. Create a Supabase project.
+1. In SQL Editor, run [`sql/supabase_schema.sql`](sql/supabase_schema.sql).
+1. In SQL Editor, run:
 
-```text
-data/
+```sql
+create extension if not exists vector;
 ```
 
-It contains SQLite databases, uploaded transcripts, local resources, cache files,
-and per-session metadata. If the container is recreated without this volume,
-chat/resource state is lost.
+1. Create private bucket: `rag-files`.
+1. Copy these values:
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_DB_URL` (Postgres connection string with write access)
 
-The backend and MCP server read the runtime root from:
+## 2) Deploy MCP on Railway
 
-```text
-APP_DATA_DIR=data
+Service name: `mcp`
+
+Start command:
+
+```bash
+python -m uvicorn src.mcp_server.server:app --host 0.0.0.0 --port $PORT
 ```
 
-For Docker/container deployment, mount one persistent volume to that path for
-both backend and MCP. The sample compose file uses:
+Required env:
+- `APP_ENV=production`
+- `APP_DATA_DIR=data`
+- `MCP_REQUIRE_API_KEY=true`
+- `MCP_API_KEY=<strong-random-secret>`
+- `SUPABASE_URL=<...>`
+- `SUPABASE_SERVICE_ROLE_KEY=<...>`
+- `SUPABASE_DB_URL=<...>`
+- `SUPABASE_STORAGE_BUCKET=rag-files`
+- `GEMINI_API_KEY=<...>`
 
-```text
-APP_DATA_DIR=/app/data
-./data:/app/data
+Health checks:
+- `GET /health` must return `{"status":"ok"}`
+- `GET /ready` must return `{"status":"ready", ...}`
+
+## 3) Deploy Backend on Railway
+
+Service name: `backend`
+
+Start command:
+
+```bash
+python -m uvicorn app:app --app-dir src --host 0.0.0.0 --port $PORT
 ```
 
-## Local container run
+Required env:
+- `APP_ENV=production`
+- `APP_DATA_DIR=data`
+- `APP_SESSION_SECRET=<strong-random-secret>`
+- `APP_COOKIE_SECURE=true`
+- `APP_COOKIE_SAMESITE=none`
+- `CORS_ALLOW_ORIGINS=<your-vercel-domain>`
+- `MCP_SERVER_URL=<railway-private-url-of-mcp>`
+- `MCP_REQUIRE_API_KEY=true`
+- `MCP_API_KEY=<same-secret-as-mcp>`
+- `SUPABASE_URL=<...>`
+- `SUPABASE_SERVICE_ROLE_KEY=<...>`
+- `SUPABASE_DB_URL=<...>`
+- `SUPABASE_STORAGE_BUCKET=rag-files`
+- `GOOGLE_OAUTH_CLIENT_ID=<...>`
+- `GOOGLE_OAUTH_CLIENT_SECRET=<...>`
+- `APP_OAUTH_REDIRECT_URI=https://<backend-public-domain>/api/auth/google/callback`
+- `MAIL_OAUTH_REDIRECT_URI=https://<backend-public-domain>/api/mail/connect/callback`
+- `GEMINI_API_KEY=<...>`
 
-1. Copy env template:
+Health checks:
+- `GET /healthz`
+- `GET /readyz`
 
-```powershell
-Copy-Item .env.example .env
+`/readyz` validates:
+- Memory DB availability (Postgres when `SUPABASE_DB_URL` is set)
+- Supabase Storage bucket reachability
+- MCP connectivity (when `MCP_SERVER_URL` is set)
+
+## 4) Deploy Frontend on Vercel
+
+Project root: `frontend/`
+
+Build:
+
+```bash
+npm run build
 ```
 
-2. Fill secrets in `.env`:
+Output directory:
+- `dist`
 
-```text
-GEMINI_API_KEY=
-GOOGLE_OAUTH_CLIENT_ID=
-GOOGLE_OAUTH_CLIENT_SECRET=
-APP_SESSION_SECRET=
+Required env:
+- `VITE_API_BASE=https://<backend-public-domain>`
+
+Notes:
+- Browser requests use cookies (`credentials: include`), so backend CORS origin must match your Vercel domain exactly.
+- For default Vercel/Railway domains, keep:
+  - `APP_COOKIE_SECURE=true`
+  - `APP_COOKIE_SAMESITE=none`
+
+## 5) OAuth Redirect URIs (Google Console)
+
+Add these backend callback URIs:
+- `https://<backend-public-domain>/api/auth/google/callback`
+- `https://<backend-public-domain>/api/mail/connect/callback`
+
+## 6) Migrate existing local data to Supabase
+
+One-off migration script:
+
+```bash
+python scripts/migrate_local_to_supabase.py \
+  --data-dir data \
+  --sqlite-db data/memory.db \
+  --reset-postgres \
+  --verify-retrieval \
+  --report-json reports/migration_report.json
 ```
 
-3. Start backend and MCP:
+What the script migrates:
+- SQLite tables -> Supabase Postgres:
+  - `history`, `conversation_state`, `file_summaries`
+  - `chat_sessions`, `chat_messages`, `legacy_chat_migrations`
+- Runtime files -> Supabase Storage bucket `rag-files`:
+  - `data/pdfs` -> `sessions/global/pdfs/...`
+  - `data/resources/...` -> scoped `resources/...`
+  - `data/cache/...` -> `cache/...`
+- Vector cache -> pgvector:
+  - Reads `data/cache/*.pkl` + `*_embeddings.npy`
+  - Inserts into `vector_documents` + `vector_embeddings`
 
-```powershell
-docker compose up --build
+## 7) Pre-Go-Live Gates
+
+Backend tests:
+
+```bash
+pytest -q tests/unit/test_persistent_memory.py tests/integration/test_app_ask.py tests/integration/test_mail_updates_api.py tests/unit/test_mail_agent_intent_classification.py
 ```
 
-4. Start frontend locally:
+Frontend build:
 
-```powershell
+```bash
 cd frontend
-$env:VITE_API_BASE="http://127.0.0.1:9000"
 npm install
-npm run dev
+npm run build
 ```
 
-## Production checklist
+Manual browser E2E on deployed domains:
+- Google login success.
+- Account-scoped chat isolation:
+  - Logout hides account sessions.
+  - Login account B cannot see account A sessions.
+- IELTS 6.5 query cites handbook source.
+- Ca 1/Ca 2 query cites timetable source.
+- Poll mail works without OAuth refresh errors.
 
-- Put backend behind HTTPS and set `APP_COOKIE_SECURE=true`.
-- Set a strong random `APP_SESSION_SECRET`.
-- Keep `MCP_SERVER_URL` on a private network, for example `http://mcp:8000`.
-- Bind MCP to private/internal network only. The sample compose binds to
-  `127.0.0.1` for local safety.
-- For public/staging deployments, enable MCP API-key protection:
-  `MCP_REQUIRE_API_KEY=true` and set the same strong `MCP_API_KEY` for backend
-  and MCP services. The backend forwards it as `X-MCP-API-Key`.
-- Set `CORS_ALLOW_ORIGINS` to the real frontend origin only.
-- Set `APP_ENV=production`.
-- Set `VITE_API_BASE` to the deployed backend HTTPS origin.
-- Persist `data/` using a Docker volume, host mount, managed disk, or migrate to
-  DB/object storage.
-- Rotate OAuth/API keys if `.env` has ever been shared.
-- Configure Google OAuth redirect URIs for the deployed backend:
-  `/api/auth/google/callback` and `/api/mail/connect/callback`.
+Migration verification:
+- Compare row counts from migration report.
+- Confirm historical sessions/messages are accessible after cutover.
+- Re-run standard retrieval queries and compare top-k source overlap.
 
-## Health endpoints
+## 8) Rollback order (if needed)
 
-- Backend liveness: `GET /healthz`
-- Backend readiness: `GET /readyz`
-
-Readiness checks SQLite access and required runtime directories.
+1. Frontend rollback (Vercel deployment rollback).
+1. Backend rollback (Railway previous release).
+1. MCP rollback (Railway previous release).
+1. Keep Supabase data read-only during incident triage.

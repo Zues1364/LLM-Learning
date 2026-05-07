@@ -17,5 +17,7 @@ pytesseract
 python-multipart
 requests
 sentence-transformers
+supabase
 tqdm
 uvicorn[standard]
+psycopg2-binary

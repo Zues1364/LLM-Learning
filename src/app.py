@@ -38,6 +38,7 @@ from conversation_state import (
     update_state_after_turn,
 )
 from persistent_memory import PersistentMemory
+from memory_store_factory import build_memory_store
 from utils import process_pdf, normalize_for_match  # Backward-compatible import for tests that monkeypatch app.process_pdf
 # resource_loader import NOT needed here if we delegate to scan_resources via MCP? 
 # Use resource_loader for 'get_resources' list only? 
@@ -55,6 +56,15 @@ from runtime_paths import (
     SESSION_CACHE_DIR,
     ensure_runtime_dirs,
 )
+from storage_runtime import (
+    blob_mode_enabled,
+    build_resource_key,
+    build_transcript_key,
+    delete_blob_key,
+    sync_blob_to_local,
+    upload_local_file_to_blob,
+)
+from supabase_support import SupabaseBlobStore, check_blob_ready, check_postgres_ready, pgvector_enabled
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -89,12 +99,13 @@ app.add_middleware(
 ensure_runtime_dirs()
 
 # Globals
-memory = PersistentMemory(db_path=str(MEMORY_DB), max_history=25)
+memory = build_memory_store(max_history=25, sqlite_db_path=str(MEMORY_DB))
 loaded_file_ids: Set[str] = set()
 file_meta: Dict[str, str] = {}  # file_id -> original filename
 last_uploaded_file_ids: List[str] = []
 rag_agent = None
 mcp_client = MCPClient()
+_blob_store = SupabaseBlobStore()
 
 answer_agent = AnswerGeneratorAgent(get_rag_agent())
 _elective_interest_agent = None
@@ -174,15 +185,25 @@ async def healthz() -> Dict[str, str]:
 @app.get("/readyz")
 async def readyz() -> Dict[str, Any]:
     checks: Dict[str, str] = {}
-    try:
-        db_path = Path(memory.db_path)
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(str(db_path)) as conn:
-            conn.execute("SELECT 1")
-        checks["memory_db"] = "ok"
-    except Exception as exc:
-        checks["memory_db"] = str(exc)
-        raise HTTPException(status_code=503, detail={"status": "not_ready", "checks": checks})
+    if pgvector_enabled():
+        db_err = check_postgres_ready()
+        if db_err is None:
+            checks["memory_db"] = "ok"
+        elif db_err == "disabled":
+            checks["memory_db"] = "disabled"
+        else:
+            checks["memory_db"] = db_err
+            raise HTTPException(status_code=503, detail={"status": "not_ready", "checks": checks})
+    else:
+        try:
+            db_path = Path(memory.db_path)
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            with sqlite3.connect(str(db_path)) as conn:
+                conn.execute("SELECT 1")
+            checks["memory_db"] = "ok"
+        except Exception as exc:
+            checks["memory_db"] = str(exc)
+            raise HTTPException(status_code=503, detail={"status": "not_ready", "checks": checks})
 
     for path_name, path in {
         "data_dir": DATA_DIR,
@@ -196,6 +217,26 @@ async def readyz() -> Dict[str, Any]:
             checks[path_name] = "ok"
         except Exception as exc:
             checks[path_name] = str(exc)
+            raise HTTPException(status_code=503, detail={"status": "not_ready", "checks": checks})
+
+    blob_err = check_blob_ready(_blob_store)
+    if blob_err is None:
+        checks["blob_store"] = "ok"
+    elif blob_err == "disabled":
+        checks["blob_store"] = "disabled"
+    else:
+        checks["blob_store"] = blob_err
+        raise HTTPException(status_code=503, detail={"status": "not_ready", "checks": checks})
+
+    mcp_server_url = str(os.getenv("MCP_SERVER_URL", "") or "").strip()
+    if not mcp_server_url:
+        checks["mcp"] = "disabled"
+    else:
+        try:
+            _ = mcp_client.discover(timeout=5.0)
+            checks["mcp"] = "ok"
+        except Exception as exc:
+            checks["mcp"] = str(exc)
             raise HTTPException(status_code=503, detail={"status": "not_ready", "checks": checks})
 
     return {"status": "ready", "checks": checks}
@@ -402,6 +443,12 @@ def _mail_poller_loop():
 @app.on_event("startup")
 def _start_mail_poller():
     global _mail_poller_thread
+    if blob_mode_enabled():
+        try:
+            sync_blob_to_local()
+            logger.info("[blob_sync] Synced Supabase Storage to local runtime paths.")
+        except Exception as exc:
+            logger.warning("[blob_sync] Startup sync failed: %s", exc)
     _mail_poller_stop.clear()
     _mail_poller_thread = Thread(target=_mail_poller_loop, name="mail-poller", daemon=True)
     _mail_poller_thread.start()
@@ -4563,17 +4610,56 @@ def _copy_upload_to_path(upload_file: UploadFile, target_path: Path, max_bytes: 
     return bytes_written
 
 
-def _save_resource_batch(files: List[UploadFile], target_dir: Path, allowed_exts: Set[str]) -> Dict[str, Any]:
+def _sync_resource_file_to_blob(
+    local_path: Path,
+    *,
+    resource_type: str,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> None:
+    if not blob_mode_enabled():
+        return
+    object_key = build_resource_key(
+        file_name=local_path.name,
+        resource_type=resource_type,
+        session_id=session_id,
+        user_id=user_id,
+    )
+    content_type = "application/pdf" if resource_type == "pdf" else "text/html"
+    upload_local_file_to_blob(local_path, object_key, content_type=content_type)
+
+
+def _sync_transcript_file_to_blob(local_path: Path, session_id: Optional[str] = None) -> None:
+    if not blob_mode_enabled():
+        return
+    object_key = build_transcript_key(local_path.name, session_id=session_id)
+    upload_local_file_to_blob(local_path, object_key, content_type="application/pdf")
+
+
+def _save_resource_batch(
+    files: List[UploadFile],
+    target_dir: Path,
+    allowed_exts: Set[str],
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> Dict[str, Any]:
     uploaded: List[Dict[str, str]] = []
     errors: List[Dict[str, str]] = []
     _validate_batch_size(files)
-    allowed_mimes = {"application/pdf"} if allowed_exts == {".pdf"} else {"text/html", "application/xhtml+xml"}
+    is_pdf_batch = allowed_exts == {".pdf"}
+    allowed_mimes = {"application/pdf"} if is_pdf_batch else {"text/html", "application/xhtml+xml"}
 
     for upload_file in files:
         try:
             original_name = _validate_upload_file(upload_file, allowed_exts, allowed_mimes)
             target_path = target_dir / original_name
             _copy_upload_to_path(upload_file, target_path, MAX_RESOURCE_UPLOAD_BYTES)
+            _sync_resource_file_to_blob(
+                target_path,
+                resource_type="pdf" if is_pdf_batch else "html",
+                session_id=session_id,
+                user_id=user_id,
+            )
             uploaded.append({"name": original_name})
         except Exception as e:
             name = Path(upload_file.filename or "").name or "unnamed"
@@ -4591,6 +4677,8 @@ def _save_resource_mixed_batch(
     files: List[UploadFile],
     pdf_dir: Path,
     html_dir: Path,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     uploaded: List[Dict[str, str]] = []
     errors: List[Dict[str, str]] = []
@@ -4617,6 +4705,12 @@ def _save_resource_mixed_batch(
             original_name = _validate_upload_file(upload_file, allowed_exts, allowed_mimes)
             target_path = target_dir / original_name
             _copy_upload_to_path(upload_file, target_path, MAX_RESOURCE_UPLOAD_BYTES)
+            _sync_resource_file_to_blob(
+                target_path,
+                resource_type=file_type,
+                session_id=session_id,
+                user_id=user_id,
+            )
             uploaded.append({"name": original_name, "type": file_type})
         except Exception as e:
             errors.append({"name": original_name, "error": _http_error_message(e)})
@@ -4655,6 +4749,12 @@ async def upload_resource_pdf(request: Request, file: UploadFile = File(...), se
         # Save directly to resource dir
         target_path = pdf_dir / file_name
         _copy_upload_to_path(file, target_path, MAX_RESOURCE_UPLOAD_BYTES)
+        _sync_resource_file_to_blob(
+            target_path,
+            resource_type="pdf",
+            session_id=normalized_session,
+            user_id=user_id,
+        )
             
         # Notify MCP Server to scan
         try:
@@ -4685,6 +4785,12 @@ async def upload_resource_html(request: Request, file: UploadFile = File(...), s
         # Save directly to resource dir
         target_path = html_dir / file_name
         _copy_upload_to_path(file, target_path, MAX_RESOURCE_UPLOAD_BYTES)
+        _sync_resource_file_to_blob(
+            target_path,
+            resource_type="html",
+            session_id=normalized_session,
+            user_id=user_id,
+        )
             
         # Notify MCP Server to scan
         try:
@@ -4714,7 +4820,13 @@ async def upload_resource_pdfs(request: Request, files: List[UploadFile] = File(
     user = _current_user_from_request(request)
     user_id = str(user.get("id") or "") if user else None
     pdf_dir, _, _ = resource_loader._scope_dirs(session_id=normalized_session, user_id=user_id)
-    result = _save_resource_batch(files, pdf_dir, {".pdf"})
+    result = _save_resource_batch(
+        files,
+        pdf_dir,
+        {".pdf"},
+        session_id=normalized_session,
+        user_id=user_id,
+    )
     if result["uploaded_count"] > 0:
         try:
             _scan_resources_with_owner(normalized_session, user_id=user_id)
@@ -4735,7 +4847,13 @@ async def upload_resource_htmls(request: Request, files: List[UploadFile] = File
     user = _current_user_from_request(request)
     user_id = str(user.get("id") or "") if user else None
     _, html_dir, _ = resource_loader._scope_dirs(session_id=normalized_session, user_id=user_id)
-    result = _save_resource_batch(files, html_dir, {".html", ".htm"})
+    result = _save_resource_batch(
+        files,
+        html_dir,
+        {".html", ".htm"},
+        session_id=normalized_session,
+        user_id=user_id,
+    )
     if result["uploaded_count"] > 0:
         try:
             _scan_resources_with_owner(normalized_session, user_id=user_id)
@@ -4761,7 +4879,13 @@ async def upload_resource_files(
     user_id = str(user.get("id") or "") if user else None
     pdf_dir, html_dir, _ = resource_loader._scope_dirs(session_id=normalized_session, user_id=user_id)
 
-    result = _save_resource_mixed_batch(files, pdf_dir, html_dir)
+    result = _save_resource_mixed_batch(
+        files,
+        pdf_dir,
+        html_dir,
+        session_id=normalized_session,
+        user_id=user_id,
+    )
     if result["uploaded_count"] > 0:
         try:
             _scan_resources_with_owner(normalized_session, user_id=user_id)
@@ -4809,7 +4933,35 @@ async def delete_resource(request: Request, resource_id: str, session_id: Option
         success = resource_loader.delete_resource(resource_id, session_id=normalized_session, user_id=user_id)
         if not success:
              raise HTTPException(status_code=404, detail="Resource not found")
-        
+
+        if blob_mode_enabled():
+            try:
+                parsed_user, parsed_session, normalized_name = resource_loader._parse_resource_ui_id(  # noqa: SLF001
+                    resource_id,
+                    session_id=normalized_session,
+                    user_id=user_id,
+                )
+                if normalized_name.endswith(".pdf"):
+                    delete_blob_key(
+                        build_resource_key(
+                            normalized_name,
+                            "pdf",
+                            session_id=parsed_session,
+                            user_id=parsed_user,
+                        )
+                    )
+                elif normalized_name.endswith(".html") or normalized_name.endswith(".htm"):
+                    delete_blob_key(
+                        build_resource_key(
+                            normalized_name,
+                            "html",
+                            session_id=parsed_session,
+                            user_id=parsed_user,
+                        )
+                    )
+            except Exception as blob_err:
+                logger.warning("Failed to delete resource from blob storage: %s", blob_err)
+
         # Trigger Reset Scan
         try:
             payload: Dict[str, Any] = {"reset": True}
@@ -5089,6 +5241,7 @@ async def upload_pdf(file: UploadFile = File(...)):
         dest_path = PDF_DIR / file_id
 
         _copy_upload_to_path(file, dest_path, MAX_TRANSCRIPT_UPLOAD_BYTES)
+        _sync_transcript_file_to_blob(dest_path)
         logger.info("Da luu PDF %s, se xu ly khi truy van dau tien", file_id)
 
         file_meta[file_id] = original_name
@@ -5125,6 +5278,7 @@ async def upload_multiple_pdfs(files: List[UploadFile] = File(...)):
         file_id_local = f"{stem}_{uuid4().hex[:8]}{ext}"
         dest_path = PDF_DIR / file_id_local
         _copy_upload_to_path(upload_file, dest_path, MAX_TRANSCRIPT_UPLOAD_BYTES)
+        _sync_transcript_file_to_blob(dest_path)
         logger.info("Da luu PDF %s, se xu ly khi truy van dau tien", file_id_local)
         return file_id_local, original_name
 

@@ -32,10 +32,14 @@ from utils import (
 )
 from mcp_server.structured_schedule_store import StructuredScheduleStore
 from persistent_memory import PersistentMemory
+from memory_store_factory import build_memory_store
 from agents import get_academic_advisor_agent
 from resource_loader import resource_loader # NEW IMPORT
 import google.generativeai as genai
 from runtime_paths import BASE_DIR, DATA_DIR, MEMORY_DB, PDF_DIR, RESOURCE_DIR
+from vector_store_factory import build_vector_store
+from storage_runtime import blob_mode_enabled, build_transcript_key, get_blob_store, sync_blob_to_local
+from supabase_support import check_blob_ready, check_postgres_ready, pgvector_enabled
 
 # Logging
 logging.basicConfig(level=logging.INFO)
@@ -77,6 +81,42 @@ def mcp_tool(name: str):
 @app.get("/mcp/discover")
 def discover() -> dict:
     return {"tools": list(TOOL_REGISTRY.keys())}
+
+
+@app.get("/health")
+def health() -> dict:
+    return {"status": "ok"}
+
+
+@app.get("/ready")
+def ready() -> dict:
+    checks: Dict[str, str] = {}
+    if pgvector_enabled():
+        db_err = check_postgres_ready()
+        if db_err is None:
+            checks["postgres"] = "ok"
+        elif db_err == "disabled":
+            checks["postgres"] = "disabled"
+        else:
+            checks["postgres"] = db_err
+            raise HTTPException(status_code=503, detail={"status": "not_ready", "checks": checks})
+    else:
+        checks["postgres"] = "disabled"
+
+    blob_err = check_blob_ready(get_blob_store())
+    if blob_err is None:
+        checks["blob_store"] = "ok"
+    elif blob_err == "disabled":
+        checks["blob_store"] = "disabled"
+    else:
+        checks["blob_store"] = blob_err
+        raise HTTPException(status_code=503, detail={"status": "not_ready", "checks": checks})
+
+    # Keep Railway readiness lightweight. Vector store/resource loading is lazy on
+    # first tool call; initializing it here can sync large Supabase Storage blobs.
+    checks["vector_store"] = "lazy"
+
+    return {"status": "ready", "checks": checks}
 
 
 class InvokeRequest(BaseModel):
@@ -308,43 +348,57 @@ def _init_vector_store():
         # Keep embedder/store lifecycle aligned so tests that monkeypatch
         # VietnameseEmbedder and reset only `_store` stay deterministic.
         _embedder = VietnameseEmbedder()
-        _store = FAISSVectorStore([], _embedder)
+        _store = build_vector_store([], _embedder)
         # Link resource loader to this store
         resource_loader.set_vector_store(_store)
-        # Eager-load resources at startup so retrieval/advisor has full context immediately.
-        logger.info("MCP vector store: eager loading resources.")
-        global_signature = resource_loader.get_scope_signature()
-        snapshot_meta = _store.load_snapshot(
-            GLOBAL_VECTOR_SNAPSHOT_FILE,
-            expected_signature=global_signature,
-        )
-        if snapshot_meta:
-            snapshot_ids_raw = snapshot_meta.get("loaded_resource_ids")
-            if isinstance(snapshot_ids_raw, list):
-                snapshot_ids = {str(item) for item in snapshot_ids_raw if str(item).strip()}
-            else:
-                snapshot_ids = resource_loader.list_scope_resource_ids()
-            resource_loader.mark_scope_loaded(snapshot_ids)
-            logger.info(
-                "MCP vector store: restored global snapshot (%s docs).",
-                len(_store.documents),
-            )
-        else:
-            resource_loader.load_resources()
-            loaded_ids = sorted(resource_loader.get_loaded_resource_ids(include_global=True))
-            saved = _store.save_snapshot(
+        eager_load = str(os.getenv("MCP_EAGER_LOAD_RESOURCES", "false") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if eager_load:
+            if blob_mode_enabled():
+                try:
+                    sync_blob_to_local()
+                    logger.info("MCP startup blob sync completed.")
+                except Exception as sync_exc:
+                    logger.warning("MCP startup blob sync failed: %s", sync_exc)
+            logger.info("MCP vector store: eager loading resources.")
+            global_signature = resource_loader.get_scope_signature()
+            snapshot_meta = _store.load_snapshot(
                 GLOBAL_VECTOR_SNAPSHOT_FILE,
-                metadata={
-                    "scope": "global",
-                    "resource_signature": global_signature,
-                    "loaded_resource_ids": loaded_ids,
-                },
+                expected_signature=global_signature,
             )
-            if not saved:
-                logger.warning(
-                    "MCP vector store: snapshot save skipped/failed (%s).",
-                    GLOBAL_VECTOR_SNAPSHOT_FILE,
+            if snapshot_meta:
+                snapshot_ids_raw = snapshot_meta.get("loaded_resource_ids")
+                if isinstance(snapshot_ids_raw, list):
+                    snapshot_ids = {str(item) for item in snapshot_ids_raw if str(item).strip()}
+                else:
+                    snapshot_ids = resource_loader.list_scope_resource_ids()
+                resource_loader.mark_scope_loaded(snapshot_ids)
+                logger.info(
+                    "MCP vector store: restored global snapshot (%s docs).",
+                    len(_store.documents),
                 )
+            else:
+                resource_loader.load_resources()
+                loaded_ids = sorted(resource_loader.get_loaded_resource_ids(include_global=True))
+                saved = _store.save_snapshot(
+                    GLOBAL_VECTOR_SNAPSHOT_FILE,
+                    metadata={
+                        "scope": "global",
+                        "resource_signature": global_signature,
+                        "loaded_resource_ids": loaded_ids,
+                    },
+                )
+                if not saved:
+                    logger.warning(
+                        "MCP vector store: snapshot save skipped/failed (%s).",
+                        GLOBAL_VECTOR_SNAPSHOT_FILE,
+                    )
+        else:
+            logger.info("MCP vector store: lazy resource loading enabled.")
     elif _embedder is None:
         # Defensive: if store survives but embedder was reset, recover gracefully.
         _embedder = getattr(_store, "embedder", None) or VietnameseEmbedder()
@@ -1034,6 +1088,21 @@ def _resolve_pdf_path(file_id: str) -> Path:
     candidate = PDF_DIR / file_id
     if candidate.exists():
         return candidate
+
+    if blob_mode_enabled():
+        try:
+            store = get_blob_store()
+            possible_keys = [
+                build_transcript_key(file_id, session_id="global"),
+            ]
+            for key in possible_keys:
+                if store.exists(key):
+                    candidate.parent.mkdir(parents=True, exist_ok=True)
+                    store.download_to_path(key, candidate)
+                    if candidate.exists():
+                        return candidate
+        except Exception as blob_exc:
+            logger.warning("Blob transcript fetch fallback failed for %s: %s", file_id, blob_exc)
 
     needle = file_id
     if needle.lower().endswith(".pdf"):
@@ -4659,7 +4728,7 @@ def get_file_summaries(file_ids: List[str]) -> List[str]:
         sums.append(f"Summary [{fid}]: {s or '(None)'}")
     return sums
 
-_memory = PersistentMemory(db_path=str(MEMORY_DB), max_history=25)
+_memory = build_memory_store(max_history=25, sqlite_db_path=str(MEMORY_DB))
 
 @mcp_tool("memory_get")
 def memory_get(session_id: str, max_rows: int = 10, user_id: str | None = None) -> List[str]:
@@ -4705,13 +4774,20 @@ def scan_resources(reset: bool = False, session_id: Optional[str] = None, user_i
     safe_user = _normalize_user_id(user_id)
     logger.info("Manual scan_resources triggered (reset=%s, session_id=%s, user_id=%s).", reset, safe_session, safe_user)
     global _store, _embedder
+
+    if blob_mode_enabled():
+        try:
+            sync_blob_to_local()
+            logger.info("scan_resources synced blob storage to local runtime before ingest.")
+        except Exception as sync_exc:
+            logger.warning("scan_resources blob sync failed: %s", sync_exc)
     
     _init_vector_store()
     
     if reset:
         logger.info("Resetting Vector Store for resources...")
         # Re-create empty store (keeping same embedder)
-        _store = FAISSVectorStore([], _embedder)
+        _store = build_vector_store([], _embedder)
         # Update proper references
         resource_loader.set_vector_store(_store)
         resource_loader.reset_loaded_state()

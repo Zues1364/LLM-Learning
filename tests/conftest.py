@@ -1,4 +1,5 @@
 import json
+import os
 import types
 from pathlib import Path
 
@@ -10,6 +11,19 @@ import sys
 sys.path.append(str(Path(__file__).resolve().parents[1] / "src"))
 
 import utils  # noqa: E402
+
+
+# Test modules import the app/MCP modules at collection time. Keep the default
+# pytest environment local-only so .env cloud credentials are not loaded into
+# tests and cannot mutate a real Supabase project. Individual tests can still
+# opt in with monkeypatch.setenv when they specifically exercise readiness.
+for _cloud_var in (
+    "SUPABASE_URL",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "SUPABASE_DB_URL",
+    "SUPABASE_STORAGE_BUCKET",
+):
+    os.environ[_cloud_var] = ""
 
 
 @pytest.fixture(autouse=True)

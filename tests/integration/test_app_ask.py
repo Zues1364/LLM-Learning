@@ -102,6 +102,32 @@ def test_health_and_readiness_endpoints(app_module):
     assert ready.json()["checks"]["memory_db"] == "ok"
 
 
+def test_readiness_fails_when_supabase_db_unavailable(app_module, monkeypatch):
+    client = TestClient(app_module.app)
+    monkeypatch.setenv("SUPABASE_DB_URL", "postgresql://fake")
+    monkeypatch.setattr(app_module, "check_postgres_ready", lambda: "db down")
+
+    ready = client.get("/readyz")
+
+    assert ready.status_code == 503
+    detail = ready.json()["detail"]
+    assert detail["status"] == "not_ready"
+    assert detail["checks"]["memory_db"] == "db down"
+
+
+def test_readiness_fails_when_mcp_required_and_down(app_module, monkeypatch):
+    client = TestClient(app_module.app)
+    monkeypatch.setenv("MCP_SERVER_URL", "http://mcp.internal")
+    monkeypatch.setattr(app_module.mcp_client, "discover", lambda timeout=5.0: (_ for _ in ()).throw(RuntimeError("mcp down")))
+
+    ready = client.get("/readyz")
+
+    assert ready.status_code == 503
+    detail = ready.json()["detail"]
+    assert detail["status"] == "not_ready"
+    assert "mcp down" in detail["checks"]["mcp"]
+
+
 def test_upload_pdf_rejects_invalid_type_and_size(app_module, monkeypatch):
     client = TestClient(app_module.app)
 
