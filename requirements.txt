@@ -17,6 +17,8 @@ pydantic
 pytesseract
 python-multipart
 requests
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.11.0+cpu
 sentence-transformers
 supabase
 tqdm
