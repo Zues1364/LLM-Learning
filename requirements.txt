@@ -3,6 +3,7 @@ beautifulsoup4
 faiss-cpu
 fastapi
 google-generativeai
+google-genai
 img2table
 langchain-core
 langchain-text-splitters
