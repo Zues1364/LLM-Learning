@@ -4729,14 +4729,14 @@ def _save_resource_mixed_batch(
     }
 
 @app.get("/api/resources")
-async def get_resources(request: Request, session_id: Optional[str] = Query(default=None)):
+def get_resources(request: Request, session_id: Optional[str] = Query(default=None)):
     normalized_session = _normalize_session_id(session_id) if session_id else None
     user = _current_user_from_request(request)
     user_id = str(user.get("id") or "") if user else None
     return resource_loader.get_resources(session_id=normalized_session, user_id=user_id)
 
 @app.get("/api/programs")
-async def get_programs(refresh: bool = False):
+def get_programs(refresh: bool = False):
     try:
         programs = _fetch_available_programs(refresh=refresh)
         return {"programs": programs, "count": len(programs)}
@@ -4988,7 +4988,7 @@ async def delete_resource(request: Request, resource_id: str, session_id: Option
 
 
 @app.post("/api/auth/google/start")
-async def start_google_auth(req: GoogleAuthStartRequest):
+def start_google_auth(req: GoogleAuthStartRequest):
     try:
         sid = _normalize_session_id(req.session_id or "user_session_1")
         return mail_agent_service.start_app_auth(session_id=sid, redirect_uri=req.redirect_uri)
@@ -5029,7 +5029,7 @@ async def complete_google_auth_callback(
 
 
 @app.get("/api/auth/me")
-async def get_auth_me(request: Request):
+def get_auth_me(request: Request):
     try:
         return mail_agent_service.get_auth_me(request.cookies.get(_mail_cookie_name()))
     except Exception as e:
@@ -5053,7 +5053,7 @@ async def logout_auth(request: Request):
 
 
 @app.get("/api/mail/status")
-async def get_mail_status(request: Request, session_id: str = Query(...)):
+def get_mail_status(request: Request, session_id: str = Query(...)):
     try:
         sid = _normalize_session_id(session_id)
         owner_ctx = _resolve_mail_owner(request, sid)
@@ -5126,7 +5126,7 @@ async def disconnect_mail(req: MailSessionRequest, request: Request):
 
 
 @app.get("/api/mail/whitelist")
-async def get_mail_whitelist(request: Request, session_id: str = Query(...)):
+def get_mail_whitelist(request: Request, session_id: str = Query(...)):
     try:
         sid = _normalize_session_id(session_id)
         owner_ctx = _resolve_mail_owner(request, sid)
@@ -5176,7 +5176,7 @@ async def poll_mail_now(req: MailSessionRequest, request: Request):
 
 
 @app.get("/api/mail/candidates")
-async def list_mail_candidates(
+def list_mail_candidates(
     request: Request,
     session_id: str = Query(...),
     status: Optional[str] = Query(default=None),
@@ -5263,7 +5263,7 @@ async def upload_pdf(file: UploadFile = File(...)):
 
 
 @app.get("/files")
-async def list_files():
+def list_files():
     return [{"file_id": fid, "file_name": file_meta.get(fid, fid)} for fid in loaded_file_ids]
 
 
@@ -5734,7 +5734,7 @@ async def ask_question(http_request: Request, payload: QueryRequest):
 
 
 @app.get("/history", response_model=List[HistoryItem])
-async def get_history(
+def get_history(
     http_request: Request,
     session_id: str = "user_session_1",
     page: int = 1,

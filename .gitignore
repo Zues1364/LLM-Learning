@@ -86,3 +86,5 @@ reports/premerge_full_gate_*.md
 reports/premerge_full_gate_*.json
 reports/v2_group_audit_*.json
 .gitnexus
+
+.vercel

@@ -1241,18 +1241,41 @@ export default function App() {
     return () => clearAuthPopupPoll();
   }, [clearAuthPopupPoll]);
 
+  const prepareOAuthPopup = useCallback(() => {
+    clearAuthPopupPoll();
+    const popup = window.open("about:blank", "google-oauth", "width=540,height=760");
+    if (!popup) return null;
+
+    try {
+      popup.document.title = "Google OAuth";
+      popup.document.body.innerHTML = "<p style=\"font-family: sans-serif; padding: 16px;\">Dang mo dang nhap Google...</p>";
+      popup.focus();
+    } catch {
+      /* Cross-origin restrictions may apply once the popup navigates. */
+    }
+
+    return popup;
+  }, [clearAuthPopupPoll]);
+
   const openOAuthPopupAndRefresh = useCallback(
-    (authUrl, waitFor = "auth") => {
+    (authUrl, waitFor = "auth", preparedPopup = null) => {
       if (!authUrl) throw new Error("Thiếu URL xác thực OAuth.");
 
       clearAuthPopupPoll();
-      const popup = window.open(authUrl, "google-oauth", "width=540,height=760");
+      const popup =
+        preparedPopup && !preparedPopup.closed
+          ? preparedPopup
+          : window.open(authUrl, "google-oauth", "width=540,height=760");
       if (!popup) {
-        window.open(authUrl, "_blank", "noopener,noreferrer");
-        setTimeout(() => {
-          refreshMailState(currentSession);
-          refreshResources(currentSession);
-        }, 2000);
+        window.location.assign(authUrl);
+        return;
+      }
+
+      try {
+        popup.location.href = authUrl;
+        popup.focus();
+      } catch {
+        window.location.assign(authUrl);
         return;
       }
 
@@ -1513,16 +1536,19 @@ export default function App() {
       alert(msg);
       return;
     }
+    const popup = prepareOAuthPopup();
     setMailLoading(true);
     setMailError("");
     try {
       const data = await startMailConnect(sessionId, MAIL_CONNECT_CALLBACK_URI);
       if (data?.auth_url) {
-        openOAuthPopupAndRefresh(data.auth_url, "mail");
+        openOAuthPopupAndRefresh(data.auth_url, "mail", popup);
       } else {
+        if (popup && !popup.closed) popup.close();
         alert("Không tạo được URL OAuth.");
       }
     } catch (err) {
+      if (popup && !popup.closed) popup.close();
       alert(`Lỗi kết nối Gmail: ${err.message}`);
     } finally {
       setMailLoading(false);
@@ -1532,16 +1558,19 @@ export default function App() {
   const handleGoogleSignIn = async () => {
     const sessionId = currentSession;
     if (!sessionId) return;
+    const popup = prepareOAuthPopup();
     setMailLoading(true);
     setMailError("");
     try {
       const data = await startGoogleSignIn(sessionId, APP_AUTH_CALLBACK_URI);
       if (data?.auth_url) {
-        openOAuthPopupAndRefresh(data.auth_url);
+        openOAuthPopupAndRefresh(data.auth_url, "auth", popup);
       } else {
+        if (popup && !popup.closed) popup.close();
         throw new Error("Không tạo được URL đăng nhập Google.");
       }
     } catch (err) {
+      if (popup && !popup.closed) popup.close();
       setMailError(err.message || "Đăng nhập Google thất bại.");
       alert(`Lỗi đăng nhập Google: ${err.message}`);
     } finally {
