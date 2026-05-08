@@ -1825,14 +1825,20 @@ export default function App() {
 
       if (response?.requires_program_selection) {
         const incomingPrograms = Array.isArray(response?.programs) ? response.programs : [];
+        const validProgramIds = new Set(
+          incomingPrograms.map((program) => String(program?.id || "").trim()).filter(Boolean)
+        );
+        const priorProgramId = selectedProgramId || pendingProgramBySession[sessionId] || "";
+        const nextProgramId = validProgramIds.has(priorProgramId) ? priorProgramId : "";
         setPrograms(incomingPrograms);
-        setPendingProgramBySession((prev) => ({
-          ...prev,
-          [sessionId]: incomingPrograms[0]?.id || "",
-        }));
+        setPendingProgramBySession((prev) => ({ ...prev, [sessionId]: nextProgramId }));
         setSelectedProgramBySession((prev) => {
           const next = { ...prev };
-          delete next[sessionId];
+          if (nextProgramId) {
+            next[sessionId] = nextProgramId;
+          } else {
+            delete next[sessionId];
+          }
           return next;
         });
         updateMessages(sessionId, (prev) => [
@@ -2533,11 +2539,16 @@ export default function App() {
                       {programsLoading ? "Đang tải chương trình..." : "Không có chương trình khả dụng"}
                     </option>
                   )}
+                  {programs.length > 0 && (
+                    <option value="" disabled>
+                      Chọn chương trình đào tạo/QH
+                    </option>
+                  )}
                   {groupedPrograms.map((group) => (
                     <optgroup key={group.groupName} label={group.groupName}>
                       {group.items.map((program) => (
                         <option key={program.id} value={program.id}>
-                          {program.qh_label || program.display_name || program.name || program.id}
+                          {program.display_name || program.name || program.qh_label || program.id}
                         </option>
                       ))}
                     </optgroup>
