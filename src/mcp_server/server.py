@@ -38,7 +38,7 @@ from resource_loader import resource_loader # NEW IMPORT
 import google.generativeai as genai
 from runtime_paths import BASE_DIR, DATA_DIR, MEMORY_DB, PDF_DIR, RESOURCE_DIR
 from vector_store_factory import build_vector_store
-from storage_runtime import blob_mode_enabled, build_transcript_key, get_blob_store, sync_blob_to_local
+from storage_runtime import blob_mode_enabled, build_transcript_key, get_blob_store, local_path_from_key, sync_blob_to_local
 from supabase_support import check_blob_ready, check_postgres_ready, pgvector_enabled
 
 # Logging
@@ -1861,6 +1861,46 @@ def math_eval(expression: str) -> str:
 # ============ MULTI-CURRICULUM SUPPORT ============
 # Cache for discovered programs: {program_id: {id, name, year, file_path}}
 _PROGRAM_REGISTRY: Dict[str, Dict[str, Any]] = {}
+_CURRICULUM_BLOB_SYNC_DONE = False
+
+
+def _sync_curriculum_html_from_blob(force_refresh: bool = False) -> None:
+    """
+    Keep MCP curriculum discovery independent from resource ingestion.
+    Program listing only needs global curriculum HTML files, so avoid a full
+    bucket sync that also downloads PDFs/cache objects.
+    """
+    global _CURRICULUM_BLOB_SYNC_DONE
+
+    if not blob_mode_enabled():
+        return
+    if _CURRICULUM_BLOB_SYNC_DONE and not force_refresh and any(CURRICULUM_HTML_DIR.glob("*.html")):
+        return
+
+    try:
+        store = get_blob_store()
+        objects = [
+            obj
+            for obj in store.list_objects("resources/global/html/")
+            if str(obj.key).lower().endswith((".html", ".htm"))
+        ]
+        downloaded = 0
+        for obj in objects:
+            local_path = local_path_from_key(obj.key)
+            if local_path.exists() and not force_refresh:
+                continue
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            store.download_to_path(obj.key, local_path)
+            downloaded += 1
+        if objects:
+            _CURRICULUM_BLOB_SYNC_DONE = True
+        logger.info(
+            "Curriculum HTML blob sync checked %s object(s), downloaded %s.",
+            len(objects),
+            downloaded,
+        )
+    except Exception as exc:
+        logger.warning("Curriculum HTML blob sync failed: %s", exc)
 
 
 def _clean_program_major_title(raw_text: str) -> str:
@@ -2012,6 +2052,8 @@ def _scan_curriculum_programs(force_refresh: bool = False) -> Dict[str, Dict[str
     if _PROGRAM_REGISTRY and not force_refresh:
         return _PROGRAM_REGISTRY
     
+    _sync_curriculum_html_from_blob(force_refresh=force_refresh)
+
     logger.info("Scanning curriculum HTML files for program discovery...")
     _PROGRAM_REGISTRY = {}
     
