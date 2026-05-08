@@ -64,6 +64,57 @@ def test_save_mail_connection_first_insert_sets_connected_at(monkeypatch, tmp_pa
     assert row[0]
 
 
+def test_app_user_id_is_stable_across_fresh_mail_databases(monkeypatch, tmp_path):
+    profile = {
+        "sub": "google-sub-123",
+        "email": "Student@VNU.edu.vn",
+        "name": "Student",
+        "picture": "",
+    }
+
+    monkeypatch.setenv("APP_SESSION_SECRET", "test-secret")
+    monkeypatch.setattr(mail_agent_mod, "MAIL_DB_PATH", tmp_path / "first.db")
+    first = MailAgentService()._upsert_user(profile)
+
+    monkeypatch.setattr(mail_agent_mod, "MAIL_DB_PATH", tmp_path / "second.db")
+    second = MailAgentService()._upsert_user(profile)
+
+    assert first["id"] == second["id"]
+    assert first["id"].startswith("user_")
+
+
+def test_upsert_user_migrates_existing_random_local_id(monkeypatch, tmp_path):
+    db_path = tmp_path / "memory.db"
+    monkeypatch.setattr(mail_agent_mod, "MAIL_DB_PATH", db_path)
+    monkeypatch.setenv("APP_SESSION_SECRET", "test-secret")
+    svc = MailAgentService()
+    profile = {
+        "sub": "google-sub-123",
+        "email": "student@vnu.edu.vn",
+        "name": "Student",
+        "picture": "",
+    }
+    now = mail_agent_mod._utc_now_iso()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO users (id, google_sub, email, name, picture_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("random-user-id", profile["sub"], profile["email"], "Old", "", now, now),
+        )
+        conn.execute(
+            "INSERT INTO auth_sessions (token_hash, user_id, expires_at, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)",
+            ("token", "random-user-id", now, now, now),
+        )
+        conn.commit()
+
+    user = svc._upsert_user(profile)
+
+    assert user["id"] != "random-user-id"
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute("SELECT user_id FROM auth_sessions WHERE token_hash = 'token'").fetchone()
+    assert row is not None
+    assert row[0] == user["id"]
+
+
 def test_job_fair_email_is_rejected_even_if_keyword_exists(monkeypatch):
     svc = _build_service(monkeypatch)
     relevant, _reasons, classification = svc._match_relevance(

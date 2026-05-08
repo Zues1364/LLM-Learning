@@ -103,6 +103,14 @@ def _safe_owner_id(value: str) -> str:
     return text or "default"
 
 
+def _stable_app_user_id(email: str) -> str:
+    normalized = str(email or "").strip().lower()
+    if not normalized:
+        raise ValueError("Email is required for stable app user id.")
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:32]
+    return f"user_{digest}"
+
+
 def _read_json(path: Path, default: Any) -> Any:
     try:
         if not path.exists():
@@ -363,30 +371,39 @@ class MailAgentService:
         if not google_sub or not email:
             raise ValueError("Google profile missing sub/email.")
         now_iso = _utc_now_iso()
+        stable_user_id = _stable_app_user_id(email)
         with self._db_conn() as conn:
             existing = conn.execute(
                 "SELECT * FROM users WHERE google_sub = ? OR email = ?",
                 (google_sub, email),
             ).fetchone()
             if existing:
-                user_id = str(existing["id"])
+                existing_user_id = str(existing["id"])
+                user_id = stable_user_id
+                if existing_user_id != stable_user_id:
+                    for table in ("auth_sessions", "mail_connections", "mail_migration_log", "mail_user_state"):
+                        conn.execute(
+                            f"UPDATE {table} SET user_id = ? WHERE user_id = ?",
+                            (stable_user_id, existing_user_id),
+                        )
                 conn.execute(
                     """
                     UPDATE users
-                    SET google_sub = ?, email = ?, name = ?, picture_url = ?, updated_at = ?
+                    SET id = ?, google_sub = ?, email = ?, name = ?, picture_url = ?, updated_at = ?
                     WHERE id = ?
                     """,
                     (
+                        stable_user_id,
                         google_sub,
                         email,
                         str(profile.get("name") or existing["name"] or ""),
                         str(profile.get("picture") or existing["picture_url"] or ""),
                         now_iso,
-                        user_id,
+                        existing_user_id,
                     ),
                 )
             else:
-                user_id = str(uuid4())
+                user_id = stable_user_id
                 conn.execute(
                     """
                     INSERT INTO users (id, google_sub, email, name, picture_url, created_at, updated_at)
