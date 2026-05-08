@@ -862,7 +862,7 @@ export default function App() {
   const visibleFiles = files;
   const currentSelectedProgramId = selectedProgramBySession[currentSession] || "";
   const currentPendingProgramId =
-    pendingProgramBySession[currentSession] || currentSelectedProgramId || programs[0]?.id || "";
+    pendingProgramBySession[currentSession] || currentSelectedProgramId || "";
   const currentProgramDisplayName =
     programs.find((p) => p.id === currentSelectedProgramId)?.display_name || currentSelectedProgramId || "";
   const mailConnected = Boolean(mailStatus?.connected);
@@ -1329,9 +1329,13 @@ export default function App() {
   const handleNewChat = async () => {
     let newId = createSessionId();
     let newTitle = `Phien ${sessions.length + 1}`;
+    const inheritedProgramId =
+      selectedProgramBySession[currentSession] ||
+      pendingProgramBySession[currentSession] ||
+      "";
     if (authState.authenticated) {
       try {
-        const created = await createChatSessionApi(newId, newTitle, programs[0]?.id || "", []);
+        const created = await createChatSessionApi(newId, newTitle, inheritedProgramId, []);
         const serverSession = normalizeChatSession(created?.session, sessions.length);
         if (serverSession) {
           newId = serverSession.id;
@@ -1345,7 +1349,10 @@ export default function App() {
     setCurrentSession(newId);
     setMessagesBySession((prev) => ({ ...prev, [newId]: [] }));
     setSelectedFilesBySession((prev) => ({ ...prev, [newId]: [] }));
-    setPendingProgramBySession((prev) => ({ ...prev, [newId]: programs[0]?.id || "" }));
+    setSelectedProgramBySession((prev) => (
+      inheritedProgramId ? { ...prev, [newId]: inheritedProgramId } : prev
+    ));
+    setPendingProgramBySession((prev) => ({ ...prev, [newId]: inheritedProgramId }));
     setHistoryList([]);
     setUploadedFile(null);
     setProcessingPdf(false);
@@ -1361,9 +1368,6 @@ export default function App() {
     setProcessingLabel("");
     if (!messagesBySession[sessionId]) {
       setMessagesBySession((prev) => ({ ...prev, [sessionId]: [] }));
-    }
-    if (!pendingProgramBySession[sessionId] && !selectedProgramBySession[sessionId] && programs[0]?.id) {
-      setPendingProgramBySession((prev) => ({ ...prev, [sessionId]: programs[0].id }));
     }
   };
 
