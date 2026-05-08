@@ -23,6 +23,22 @@ const users = {
 const programPayload = {
   programs: [
     {
+      id: "ckt_2025",
+      name: "Co ky thuat",
+      display_name: "Co ky thuat (QH-2025)",
+      qh_label: "QH-2025",
+      group_name: "Co ky thuat",
+      year_end: 2025,
+    },
+    {
+      id: "it_2025",
+      name: "Cong nghe thong tin",
+      display_name: "Cong nghe thong tin (QH-2025)",
+      qh_label: "QH-2025",
+      group_name: "Cong nghe thong tin",
+      year_end: 2025,
+    },
+    {
       id: "cs_2022",
       name: "Khoa hoc may tinh",
       display_name: "Khoa hoc may tinh (QH-2022-2024)",
@@ -137,6 +153,13 @@ async function setupApiMock(page, state) {
     }
 
     if (path === "/api/chat/sessions" && request.method() === "GET") {
+      state.chatSessionsGetCount = (state.chatSessionsGetCount || 0) + 1;
+      if (
+        state.delayChatSessionsFromRequest &&
+        state.chatSessionsGetCount >= state.delayChatSessionsFromRequest
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, state.delayChatSessionsMs || 0));
+      }
       await fulfillJson(route, {
         sessions: state.serverSessionsByUser[userId] || [],
       });
@@ -179,6 +202,31 @@ async function setupApiMock(page, state) {
         imported_sessions: sessions.length,
         imported_messages: importedMessages,
       });
+      return;
+    }
+
+    const sessionMatch = path.match(/^\/api\/chat\/sessions\/([^/]+)$/);
+    if (sessionMatch && request.method() === "PATCH") {
+      const sessionId = decodeURIComponent(sessionMatch[1]);
+      const payload = request.postDataJSON();
+      const sessions = state.serverSessionsByUser[userId] || [];
+      const session = sessions.find((item) => item.id === sessionId);
+      if (!session) {
+        await fulfillJson(route, { detail: "Not found" }, 404);
+        return;
+      }
+      if (Object.prototype.hasOwnProperty.call(payload || {}, "title")) {
+        session.title = payload.title || "Phien moi";
+      }
+      if (Object.prototype.hasOwnProperty.call(payload || {}, "selected_program_id")) {
+        session.selected_program_id = payload.selected_program_id || "";
+      }
+      if (Object.prototype.hasOwnProperty.call(payload || {}, "selected_file_ids")) {
+        session.selected_file_ids = Array.isArray(payload.selected_file_ids)
+          ? payload.selected_file_ids
+          : [];
+      }
+      await fulfillJson(route, { session });
       return;
     }
 
@@ -301,4 +349,46 @@ test("legacy browser chat is migrated into the authenticated account once", asyn
   await expect
     .poll(() => page.evaluate(() => localStorage.getItem("guestSessions")), { timeout: 5_000 })
     .toBeNull();
+});
+
+test("server session refresh does not overwrite an in-progress program selection", async ({ page }) => {
+  const state = {
+    authenticated: true,
+    user: users.alice,
+    migrationRequests: [],
+    chatSessionsGetCount: 0,
+    delayChatSessionsFromRequest: 2,
+    delayChatSessionsMs: 800,
+    serverSessionsByUser: {
+      [users.alice.id]: [
+        {
+          id: "alice-session",
+          title: "Alice curriculum",
+          selected_program_id: "ckt_2025",
+          selected_file_ids: [],
+        },
+      ],
+    },
+    serverMessagesByUser: {
+      [users.alice.id]: {
+        "alice-session": [],
+      },
+    },
+  };
+  await setupApiMock(page, state);
+
+  await page.goto("/");
+  await expect(page.getByText("Alice curriculum")).toBeVisible();
+  await expect(page.locator("select")).toHaveValue("ckt_2025");
+
+  await expect.poll(() => state.chatSessionsGetCount, { timeout: 5_000 }).toBeGreaterThanOrEqual(2);
+  await page.locator("select").selectOption("it_2025");
+  await expect(page.locator("select")).toHaveValue("it_2025");
+
+  await page.waitForTimeout(state.delayChatSessionsMs + 150);
+  await expect(page.locator("select")).toHaveValue("it_2025");
+
+  await page.locator("button.program-confirm-btn").click();
+  await expect(page.getByText("Đã chọn chương trình đào tạo: Cong nghe thong tin (QH-2025)")).toBeVisible();
+  expect(state.serverSessionsByUser[users.alice.id][0].selected_program_id).toBe("it_2025");
 });

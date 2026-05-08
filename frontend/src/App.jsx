@@ -848,6 +848,7 @@ export default function App() {
 
   const fileInputRef = useRef(null);
   const resourceUploadInputRef = useRef(null);
+  const programSelectRef = useRef(null);
   const chatEndRef = useRef(null);
   const filesRef = useRef([]);
   const authPopupPollRef = useRef(null);
@@ -1076,6 +1077,10 @@ export default function App() {
       }
 
       setSessions(serverSessions.map(({ id, title }) => ({ id, title })));
+      const serverSelectedPrograms = {};
+      serverSessions.forEach((session) => {
+        if (session.selected_program_id) serverSelectedPrograms[session.id] = session.selected_program_id;
+      });
       setSelectedProgramBySession(() => {
         const next = {};
         serverSessions.forEach((session) => {
@@ -1083,10 +1088,16 @@ export default function App() {
         });
         return next;
       });
-      setPendingProgramBySession(() => {
+      setPendingProgramBySession((prev) => {
         const next = {};
         serverSessions.forEach((session) => {
-          if (session.selected_program_id) next[session.id] = session.selected_program_id;
+          const serverProgramId = serverSelectedPrograms[session.id] || "";
+          const previousPending = prev[session.id] || "";
+          if (previousPending && previousPending !== serverProgramId) {
+            next[session.id] = previousPending;
+          } else if (serverProgramId) {
+            next[session.id] = serverProgramId;
+          }
         });
         return next;
       });
@@ -1748,7 +1759,10 @@ export default function App() {
   };
 
   const handleConfirmProgram = () => {
-    const selected = currentPendingProgramId;
+    const selected =
+      programSelectRef.current && programSelectRef.current.value
+        ? programSelectRef.current.value
+        : currentPendingProgramId;
     if (!selected) {
       updateMessages(currentSession, (prev) => [
         ...prev,
@@ -2530,6 +2544,7 @@ export default function App() {
               </div>
               <div className="program-selector-controls">
                 <select
+                  ref={programSelectRef}
                   value={currentPendingProgramId}
                   onChange={(e) => handleProgramChange(currentSession, e.target.value)}
                   disabled={programsLoading || !programs.length}
