@@ -1905,13 +1905,14 @@ def _sync_curriculum_html_from_blob(force_refresh: bool = False) -> None:
 
 def _clean_program_major_title(raw_text: str) -> str:
     """Strip common boilerplate around major names in curriculum page titles."""
-    text = re.sub(r"\s+", " ", str(raw_text or "")).strip()
+    text = re.sub(r"[_\s]+", " ", str(raw_text or "")).strip()
     if not text:
         return ""
 
-    # Remove leading boilerplate.
+    # Remove leading boilerplate. Some migrated filenames are ASCII-only and
+    # use underscores, so match both accented and accentless forms.
     text = re.sub(
-        r"^(?:Nội dung\s+)?Chương trình đào tạo ngành\s+",
+        r"^(?:(?:Nội|Noi|Nộ|No)\s+dung\s+)?(?:Chương|Chuong)\s+(?:trình|trinh)\s+(?:đào|dao)\s+(?:tạo|tao)(?:\s+(?:ngành|nganh))?\s+",
         "",
         text,
         flags=re.IGNORECASE,
@@ -1927,6 +1928,13 @@ def _clean_program_major_title(raw_text: str) -> str:
     text = re.sub(r"\s*\(\s*QH[^)]*\)\s*$", "", text, flags=re.IGNORECASE)
 
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _normalize_curriculum_match_text(text: str) -> str:
+    """Normalize curriculum filenames/content so URL-safe separators match phrases."""
+    normalized = normalize_for_match(text or "")
+    normalized = re.sub(r"[^a-z0-9]+", " ", normalized)
+    return re.sub(r"\s+", " ", normalized).strip()
 
 
 def _analyze_html_metadata(file_path: Path) -> Optional[Dict[str, Any]]:
@@ -1956,7 +1964,7 @@ def _analyze_html_metadata(file_path: Path) -> Optional[Dict[str, Any]]:
                 title = h1.get_text(strip=True)
 
         signal_text = f"{title} {file_path.stem} {content[:5000]}"
-        signal_norm = normalize_for_match(signal_text)
+        signal_norm = _normalize_curriculum_match_text(signal_text)
 
         major_map: List[Tuple[str, str, str]] = [
             ("cong nghe thong tin", "Công nghệ thông tin", "it"),
@@ -1986,17 +1994,17 @@ def _analyze_html_metadata(file_path: Path) -> Optional[Dict[str, Any]]:
             if not major_name:
                 major_name = title.strip() or file_path.stem.strip()
             major_name = re.sub(r"\s+", " ", major_name)[:120]
-            words = [w for w in normalize_for_match(major_name).split() if w]
+            words = [w for w in _normalize_curriculum_match_text(major_name).split() if w]
             abbr = "".join(w[0] for w in words)[:6] or "prog"
 
         year = None
         year_end = None
-        title_stem_norm = normalize_for_match(f"{title} {file_path.stem}")
+        title_stem_norm = _normalize_curriculum_match_text(f"{title} {file_path.stem}")
 
         year_range_match = (
             re.search(r"qh\s*[\-(]?\s*(20\d{2})\s*[-–—]\s*(20\d{2})", title_stem_norm)
             or re.search(r"qh\D{0,12}(20\d{2})\D+(20\d{2})", title_stem_norm)
-            or re.search(r"\b(20\d{2})\s*[-–—]\s*(20\d{2})\b", normalize_for_match(file_path.stem))
+            or re.search(r"\b(20\d{2})\D+(20\d{2})\b", _normalize_curriculum_match_text(file_path.stem))
         )
         if year_range_match:
             y1, y2 = year_range_match.group(1), year_range_match.group(2)
@@ -2009,11 +2017,11 @@ def _analyze_html_metadata(file_path: Path) -> Optional[Dict[str, Any]]:
             if not year_match:
                 year_match = re.search(r"khoa\s+(\d{4})", signal_norm)
             if not year_match:
-                year_match = re.search(r"\b(20\d{2})\b", normalize_for_match(file_path.stem))
+                year_match = re.search(r"\b(20\d{2})\b", _normalize_curriculum_match_text(file_path.stem))
             if year_match:
                 year = year_match.group(1)
 
-        if not year and "tt23" in normalize_for_match(file_path.stem):
+        if not year and "tt23" in _normalize_curriculum_match_text(file_path.stem):
             year = "2025"
 
         program_id = f"{abbr}_{year}" if year else abbr
@@ -2067,7 +2075,7 @@ def _scan_curriculum_programs(force_refresh: bool = False) -> Dict[str, Dict[str
     
     for html_file in CURRICULUM_HTML_DIR.glob("*.html"):
         # Check if this is a main curriculum file
-        name_norm = normalize_for_match(html_file.name)
+        name_norm = _normalize_curriculum_match_text(html_file.name)
         is_main = any(p in name_norm for p in main_file_patterns)
         is_secondary = any(p in name_norm for p in skip_file_patterns)
         if is_secondary:
