@@ -1145,6 +1145,16 @@ def _ensure_file_loaded(file_id: str) -> str:
     return resolved_id
 
 
+def _ensure_transcript_file_available(file_id: str) -> Tuple[str, Path]:
+    """
+    Resolve/download a transcript PDF without indexing it into the vector store.
+    Transcript analysis only needs extracted text; embedding these files can load a
+    large model and exhaust small Railway containers.
+    """
+    pdf_path = _resolve_pdf_path(file_id)
+    return pdf_path.name, pdf_path
+
+
 def _extract_class_code_from_text(text: str) -> Optional[str]:
     """Best-effort extraction of 'Lá»›p quáº£n lÃ½' / class code from raw transcript text."""
     norm = normalize_for_match(text)
@@ -1279,8 +1289,7 @@ def analyze_transcript(file_ids: str | List[str]) -> str:
         try:
             logger.info("Processing transcript file_id=%s", fid)
             try:
-                resolved_id = _ensure_file_loaded(fid)
-                pdf_path = _resolve_pdf_path(resolved_id)
+                resolved_id, pdf_path = _ensure_transcript_file_available(fid)
             except HTTPException:
                 logger.warning(f"File ID not found or invalid: {fid}. Skipping.")
                 continue
@@ -3263,17 +3272,14 @@ def check_course_schedule(
     if not subjects:
         return []
 
-    _init_vector_store()
-    if _store is None:
-        return []
-
     safe_session = _normalize_session_id(session_id)
     safe_user = _normalize_user_id(user_id)
-    resource_loader.set_vector_store(_store)
-    if safe_user or safe_session:
-        _invoke_with_optional_session(resource_loader.load_resources, session_id=safe_session, user_id=safe_user)
-    else:
-        resource_loader.load_resources()
+    try:
+        resource_loader._scope_dirs()
+        if safe_user or safe_session:
+            resource_loader._scope_dirs(session_id=safe_session, user_id=safe_user)
+    except Exception as e:
+        logger.warning("[schedule] Failed to sync schedule resources from blob: %s", e)
 
     tkb_full_text, selected_file_name = _invoke_with_optional_session(
         _load_best_schedule_text,
@@ -3446,6 +3452,30 @@ def _query_targets_elective_opened_not_taken(query: str) -> bool:
     has_opening = ("mo lop" in norm_query) or ("ky nay" in norm_query)
     has_not_taken = ("chua hoc" in norm_query) or ("con thieu" in norm_query)
     return has_elective and has_opening and has_not_taken
+
+
+def _query_needs_schedule_context(query: str) -> bool:
+    norm_query = normalize_for_match(query or "")
+    if not norm_query:
+        return False
+    schedule_markers = (
+        "thoi khoa bieu",
+        "tkb",
+        "lich hoc",
+        "lich mon",
+        "ca ",
+        "thu ",
+        "giang vien",
+        "gv ",
+        "dang ky",
+        "mo lop",
+        "ky nay",
+        "hoc ky nay",
+        "mon nao",
+        "nen hoc",
+        "lap lich",
+    )
+    return _query_targets_elective_opened_not_taken(query) or any(marker in norm_query for marker in schedule_markers)
 
 
 def _looks_like_transient_model_error(answer: str) -> bool:
@@ -4065,10 +4095,16 @@ def consult_advisor(
 
     missing_info = compute_missing_subjects(transcript_data or {}, curriculum) if transcript_data else {"missing": [], "completed_map": {}, "low_grades": [], "credit_summary": {}}
     next_semester = _infer_next_semester_code(transcript_data or {}) if transcript_data else None
-    time_slot_definitions, time_source_file = _invoke_with_optional_session(
-        _load_schedule_time_slot_map,
-        session_id=session_id,
-    )
+    norm_query = normalize_for_match(query)
+    needs_schedule_context = _query_needs_schedule_context(query)
+    if needs_schedule_context:
+        time_slot_definitions, time_source_file = _invoke_with_optional_session(
+            _load_schedule_time_slot_map,
+            session_id=session_id,
+            user_id=safe_user,
+        )
+    else:
+        time_slot_definitions, time_source_file = {}, ""
     
     # --- SMART SUBJECT FILTERING ---
     # Instead of sending ALL 32 missing subjects to the Agent, we filter to a reasonable recommendation list.
@@ -4179,7 +4215,6 @@ def consult_advisor(
         unique_elective_candidates.sort(key=lambda x: x.get("code") not in priority_codes)
     
     # 3. Query hint for full list requests.
-    norm_query = normalize_for_match(query)
     query_wants_full_elective_list = any(
         marker in norm_query for marker in ("tat ca", "toan bo", "liet ke", "day du", "full list")
     )
@@ -4234,7 +4269,7 @@ def consult_advisor(
                 schedule_by_norm[norm] = item
 
     schedule_probe_subjects = mandatory_missing + (unique_elective_candidates[:30] if unique_elective_candidates else [])
-    if schedule_probe_subjects:
+    if needs_schedule_context and schedule_probe_subjects:
         logger.info(
             "[consult_advisor] Checking schedule once for %s subjects (mandatory+elective candidates).",
             len(schedule_probe_subjects),
@@ -4252,7 +4287,7 @@ def consult_advisor(
             logger.error(f"[consult_advisor] Error checking schedules: {e}")
 
     # Fallback when curriculum credit_analysis does not produce elective candidates
-    if not unique_elective_candidates:
+    if needs_schedule_context and not unique_elective_candidates:
         logger.info("[consult_advisor] No elective candidates found from curriculum analysis. Trying fallback to get_electives_with_schedule...")
         try:
             raw_sched = _invoke_with_optional_session(
@@ -4309,7 +4344,7 @@ def consult_advisor(
 
         # If semester hint is stale (e.g., transcript next semester != current TKB semester),
         # retry schedule matching without semester/class filters to avoid false "no opened electives".
-        if not offered_electives and unique_elective_candidates:
+        if needs_schedule_context and not offered_electives and unique_elective_candidates:
             logger.info(
                 "[consult_advisor] No opened electives found with semester/class hint; retrying broad schedule check."
             )
@@ -4333,7 +4368,7 @@ def consult_advisor(
                 logger.warning("[consult_advisor] Broad schedule retry failed: %s", e)
 
         # Final fallback: use get_electives_with_schedule opened list and intersect by elective candidates.
-        if not offered_electives and unique_elective_candidates:
+        if needs_schedule_context and not offered_electives and unique_elective_candidates:
             logger.info(
                 "[consult_advisor] No opened electives after broad retry; fallback to get_electives_with_schedule."
             )
@@ -4377,7 +4412,9 @@ def consult_advisor(
                 logger.warning("[consult_advisor] Elective fallback from get_electives_with_schedule failed: %s", e)
 
     completed_codes = _extract_completed_subject_codes(transcript_data or {})
-    should_recommend_opened_electives = bool(elective_missing_blocks) or query_wants_full_elective_list or query_explicitly_asks_electives
+    should_recommend_opened_electives = needs_schedule_context and (
+        bool(elective_missing_blocks) or query_wants_full_elective_list or query_explicitly_asks_electives
+    )
     selected_opened_electives: List[Dict[str, Any]] = []
     elective_credit_plan: List[Dict[str, Any]] = []
     if should_recommend_opened_electives:
@@ -4444,7 +4481,7 @@ def consult_advisor(
         else:
             unresolved_subjects.append(subj)
 
-    if unresolved_subjects:
+    if needs_schedule_context and unresolved_subjects:
         try:
             extra_schedule = check_course_schedule(
                 unresolved_subjects,
