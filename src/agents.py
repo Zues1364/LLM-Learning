@@ -184,6 +184,10 @@ def get_academic_advisor_agent() -> Agent:
 
     Quy tac trinh bay:
     - Uu tien so lieu cu the (tin chi, ma mon, GPA hien tai, max possible GPA, feasibility).
+    - Neu cau hoi hoi "voi so tin chi con lai", "chi voi cac mon con lai", hoac "khong hoc lai/cai thien":
+      ket luan chinh BAT BUOC dua tren gpa_projection.max_gpa_no_retakes va gpa_projection.feasible_no_retakes.
+      KHONG ket luan "Co the" dua tren gpa_projection.max_possible_gpa, vi truong nay gia dinh co hoc cai thien/hoc lai.
+    - Neu target_gpa la bang Gioi/Xuat sac/Kha, hay so sanh voi gpa_projection.feasible_no_retakes truoc; chi neu ro kich ban hoc lai nhu mot dieu kien rieng.
     - Trong muc "Thieu tin chi", bat buoc hien thi 3 so:
       1) Tin chi tich luy tren bang diem (transcript_total_credits)
       2) Tin chi duoc cong nhan theo CTDT (curriculum_applicable_credits)

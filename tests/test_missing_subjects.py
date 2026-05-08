@@ -14,8 +14,13 @@ if "fastapi" not in sys.modules:
         def on_event(self, *args, **kwargs):
             def deco(fn): return fn
             return deco
-    fastapi_stub = types.SimpleNamespace(FastAPI=lambda *a, **k: _DummyApp(), HTTPException=Exception)
+        def middleware(self, *args, **kwargs):
+            def deco(fn): return fn
+            return deco
+    class _DummyRequest: ...
+    fastapi_stub = types.SimpleNamespace(FastAPI=lambda *a, **k: _DummyApp(), HTTPException=Exception, Request=_DummyRequest)
     sys.modules["fastapi"] = fastapi_stub
+    sys.modules["fastapi.responses"] = types.SimpleNamespace(JSONResponse=lambda *a, **k: None)
 if "pydantic" not in sys.modules:
     class _DummyBaseModel: ...
     sys.modules["pydantic"] = types.SimpleNamespace(BaseModel=_DummyBaseModel)
@@ -28,6 +33,8 @@ if "agents" not in sys.modules:
 sys.path.append(str(Path(__file__).resolve().parents[1] / "src"))
 
 from mcp_server.server import (  # noqa: E402
+    _extract_target_gpa,
+    _query_limits_to_remaining_credits,
     calculate_gpa_feasibility,
     compute_missing_subjects,
 )
@@ -88,4 +95,23 @@ def test_calculate_gpa_feasibility_estimates_max_and_feasibility():
     # Remaining credits = 2 (curriculum total 8 - earned 6); max possible GPA should be below 3.2
     assert projection["remaining_credits"] == 2
     assert projection["max_possible_gpa"] is not None
+    assert projection["feasible"] is False
+
+
+def test_gpa_feasibility_infers_distinction_target_and_remaining_scope():
+    query = "liệu với số tín chỉ còn lại tôi có thể lên bằng giỏi không"
+    target_gpa = _extract_target_gpa(query)
+
+    projection = calculate_gpa_feasibility(
+        _sample_transcript(),
+        curriculum_total_credits=_sample_curriculum()["total_credits"],
+        target_gpa=target_gpa,
+    )
+
+    assert target_gpa == 3.2
+    assert _query_limits_to_remaining_credits(query) is True
+    assert projection["max_gpa_no_retakes"] < target_gpa
+    assert projection["max_possible_gpa"] >= target_gpa
+    assert projection["feasible_no_retakes"] is False
+    assert projection["feasible_with_retakes"] is True
     assert projection["feasible"] is False

@@ -3119,13 +3119,73 @@ def _extract_target_gpa(query: str) -> Optional[float]:
     """
     if not query:
         return None
-    match = re.search(r"(?:gpa|diem|Ä‘iá»ƒm)[^0-9]{0,5}([0-4](?:[.,]\\d{1,2})?)", query, re.IGNORECASE)
+    norm_query = normalize_for_match(query)
+    match = re.search(r"(?:gpa|diem)[^0-9]{0,10}([0-4](?:[.,]\d{1,2})?)", norm_query, re.IGNORECASE)
     if match:
         try:
             return float(match.group(1).replace(",", "."))
         except ValueError:
             return None
+    if any(
+        phrase in norm_query
+        for phrase in ("bang xuat sac", "loai xuat sac", "tot nghiep xuat sac", "xep loai xuat sac")
+    ):
+        return 3.6
+    if any(
+        phrase in norm_query
+        for phrase in ("bang gioi", "loai gioi", "tot nghiep gioi", "xep loai gioi", "len gioi")
+    ):
+        return 3.2
+    if any(
+        phrase in norm_query
+        for phrase in ("bang kha", "loai kha", "tot nghiep kha", "xep loai kha")
+    ):
+        return 2.5
     return None
+
+
+def _query_limits_to_remaining_credits(query: str) -> bool:
+    norm_query = normalize_for_match(query or "")
+    if not norm_query:
+        return False
+    remaining_markers = (
+        "voi so tin chi con lai",
+        "chi voi so tin chi con lai",
+        "voi cac mon con lai",
+        "chi voi cac mon con lai",
+        "neu chi hoc mon con lai",
+        "neu chi lay tin chi con lai",
+        "khong hoc lai",
+        "khong cai thien",
+    )
+    return any(marker in norm_query for marker in remaining_markers)
+
+
+def _query_targets_gpa_feasibility(query: str) -> bool:
+    norm_query = normalize_for_match(query or "")
+    if not norm_query:
+        return False
+    target_markers = (
+        "bang gioi",
+        "loai gioi",
+        "tot nghiep gioi",
+        "xep loai gioi",
+        "bang xuat sac",
+        "loai xuat sac",
+        "tot nghiep xuat sac",
+        "xep loai xuat sac",
+        "bang kha",
+        "loai kha",
+        "tot nghiep kha",
+        "xep loai kha",
+        "gpa",
+        "diem tich luy",
+    )
+    feasibility_markers = ("co the", "duoc khong", "duoc ko", "dat duoc", "len duoc", "can bao nhieu")
+    return any(marker in norm_query for marker in target_markers) and (
+        any(marker in norm_query for marker in feasibility_markers)
+        or _query_limits_to_remaining_credits(norm_query)
+    )
 
 
 def calculate_gpa_feasibility(
@@ -3872,6 +3932,83 @@ def _render_elective_opened_not_taken_text(advisor_context: Dict[str, Any]) -> s
     return "\n".join(lines).strip()
 
 
+def _render_gpa_feasibility_text(query: str, advisor_context: Dict[str, Any]) -> str:
+    credit_summary = advisor_context.get("credit_summary") or {}
+    missing_subjects = advisor_context.get("missing_subjects") or {}
+    mandatory_missing = missing_subjects.get("mandatory_missing") or []
+    gpa_projection = advisor_context.get("gpa_projection") or {}
+    target_gpa = gpa_projection.get("target_gpa")
+    max_no_retakes = gpa_projection.get("max_gpa_no_retakes")
+    max_with_retakes = gpa_projection.get("max_possible_gpa")
+    current_gpa = gpa_projection.get("current_gpa")
+    remaining_credits_only = bool(gpa_projection.get("remaining_credits_only"))
+    feasible_no_retakes = gpa_projection.get("feasible_no_retakes")
+    feasible_with_retakes = gpa_projection.get("feasible_with_retakes")
+
+    if target_gpa is None:
+        target_gpa = 3.2
+    norm_query = normalize_for_match(query or "")
+    if "xuat sac" in norm_query:
+        target_label = f"bằng Xuất sắc (GPA >= {target_gpa})"
+    elif "kha" in norm_query and "gioi" not in norm_query:
+        target_label = f"bằng Khá (GPA >= {target_gpa})"
+    else:
+        target_label = f"bằng Giỏi (GPA >= {target_gpa})"
+
+    lines: List[str] = []
+    lines.append("Kết luận ngắn:")
+    if remaining_credits_only and feasible_no_retakes is False:
+        lines.append(
+            f"- Không. Nếu chỉ tính các tín chỉ còn lại và không học cải thiện/học lại, GPA tối đa dự kiến là {max_no_retakes}, dưới ngưỡng {target_label}."
+        )
+    elif feasible_no_retakes is True:
+        lines.append(
+            f"- Có. Nếu đạt điểm rất cao ở các tín chỉ còn lại, GPA tối đa dự kiến là {max_no_retakes}, đủ ngưỡng {target_label}."
+        )
+    elif feasible_with_retakes is True:
+        lines.append(
+            f"- Chỉ có thể nếu có học cải thiện/học lại đủ các môn điểm thấp. Kịch bản đó có GPA tối đa dự kiến là {max_with_retakes}, nhưng không phải kịch bản chỉ tính tín chỉ còn lại."
+        )
+    else:
+        lines.append(
+            f"- Chưa đủ dữ kiện để kết luận chắc chắn, nhưng GPA tối đa không học lại hiện là {max_no_retakes} so với ngưỡng {target_label}."
+        )
+
+    lines.append("")
+    lines.append("Số liệu chính:")
+    if current_gpa is not None:
+        lines.append(f"- GPA hiện tại theo dữ liệu đã trích xuất: {current_gpa}")
+    lines.append(f"- Tín chỉ tích lũy trên bảng điểm: {int(credit_summary.get('transcript_total_credits') or 0)}")
+    lines.append(f"- Tín chỉ được công nhận theo CTĐT: {int(credit_summary.get('curriculum_applicable_credits') or 0)}")
+    lines.append(f"- Tín chỉ còn thiếu: {int(credit_summary.get('total_missing_credits') or 0)}")
+    if max_no_retakes is not None:
+        lines.append(f"- GPA tối đa nếu chỉ hoàn thành tín chỉ còn lại: {max_no_retakes}")
+    if max_with_retakes is not None:
+        lines.append(f"- GPA tối đa nếu được học cải thiện/học lại các môn điểm thấp: {max_with_retakes}")
+
+    if mandatory_missing:
+        lines.append("")
+        lines.append("Môn còn thiếu:")
+        for subj in mandatory_missing[:8]:
+            code = subj.get("code")
+            name = _format_subject_name_vi_en(subj.get("name"))
+            credits = _coerce_int(subj.get("credits"))
+            lines.append(f"- {code} - {name} ({credits} tín chỉ)")
+
+    retake_candidates = gpa_projection.get("retake_candidates") or []
+    if feasible_no_retakes is False and feasible_with_retakes is True and retake_candidates:
+        lines.append("")
+        lines.append("Muốn lên mức này thì phần quyết định nằm ở học cải thiện/học lại, ưu tiên các môn điểm thấp nhất:")
+        for subj in retake_candidates[:8]:
+            code = subj.get("code")
+            name = _format_subject_name_vi_en(subj.get("name"))
+            credits = _coerce_int(subj.get("credits"))
+            grade = subj.get("grade_4")
+            lines.append(f"- {code} - {name} ({credits} tín chỉ, điểm hệ 4 hiện tại: {grade})")
+
+    return "\n".join(lines).strip()
+
+
 def _render_advisor_fallback_text(query: str, advisor_context: Dict[str, Any]) -> str:
     """
     Deterministic fallback text when advisor LLM is temporarily unavailable.
@@ -4553,12 +4690,18 @@ def consult_advisor(
     logger.info(f"[consult_advisor] Sending {len(recommended_subjects)} recommended subjects to Agent (mandatory: {len(mandatory_missing)}, electives: {len(elective_suggestions)})")
 
     target_gpa = _extract_target_gpa(query)
+    remaining_credits_only = _query_limits_to_remaining_credits(query)
     gpa_projection = calculate_gpa_feasibility(
         transcript_data or {},
         curriculum_total_credits=curriculum.get("total_credits"),
         target_gpa=target_gpa,
         missing_credits_override=missing_credits_calc,
     ) if transcript_data else {}
+    if gpa_projection:
+        gpa_projection["remaining_credits_only"] = remaining_credits_only
+        if target_gpa is not None:
+            gpa_projection["conclusion_basis"] = "remaining_credits_only" if remaining_credits_only else "default_no_optional_retakes"
+            gpa_projection["conclusion_feasible"] = gpa_projection.get("feasible_no_retakes")
 
     scenario = "general"
     reg_keywords = ["dang ky", "dk", "ky toi", "hoc ky toi", "mon gi", "thieu mon", "dang kÃ½", "Ä‘Äƒng kÃ½", "mÃ´n"]
@@ -4641,6 +4784,8 @@ def consult_advisor(
 
     if _query_targets_elective_opened_not_taken(query):
         return _postprocess_advisor_answer_text(_render_elective_opened_not_taken_text(advisor_context))
+    if _query_targets_gpa_feasibility(query) and gpa_projection:
+        return _postprocess_advisor_answer_text(_render_gpa_feasibility_text(query, advisor_context))
 
     prompt = (
         "--- CONTEXT ---\n"
