@@ -2795,6 +2795,9 @@ def _structured_intent_classifier(query: str) -> Dict[str, Any]:
 
     if _query_targets_semester_code_lookup(query):
         return {"intent": "semester_code_lookup", "confidence": 0.9, "signals": signals}
+    if _query_targets_time_slot_definition(query):
+        signals.append("time_slot_definition")
+        return {"intent": "course_schedule", "confidence": 0.9, "signals": signals}
 
     if has_teacher_name and (has_class_marker or asks_teacher_course_list or ("day" in norm and not has_subject_hint)):
         return {"intent": "classes_by_teacher", "confidence": 0.87, "signals": signals}

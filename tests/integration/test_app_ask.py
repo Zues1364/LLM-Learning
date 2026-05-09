@@ -3030,7 +3030,7 @@ def test_structured_intent_classifier_detects_time_slot_definition_query():
     app_mod = importlib.reload(importlib.import_module("app"))
     route = app_mod._structured_intent_classifier("ca 1 bắt đầu từ mấy giờ và kết thúc lúc mấy giờ")
     assert route["intent"] == "course_schedule"
-    assert float(route["confidence"]) >= 0.6
+    assert float(route["confidence"]) >= 0.85
     assert app_mod._query_prefers_global_resource_retrieval("ca 1 bắt đầu từ mấy giờ và kết thúc lúc mấy giờ") is True
 
 

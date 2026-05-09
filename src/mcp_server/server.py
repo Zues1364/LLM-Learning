@@ -416,6 +416,17 @@ def _schedule_scope_key(session_id: Optional[str], user_id: Optional[str] = None
     return f"session::{safe_session}" if safe_session else "global"
 
 
+def _sync_schedule_scope_from_blob(session_id: Optional[str] = None, user_id: Optional[str] = None) -> None:
+    try:
+        resource_loader._scope_dirs()
+        safe_user = _normalize_user_id(user_id)
+        safe_session = _normalize_session_id(session_id)
+        if safe_user or safe_session:
+            resource_loader._scope_dirs(session_id=safe_session, user_id=safe_user)
+    except Exception as exc:
+        logger.warning("[schedule] Failed to sync schedule resources from blob: %s", exc)
+
+
 def _invoke_with_optional_session(
     func,
     *args,
@@ -461,6 +472,7 @@ def _ensure_structured_schedule_ingested(
     resource_dir = RESOURCE_DIR / "pdfs"
     safe_session = _normalize_session_id(session_id)
     safe_user = _normalize_user_id(user_id)
+    _sync_schedule_scope_from_blob(session_id=safe_session, user_id=safe_user)
     candidates = _invoke_with_optional_session(
         _collect_schedule_files,
         resource_dir,
@@ -602,6 +614,7 @@ def _load_best_schedule_text(
     resource_dir = RESOURCE_DIR / "pdfs"
     safe_user = _normalize_user_id(user_id)
     safe_session = _normalize_session_id(session_id)
+    _sync_schedule_scope_from_blob(session_id=safe_session, user_id=safe_user)
     candidates = _invoke_with_optional_session(
         _collect_schedule_files,
         resource_dir,
@@ -833,6 +846,7 @@ def _load_schedule_time_slot_map(
     resource_dir = RESOURCE_DIR / "pdfs"
     safe_user = _normalize_user_id(user_id)
     safe_session = _normalize_session_id(session_id)
+    _sync_schedule_scope_from_blob(session_id=safe_session, user_id=safe_user)
     candidates = _invoke_with_optional_session(
         _collect_schedule_files,
         resource_dir,

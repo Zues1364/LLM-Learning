@@ -644,6 +644,23 @@ def test_query_needs_schedule_context_for_gpa_and_missing_credits():
     assert server._query_needs_schedule_context("tôi còn thiếu bao nhiêu tín chỉ")
 
 
+def test_sync_schedule_scope_from_blob_loads_global_and_session(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_scope_dirs(session_id=None, user_id=None):
+        calls.append({"session_id": session_id, "user_id": user_id})
+        return tmp_path / "pdfs", tmp_path / "html", tmp_path / "config.json"
+
+    monkeypatch.setattr(server.resource_loader, "_scope_dirs", fake_scope_dirs)
+
+    server._sync_schedule_scope_from_blob(session_id="s_schedule", user_id=None)
+
+    assert calls == [
+        {"session_id": None, "user_id": None},
+        {"session_id": "s_schedule", "user_id": None},
+    ]
+
+
 def test_render_gpa_feasibility_text_includes_schedule_rows():
     advisor_context = {
         "credit_summary": {
