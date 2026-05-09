@@ -1334,19 +1334,59 @@ def analyze_transcript(file_ids: str | List[str], session_id: Optional[str] = No
         logger.warning("No file_ids provided to analyze_transcript")
         raise HTTPException(400, "Thieu file_id bang diem")
 
+    resolved_files: List[Tuple[str, Path]] = []
+    for fid in ids:
+        try:
+            resolved_id, pdf_path = _ensure_transcript_file_available(fid, session_id=session_id)
+            resolved_files.append((resolved_id, pdf_path))
+        except HTTPException:
+            logger.warning("File ID not found or invalid: %s. Skipping.", fid)
+            continue
+
+    if not resolved_files:
+        msg = "Khong tim thay bat ky file bang diem nao hop le."
+        logger.error(msg)
+        raise HTTPException(400, msg)
+
+    transcript_cache_path: Optional[Path] = None
+    try:
+        cache_dir = DATA_DIR / "cache" / "transcripts"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        signature_payload = []
+        for resolved_id, pdf_path in resolved_files:
+            stat = pdf_path.stat()
+            signature_payload.append(
+                {
+                    "file_id": resolved_id,
+                    "name": pdf_path.name,
+                    "size": stat.st_size,
+                    "mtime_ns": stat.st_mtime_ns,
+                }
+            )
+        cache_key = hashlib.sha1(
+            json.dumps(signature_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        transcript_cache_path = cache_dir / f"{cache_key}.json"
+        if transcript_cache_path.exists():
+            cached_text = transcript_cache_path.read_text(encoding="utf-8")
+            cached_payload = json.loads(cached_text)
+            if _is_transcript_usable(cached_payload):
+                logger.info(
+                    "analyze_transcript cache hit: files=%s cache=%s",
+                    [item[0] for item in resolved_files],
+                    transcript_cache_path.name,
+                )
+                return cached_text
+    except Exception as e:
+        logger.warning("analyze_transcript cache lookup failed: %s", e)
+
     preview_len = 500
     texts: List[Dict[str, str]] = []
     class_hint_from_raw: Optional[str] = None
-    for fid in ids:
+    for resolved_id, pdf_path in resolved_files:
         try:
-            logger.info("Processing transcript file_id=%s", fid)
-            try:
-                resolved_id, pdf_path = _ensure_transcript_file_available(fid, session_id=session_id)
-            except HTTPException:
-                logger.warning(f"File ID not found or invalid: {fid}. Skipping.")
-                continue
-
-            logger.info("Resolved path for %s: %s", fid, pdf_path)
+            logger.info("Processing transcript file_id=%s", resolved_id)
+            logger.info("Resolved path for %s: %s", resolved_id, pdf_path)
             docs = process_pdf(str(pdf_path))
             logger.info("Extracted %s chunks from %s", len(docs), pdf_path.name)
             file_text = "\n".join(doc.page_content for doc in docs)
@@ -1620,8 +1660,16 @@ def analyze_transcript(file_ids: str | List[str], session_id: Optional[str] = No
 
     # Flatten best-attempt subjects for downstream checks
     normalized["completed_subjects"] = list(_build_completed_subjects(normalized.get("semesters") or []).values())
-    
-    return json.dumps(normalized, ensure_ascii=False)
+
+    result_text = json.dumps(normalized, ensure_ascii=False)
+    if transcript_cache_path and _is_transcript_usable(normalized):
+        try:
+            transcript_cache_path.write_text(result_text, encoding="utf-8")
+            logger.info("analyze_transcript cache saved: %s", transcript_cache_path.name)
+        except Exception as e:
+            logger.warning("analyze_transcript cache save failed: %s", e)
+
+    return result_text
 
 
 @mcp_tool("get_schedule")
@@ -3233,7 +3281,15 @@ def _query_targets_gpa_feasibility(query: str) -> bool:
         "gpa",
         "diem tich luy",
     )
-    feasibility_markers = ("co the", "duoc khong", "duoc ko", "dat duoc", "len duoc", "can bao nhieu")
+    feasibility_markers = (
+        "co the",
+        "duoc khong",
+        "duoc ko",
+        "dat duoc",
+        "len duoc",
+        "kha nang",
+        "can bao nhieu",
+    )
     return any(marker in norm_query for marker in target_markers) and (
         any(marker in norm_query for marker in feasibility_markers)
         or _query_limits_to_remaining_credits(norm_query)
@@ -3370,6 +3426,199 @@ def calculate_gpa_feasibility(
     }
 
 
+def _format_structured_schedule_line(code: str, row: Dict[str, Any]) -> str:
+    class_code = str(row.get("class_code") or "").strip()
+    if class_code and not class_code.upper().startswith(_normalize_subject_code(code)):
+        class_code = f"{code} {class_code}".strip()
+    if not class_code:
+        class_code = code
+
+    day = str(row.get("day_of_week") or "").strip()
+    slot = str(row.get("slot") or "").strip()
+    room = str(row.get("room") or "").strip()
+    teacher = str(row.get("teacher_name") or "").strip()
+    week_note = str(row.get("week_note") or "").strip()
+
+    parts: List[str] = []
+    if day:
+        parts.append(day)
+    if slot:
+        parts.append(f"Ca {slot}")
+    if room:
+        parts.append(f"phong {room}")
+    if teacher:
+        parts.append(f"GV {teacher}")
+    if week_note:
+        parts.append(week_note)
+    suffix = ", ".join(parts)
+    return f"{class_code}: {suffix}" if suffix else class_code
+
+
+def _structured_schedule_source_files(rows: List[Dict[str, Any]], fallback: Optional[List[str]] = None) -> List[str]:
+    source_files: List[str] = []
+    for row in rows or []:
+        src = str((row or {}).get("source_file") or "").strip()
+        if src and src not in source_files:
+            source_files.append(src)
+    for src in fallback or []:
+        source = str(src or "").strip()
+        if source and source not in source_files:
+            source_files.append(source)
+    return source_files
+
+
+def _structured_schedule_store_has_rows(
+    store: StructuredScheduleStore,
+    target_semester: Optional[str],
+) -> bool:
+    try:
+        payload = _coerce_structured_payload(store.get_schedule_rows(semester=target_semester))
+        if payload.get("rows"):
+            return True
+    except Exception:
+        logger.debug("[schedule] Structured schedule semester probe failed.", exc_info=True)
+
+    try:
+        payload = _coerce_structured_payload(store.get_schedule_rows())
+        return bool(payload.get("rows"))
+    except Exception:
+        logger.debug("[schedule] Structured schedule global probe failed.", exc_info=True)
+        return False
+
+
+def _get_structured_schedule_rows_for_code(
+    store: StructuredScheduleStore,
+    code_variants: List[str],
+    target_semester: Optional[str],
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    source_files: List[str] = []
+
+    for variant in code_variants:
+        payload = _coerce_structured_payload(
+            store.get_schedule_rows(subject_code=variant, semester=target_semester)
+        )
+        rows = payload.get("rows") or []
+        source_files.extend(payload.get("source_files") or [])
+        if rows:
+            return rows, _structured_schedule_source_files(rows, source_files)
+
+    # Match the legacy text path: if a semester/class hint is stale but the
+    # subject appears in the current TKB, still surface the available rows.
+    if target_semester:
+        for variant in code_variants:
+            payload = _coerce_structured_payload(store.get_schedule_rows(subject_code=variant))
+            rows = payload.get("rows") or []
+            source_files.extend(payload.get("source_files") or [])
+            if rows:
+                return rows, _structured_schedule_source_files(rows, source_files)
+
+    return [], _structured_schedule_source_files([], source_files)
+
+
+def _check_course_schedule_structured(
+    subjects: List[Dict[str, Any]],
+    target_semester: Optional[str],
+    class_code: Optional[str],
+    session_id: Optional[str],
+    user_id: Optional[str],
+) -> Optional[List[Dict[str, Any]]]:
+    safe_session = _normalize_session_id(session_id)
+    safe_user = _normalize_user_id(user_id)
+    if not (safe_session or safe_user):
+        return None
+
+    try:
+        _invoke_with_optional_session(
+            _ensure_structured_schedule_ingested,
+            session_id=safe_session,
+            user_id=safe_user,
+        )
+        store = _get_structured_schedule_store()
+        if not _structured_schedule_store_has_rows(store, target_semester):
+            return None
+    except Exception as e:
+        logger.warning("[schedule] Structured schedule fast path unavailable: %s", e)
+        return None
+
+    class_hint_norm = normalize_for_match(class_code or "") if class_code else ""
+    time_slot_map = _with_default_time_slots({})
+    results: List[Dict[str, Any]] = []
+
+    for subj in subjects:
+        code = str((subj or {}).get("code") or "").strip()
+        if not code:
+            continue
+
+        code_variants = _build_subject_code_variants(code)
+        if not code_variants:
+            continue
+
+        query_parts = list(code_variants)
+        if target_semester:
+            query_parts.append(f"hoc ky {target_semester}")
+            if str(target_semester).endswith("2"):
+                query_parts.extend(["HKII", "Hoc ky 2", "Hoc ky II", "Semester 2"])
+        if class_code:
+            query_parts.append(class_code)
+        query = " ".join(query_parts)
+
+        rows, source_files = _get_structured_schedule_rows_for_code(store, code_variants, target_semester)
+        match_rows = rows
+        if class_hint_norm and rows:
+            class_filtered = [
+                row
+                for row in rows
+                if class_hint_norm in normalize_for_match(str(row.get("class_code") or ""))
+                or class_hint_norm in normalize_for_match(_format_structured_schedule_line(code, row))
+            ]
+            if class_filtered:
+                match_rows = class_filtered
+
+        offered = bool(match_rows)
+        resolved_day: Optional[str] = None
+        resolved_slot: Optional[str] = None
+        resolved_time_range: Optional[str] = None
+        if match_rows:
+            first = match_rows[0]
+            resolved_day = str(first.get("day_of_week") or "").strip() or None
+            resolved_slot = str(first.get("slot") or "").strip() or None
+            if resolved_slot:
+                resolved_time_range = (time_slot_map.get(resolved_slot) or {}).get("time_range")
+
+        if match_rows:
+            lines = list(dict.fromkeys(_format_structured_schedule_line(code, row) for row in match_rows))
+            extracted_info = "DU LIEU TIM THAY TRONG TKB:\n" + "\n".join(lines[:30])
+        elif rows:
+            lines = list(dict.fromkeys(_format_structured_schedule_line(code, row) for row in rows))
+            extracted_info = (
+                "TIM THAY MA MON NHUNG KHONG KHOP BO LOC LOP QUAN LY. "
+                "DU LIEU GAN NHAT:\n" + "\n".join(lines[:15])
+            )
+        else:
+            extracted_info = "Khong tim thay ma mon nay trong du lieu TKB co cau truc."
+
+        primary_source = source_files[0] if source_files else "Structured Schedule"
+        results.append(
+            {
+                "code": code,
+                "name": subj.get("name") or (match_rows[0].get("subject_name_vi") if match_rows else None),
+                "credits": subj.get("credits"),
+                "offered": offered,
+                "snippet": extracted_info,
+                "file_id": primary_source,
+                "schedule_source_file": primary_source if primary_source != "Structured Schedule" else None,
+                "query": query,
+                "time_slot_map": time_slot_map,
+                "time_source_file": "DEFAULT_UET_TIME_SLOTS",
+                "resolved_day": resolved_day,
+                "resolved_slot": resolved_slot,
+                "resolved_time_range": resolved_time_range,
+            }
+        )
+
+    return results
+
+
 def check_course_schedule(
     subjects: List[Dict[str, Any]],
     target_semester: Optional[str] = None,
@@ -3386,6 +3635,16 @@ def check_course_schedule(
 
     safe_session = _normalize_session_id(session_id)
     safe_user = _normalize_user_id(user_id)
+    structured_results = _check_course_schedule_structured(
+        subjects=subjects,
+        target_semester=target_semester,
+        class_code=class_code,
+        session_id=safe_session,
+        user_id=safe_user,
+    )
+    if structured_results is not None:
+        return structured_results
+
     try:
         resource_loader._scope_dirs()
         if safe_user or safe_session:

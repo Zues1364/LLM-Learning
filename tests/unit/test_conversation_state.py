@@ -19,6 +19,15 @@ def test_resolve_query_with_subject_reference():
     assert resolved["applied_referents"]
 
 
+def test_resolve_query_with_unicode_subject_reference():
+    state = default_conversation_state()
+    state["referents"]["last_subject_codes"] = ["INT3412E"]
+
+    resolved = resolve_query_with_state("môn này là nội dung về cái gì", state)
+    assert "INT3412E" in resolved["resolved_query"]
+    assert resolved["applied_referents"]
+
+
 def test_update_state_extracts_course_code_from_context():
     prev = default_conversation_state()
     next_state = update_state_after_turn(

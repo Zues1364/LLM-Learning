@@ -1,5 +1,6 @@
 import copy
 import re
+import unicodedata
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple
 
@@ -38,7 +39,7 @@ def default_conversation_state() -> Dict[str, Any]:
 
 def _normalize_text(text: str) -> str:
     lowered = (text or "").lower()
-    lowered = lowered.replace("đ", "d")
+    lowered = lowered.replace("đ", "d").replace("Đ", "d")
     replacements = {
         "á": "a",
         "à": "a",
@@ -109,6 +110,11 @@ def _normalize_text(text: str) -> str:
     }
     for src, dst in replacements.items():
         lowered = lowered.replace(src, dst)
+    lowered = (
+        unicodedata.normalize("NFKD", lowered)
+        .encode("ascii", "ignore")
+        .decode("ascii")
+    )
     return re.sub(r"\s+", " ", lowered).strip()
 
 

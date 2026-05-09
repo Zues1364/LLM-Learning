@@ -756,6 +756,12 @@ def test_render_gpa_feasibility_text_includes_schedule_rows():
 
 
 
+def test_gpa_feasibility_query_accepts_kha_nang_marker():
+    assert server._query_targets_gpa_feasibility(
+        "voi tinh trang diem gpa cua toi co kha nang len bang gioi khong"
+    )
+
+
 def test_extract_time_slot_map_parses_standard_table():
     text = """
 | Buoi | Ca | Tiet | Thoi gian hoc | Ghi chu |
@@ -875,6 +881,63 @@ def test_check_course_schedule_includes_resolved_time_range(monkeypatch):
     assert result[0]["resolved_time_range"] == "16:20 – 19:00"
     assert result[0]["time_slot_map"] == slot_map
     assert result[0]["time_source_file"] == "cv.pdf"
+
+
+def test_check_course_schedule_prefers_structured_rows_for_session(monkeypatch):
+    row = {
+        "semester": "HKII 2025-2026",
+        "subject_code": "INT4050",
+        "subject_name_vi": "Khoa luan tot nghiep",
+        "subject_name_en": "Graduation Thesis",
+        "class_code": "INT4050 1",
+        "teacher_name": "",
+        "day_of_week": "Thu 5",
+        "slot": "2",
+        "room": "3-G3",
+        "week_note": "",
+        "source_file": "structured_tkb.pdf",
+        "source_page": 2,
+        "source_line": 10,
+    }
+
+    class DummyStore:
+        def get_schedule_rows(self, subject_code=None, teacher_name=None, semester=None):
+            if subject_code is None:
+                return {"rows": [row], "source_files": ["structured_tkb.pdf"]}
+            if subject_code == "INT4050":
+                return {"rows": [row], "source_files": ["structured_tkb.pdf"]}
+            return {"rows": [], "source_files": ["structured_tkb.pdf"]}
+
+    monkeypatch.setattr(server, "_ensure_structured_schedule_ingested", lambda session_id=None, user_id=None: {})
+    monkeypatch.setattr(server, "_get_structured_schedule_store", lambda: DummyStore())
+    monkeypatch.setattr(
+        server,
+        "_load_best_schedule_text",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not scan schedule PDFs")),
+    )
+    monkeypatch.setattr(
+        server,
+        "_load_schedule_time_slot_map",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not scan time-slot PDFs")),
+    )
+
+    result = server.check_course_schedule(
+        [{"code": "INT4050", "credits": 7}, {"code": "INT9999"}],
+        target_semester="252",
+        class_code="QH-2022",
+        session_id="session-1",
+    )
+
+    assert result[0]["code"] == "INT4050"
+    assert result[0]["offered"] is True
+    assert result[0]["resolved_day"] == "Thu 5"
+    assert result[0]["resolved_slot"] == "2"
+    assert result[0]["resolved_time_range"] == server._DEFAULT_TIME_SLOT_MAP["2"]["time_range"]
+    assert result[0]["schedule_source_file"] == "structured_tkb.pdf"
+    assert result[0]["time_source_file"] == "DEFAULT_UET_TIME_SLOTS"
+    assert "INT4050 1" in result[0]["snippet"]
+    assert result[1]["code"] == "INT9999"
+    assert result[1]["offered"] is False
 
 
 def test_check_course_schedule_resolves_slot_even_when_time_map_empty(monkeypatch):

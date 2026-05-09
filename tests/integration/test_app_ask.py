@@ -102,6 +102,12 @@ def test_health_and_readiness_endpoints(app_module):
     assert ready.json()["checks"]["memory_db"] == "ok"
 
 
+def test_transcript_consult_timeout_has_floor(app_module):
+    assert app_module._timeout_at_least(270.0, 900.0) == 900.0
+    assert app_module._timeout_at_least(1200.0, 900.0) == 1200.0
+    assert app_module._timeout_at_least(None, 900.0) is None
+
+
 def test_readiness_fails_when_supabase_db_unavailable(app_module, monkeypatch):
     client = TestClient(app_module.app)
     monkeypatch.setenv("SUPABASE_DB_URL", "postgresql://fake")
@@ -835,6 +841,7 @@ def test_ask_structured_schedule_response_includes_citations(monkeypatch, tmp_pa
 def test_ask_academic_advisor_response_backfills_retrieve_citations(monkeypatch, tmp_path):
     app_mod = importlib.reload(importlib.import_module("app"))
     monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    monkeypatch.setattr(app_mod, "STRUCTURED_TKB_ENABLED", False)
     (app_mod.SESSION_CACHE_DIR).mkdir(parents=True, exist_ok=True)
 
     class DummyPlanner:
@@ -2610,6 +2617,183 @@ def test_ask_course_offering_status_no_rows_uses_schedule_citation_without_retri
     assert "khong mo lop" in app_mod.normalize_for_match(body["answer"])
 
 
+def test_ask_course_offering_status_with_schedule_words_avoids_planner(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    (app_mod.SESSION_CACHE_DIR).mkdir(parents=True, exist_ok=True)
+
+    class DummyPlanner:
+        def run(self, prompt):
+            raise AssertionError("opening + schedule status query must stay on structured route")
+
+    monkeypatch.setattr(app_mod, "get_mcp_planner_agent", lambda allow_web_search=False: DummyPlanner())
+
+    def fake_invoke(tool, args, timeout=None):
+        if tool == "get_available_programs":
+            return {"programs": [{"id": "cs_2022", "display_name": "CS"}]}
+        if tool == "memory_get":
+            return []
+        if tool == "resolve_course_alias":
+            return {
+                "matched_subject": {
+                    "subject_code": "INT3404E",
+                    "subject_name_vi": "Xu ly anh",
+                    "subject_name_en": "Image Processing",
+                },
+                "confidence": 0.95,
+            }
+        if tool == "get_schedule_rows":
+            return {
+                "rows": [],
+                "source_files": ["PHU LUC TKB HKII 2025-2026.pdf"],
+                "coverage_note": "Chưa thấy dữ liệu lịch cho INT3404E trong thời khóa biểu hiện có.",
+            }
+        if tool == "get_curriculum_lookup":
+            return {
+                "groups": {
+                    "V.2.4": {
+                        "group_name": "Nhom cac hoc phan ve Tuong tac nguoi-may",
+                        "subjects": [{"code": "INT3404E", "name": "Xu ly anh"}],
+                    }
+                }
+            }
+        if tool == "memory_add":
+            return "ok"
+        if tool == "retrieve_chunks":
+            raise AssertionError("structured course status query must not call retrieve_chunks")
+        return "ok"
+
+    monkeypatch.setattr(app_mod.mcp_client, "invoke", fake_invoke)
+
+    client = TestClient(app_mod.app)
+    resp = client.post(
+        "/ask",
+        json={
+            "query": "môn xử lí ảnh kỳ này mở lớp không, lịch vào hôm nào vậy",
+            "session_id": "s_course_status_schedule_words",
+            "program_id": "cs_2022",
+            "file_ids": [],
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["source"] == "course_offering_status"
+    assert "int3404e" in app_mod.normalize_for_match(body["answer"])
+    assert "khong mo lop" in app_mod.normalize_for_match(body["answer"])
+
+    resp = client.post(
+        "/ask",
+        json={
+            "query": "thế môn xử lí ảnh kỳ này không có lớp à",
+            "session_id": "s_course_status_schedule_words",
+            "program_id": "cs_2022",
+            "file_ids": [],
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["source"] == "course_offering_status"
+    assert "int3404e" in app_mod.normalize_for_match(body["answer"])
+    assert "khong mo lop" in app_mod.normalize_for_match(body["answer"])
+
+
+def test_ask_course_overview_followup_uses_recent_subject_without_retrieve(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    (app_mod.SESSION_CACHE_DIR).mkdir(parents=True, exist_ok=True)
+
+    class DummyPlanner:
+        def run(self, prompt):
+            raise AssertionError("course overview follow-up must stay on structured route")
+
+    monkeypatch.setattr(app_mod, "get_mcp_planner_agent", lambda allow_web_search=False: DummyPlanner())
+
+    def fake_invoke(tool, args, timeout=None):
+        if tool == "get_available_programs":
+            return {"programs": [{"id": "cs_2022", "display_name": "CS"}]}
+        if tool == "memory_state_get":
+            return {
+                "entities": {"course_codes": ["INT3412E"]},
+                "referents": {"last_subject_codes": ["INT3412E"]},
+            }
+        if tool == "memory_get":
+            return []
+        if tool == "get_curriculum_lookup":
+            return {
+                "groups": {
+                    "V.2.4": {
+                        "group_name": "Nhom cac hoc phan ve Tuong tac nguoi-may",
+                        "subjects": [{"code": "INT3412E", "name": "Thi giac may Computer Vision"}],
+                    }
+                }
+            }
+        if tool == "memory_add":
+            return "ok"
+        if tool == "retrieve_chunks":
+            raise AssertionError("course overview follow-up must not call retrieve_chunks")
+        return "ok"
+
+    monkeypatch.setattr(app_mod.mcp_client, "invoke", fake_invoke)
+
+    client = TestClient(app_mod.app)
+    resp = client.post(
+        "/ask",
+        json={
+            "query": "môn này là nội dung về cái gì",
+            "session_id": "s_course_overview_followup",
+            "program_id": "cs_2022",
+            "file_ids": [],
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["source"] == "course_overview"
+    assert "int3412e" in app_mod.normalize_for_match(body["answer"])
+    assert "computer vision" in app_mod.normalize_for_match(body["answer"])
+
+
+def test_ask_ielts_requirement_uses_deterministic_language_route(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    (app_mod.SESSION_CACHE_DIR).mkdir(parents=True, exist_ok=True)
+
+    class DummyPlanner:
+        def run(self, prompt):
+            raise AssertionError("IELTS requirement query must not require planner/retrieve")
+
+    monkeypatch.setattr(app_mod, "get_mcp_planner_agent", lambda allow_web_search=False: DummyPlanner())
+
+    def fake_invoke(tool, args, timeout=None):
+        if tool == "get_available_programs":
+            return {"programs": [{"id": "cs_2022", "display_name": "CS"}]}
+        if tool == "memory_get":
+            return []
+        if tool == "memory_add":
+            return "ok"
+        if tool == "retrieve_chunks":
+            raise AssertionError("IELTS requirement query must not call retrieve_chunks")
+        return "ok"
+
+    monkeypatch.setattr(app_mod.mcp_client, "invoke", fake_invoke)
+
+    client = TestClient(app_mod.app)
+    resp = client.post(
+        "/ask",
+        json={
+            "query": "với 6.5 ielts tôi có đủ điều kiện tiếng anh theo chương trình không",
+            "session_id": "s_ielts_structured",
+            "program_id": "cs_2022",
+            "file_ids": [],
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["source"] == "language_requirement"
+    norm_answer = app_mod.normalize_for_match(body["answer"])
+    assert "du dieu kien" in norm_answer
+    assert "ielts 5.5" in norm_answer
+
+
 def test_ask_electives_no_opened_uses_schedule_citation_without_retrieve(monkeypatch, tmp_path):
     app_mod = importlib.reload(importlib.import_module("app"))
     monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
@@ -2667,6 +2851,11 @@ def test_extract_subject_hints_ignores_curriculum_tail_phrase():
     normalized_hints = [app_mod.normalize_for_match(h) for h in hints]
     assert "xu li anh" in normalized_hints
     assert all("khung ctdt" not in h for h in normalized_hints)
+
+    accented_hints = app_mod._extract_subject_hints("môn xử lí ảnh kỳ này mở lớp không, lịch vào hôm nào vậy")
+    assert [app_mod.normalize_for_match(h) for h in accented_hints] == ["xu li anh"]
+    negative_hints = app_mod._extract_subject_hints("thế môn xử lí ảnh kỳ này không có lớp à")
+    assert [app_mod.normalize_for_match(h) for h in negative_hints] == ["xu li anh"]
 
 
 def test_ask_course_offering_status_prefers_curriculum_fallback_when_alias_uncertain(monkeypatch, tmp_path):
@@ -3234,6 +3423,7 @@ def test_ask_deictic_schedule_query_merges_memory_subject_with_explicit_subject(
 def test_ask_fallback_retrieve_uses_global_scope_for_policy_query(monkeypatch, tmp_path):
     app_mod = importlib.reload(importlib.import_module("app"))
     monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    monkeypatch.setattr(app_mod, "STRUCTURED_TKB_ENABLED", False)
     (app_mod.SESSION_CACHE_DIR).mkdir(parents=True, exist_ok=True)
 
     class BrokenPlanner:

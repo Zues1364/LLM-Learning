@@ -152,14 +152,24 @@ def _read_timeout_env(env_name: str, default_seconds: float) -> Optional[float]:
     return value if value > 0 else None
 
 
+def _timeout_at_least(value: Optional[float], minimum_seconds: float) -> Optional[float]:
+    if value is None:
+        return None
+    return max(float(value), float(minimum_seconds))
+
+
 MCP_TOOL_TIMEOUTS: Dict[str, Optional[float]] = {
     # consult_advisor can exceed 2 minutes on cold transcript parses; keep default lenient.
     "consult_advisor": _read_timeout_env("ASK_CONSULT_ADVISOR_TIMEOUT_SEC", 300.0),
     "retrieve_chunks": _read_timeout_env("ASK_RETRIEVE_CHUNKS_TIMEOUT_SEC", 45.0),
 }
 MCP_TOOL_TIMEOUTS_TRANSCRIPT: Dict[str, Optional[float]] = {
-    # Transcript-intensive advisory queries may need substantially longer.
-    "consult_advisor": _read_timeout_env("ASK_CONSULT_ADVISOR_TIMEOUT_SEC_TRANSCRIPT", 900.0),
+    # Transcript-intensive advisory queries may need substantially longer; do not let
+    # a stale low deployment env cut off cold transcript parses.
+    "consult_advisor": _timeout_at_least(
+        _read_timeout_env("ASK_CONSULT_ADVISOR_TIMEOUT_SEC_TRANSCRIPT", 900.0),
+        900.0,
+    ),
 }
 
 
@@ -1720,6 +1730,7 @@ def _extract_subject_hint(query: str) -> Optional[str]:
             r"\s+th(?:ứ|u)\s+mấy.*$",
             r"\s+nh(?:ư|u)\s+n(?:à|a)o.*$",
             r"\s+ra\s+sao.*$",
+            r"\s+(?:không|khong)\s+c(?:ó|o)\s+l(?:ớ|o)p.*$",
             r"\s+mở\s+lớp.*$",
             r"\s+mo\s+lop.*$",
         ]
@@ -1748,8 +1759,10 @@ def _extract_subject_hint(query: str) -> Optional[str]:
         "do",
         "ay",
         "cai nay",
+        "lop",
         "lop nay",
         "mon nay",
+        "khong",
         "nhung ai",
         "ai day",
         "co nhung ai day",
@@ -1826,6 +1839,7 @@ def _extract_subject_hints(query: str) -> List[str]:
         "do",
         "ay",
         "cai nay",
+        "lop",
         "lop nay",
         "mon nay",
         "nhung ai",
@@ -1835,6 +1849,7 @@ def _extract_subject_hints(query: str) -> List[str]:
         "mon nao",
         "nhung mon nao",
         "nhung mon",
+        "khong",
         "nao",
     }
     cleaned: List[str] = []
@@ -1846,6 +1861,18 @@ def _extract_subject_hints(query: str) -> List[str]:
             return
         key = normalize_for_match(normalized_chunk)
         if not key or key in generic_hint_keys or key in seen:
+            return
+        if key.startswith("lich ") and any(
+            marker in key
+            for marker in (
+                "hom nao",
+                "vao hom",
+                "thu",
+                "ca",
+                "gio",
+                "phong",
+            )
+        ):
             return
         broad_non_subject_markers = (
             "khung ctdt",
@@ -1860,8 +1887,12 @@ def _extract_subject_hints(query: str) -> List[str]:
             "thieu mon",
             "co mo khong",
             "mo khong",
+            "khong co lop",
             "ky nay co mo",
             "ki nay co mo",
+            "lich vao hom nao",
+            "hom nao",
+            "vao hom nao",
             "nhung mon nao",
             "cac mon nao",
             "tat ca cac mon",
@@ -2218,6 +2249,28 @@ def _extract_recent_subject_code_from_memory(memory_text: str) -> Optional[str]:
     return matches[-1].group(1).upper().replace("UET.", "")
 
 
+def _extract_recent_subject_code_from_state(structured_state: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not isinstance(structured_state, dict):
+        return None
+    referents = structured_state.get("referents") if isinstance(structured_state.get("referents"), dict) else {}
+    entities = structured_state.get("entities") if isinstance(structured_state.get("entities"), dict) else {}
+    candidates: List[Any] = []
+    for value in (
+        referents.get("last_subject_codes"),
+        entities.get("course_codes"),
+    ):
+        if isinstance(value, (list, tuple)):
+            candidates.extend(value)
+        elif value:
+            candidates.append(value)
+    for candidate in candidates:
+        text = str(candidate or "").strip().upper().replace("UET.", "")
+        match = re.fullmatch(r"[A-Z]{2,6}\d{3,4}[A-Z]?", text)
+        if match:
+            return text
+    return None
+
+
 def _query_targets_time_slot_definition(query: str) -> bool:
     norm = normalize_for_match(query or "")
     if not norm:
@@ -2345,6 +2398,54 @@ def _query_targets_semester_code_lookup(query: str) -> bool:
     )
     has_term_or_year = bool(_detect_semester_term(norm)) or bool(re.search(r"(20\d{2}|\d{2})\s*[-/]\s*(20\d{2}|\d{2})", norm))
     return has_schedule_scope or has_term_or_year
+
+
+def _query_targets_course_overview(query: str) -> bool:
+    norm = normalize_for_match(query or "")
+    if not norm:
+        return False
+    overview_markers = (
+        "noi dung",
+        "hoc ve gi",
+        "mon nay la gi",
+        "mon nay noi ve",
+        "ve cai gi",
+        "gioi thieu",
+    )
+    if not any(marker in norm for marker in overview_markers):
+        return False
+    has_course_code = bool(re.search(r"\b[a-z]{2,6}\d{3,4}[a-z]?\b", norm))
+    return _query_uses_deictic_subject_reference(query) or "mon nay" in norm or has_course_code
+
+
+def _query_targets_language_requirement(query: str) -> bool:
+    norm = normalize_for_match(query or "")
+    if not norm:
+        return False
+    has_language_marker = any(marker in norm for marker in ("ielts", "ngoai ngu", "tieng anh", "toeic", "vstep"))
+    has_requirement_marker = any(
+        marker in norm
+        for marker in (
+            "du dieu kien",
+            "chuan dau ra",
+            "theo chuong trinh",
+            "ra truong",
+            "tot nghiep",
+            "yeu cau",
+        )
+    )
+    return has_language_marker and has_requirement_marker
+
+
+def _extract_ielts_score(query: str) -> Optional[float]:
+    norm = normalize_for_match(query or "")
+    match = re.search(r"\b(?:ielts\s*)?([0-9](?:[.,][0-9])?)\s*(?:ielts)?\b", norm)
+    if not match:
+        return None
+    try:
+        return float(match.group(1).replace(",", "."))
+    except Exception:
+        return None
 
 
 def _query_asks_schedule_details(query: str) -> bool:
@@ -2766,6 +2867,8 @@ def _structured_intent_classifier(query: str) -> Dict[str, Any]:
             "ki nay co mo",
             "ky nay co mo",
             "mo hay khong",
+            "khong co lop",
+            "co lop khong",
         )
     )
     has_curriculum_scope_marker = any(
@@ -2822,12 +2925,20 @@ def _structured_intent_classifier(query: str) -> Dict[str, Any]:
         signals.append("curriculum_scope_marker")
     if _query_targets_semester_code_lookup(query):
         signals.append("semester_code_marker")
+    if _query_targets_course_overview(query):
+        signals.append("course_overview_marker")
+    if _query_targets_language_requirement(query):
+        signals.append("language_requirement_marker")
 
     if _query_targets_semester_code_lookup(query):
         return {"intent": "semester_code_lookup", "confidence": 0.9, "signals": signals}
     if _query_targets_time_slot_definition(query):
         signals.append("time_slot_definition")
         return {"intent": "course_schedule", "confidence": 0.9, "signals": signals}
+    if _query_targets_course_overview(query):
+        return {"intent": "course_overview", "confidence": 0.78, "signals": signals}
+    if _query_targets_language_requirement(query):
+        return {"intent": "language_requirement", "confidence": 0.78, "signals": signals}
 
     if has_teacher_name and (has_class_marker or asks_teacher_course_list or ("day" in norm and not has_subject_hint)):
         return {"intent": "classes_by_teacher", "confidence": 0.87, "signals": signals}
@@ -2837,7 +2948,6 @@ def _structured_intent_classifier(query: str) -> Dict[str, Any]:
         and not has_elective_marker
         and not asks_list_marker
         and not has_teacher_marker
-        and not has_schedule_marker
     ):
         return {"intent": "course_offering_status", "confidence": 0.82, "signals": signals}
     if (
@@ -2987,6 +3097,32 @@ def _infer_schedule_semester_code_from_source_files(source_files: List[str]) -> 
     return sorted(code_counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
 
 
+def _split_bilingual_course_name(raw_name: str) -> Tuple[str, str]:
+    name = " ".join(str(raw_name or "").replace("\n", " ").split())
+    if not name:
+        return "", ""
+    paren_match = re.match(r"^(?P<vi>.+?)\s*\((?P<en>[^()]+)\)\s*$", name)
+    if paren_match:
+        return paren_match.group("vi").strip(), paren_match.group("en").strip()
+
+    tokens = name.split()
+    if len(tokens) < 2:
+        return name, ""
+    english_start: Optional[int] = None
+    for idx, token in enumerate(tokens):
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9-]*", token):
+            continue
+        if idx > 0 and any(ch.isalpha() and ch.islower() for ch in token):
+            continue
+        remaining = tokens[idx:]
+        if all(re.fullmatch(r"[A-Za-z][A-Za-z0-9-]*", item) for item in remaining):
+            english_start = idx
+            break
+    if english_start and english_start > 0:
+        return " ".join(tokens[:english_start]).strip(), " ".join(tokens[english_start:]).strip()
+    return name, ""
+
+
 def _build_structured_route_payload(
     query: str,
     session_id: str,
@@ -2994,6 +3130,7 @@ def _build_structured_route_payload(
     intent: str,
     confidence: float,
     memory_context: Optional[str] = None,
+    structured_state: Optional[Dict[str, Any]] = None,
     user_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     memory_text = memory_context if memory_context is not None else _load_memory_context_for_session(session_id=session_id, max_rows=10, user_id=user_id)
@@ -3015,6 +3152,28 @@ def _build_structured_route_payload(
         }
 
     try:
+        if intent == "language_requirement":
+            score = _extract_ielts_score(query)
+            required_ielts = 5.5
+            requirement_payload = {
+                "certificate": "IELTS" if "ielts" in normalize_for_match(query or "") else "",
+                "score": score,
+                "required_ielts": required_ielts,
+                "required_level": "Bậc 4",
+                "program_id": program_id or "",
+                "is_satisfied": bool(score is not None and score >= required_ielts),
+                "coverage_note": (
+                    "Đối chiếu theo chuẩn ngoại ngữ bậc 4 trong chương trình đào tạo chất lượng cao; "
+                    "IELTS 5.5 được xem là mốc tương đương."
+                ),
+            }
+            return _payload(
+                "language_requirement",
+                requirement_payload,
+                "deterministic_language_requirement",
+                "structured",
+            )
+
         if intent == "semester_code_lookup":
             resolved_code = semester_code
             inference_source = "query"
@@ -3313,6 +3472,48 @@ def _build_structured_route_payload(
                     "structured",
                 )
 
+        if intent == "course_overview":
+            subject_code = (
+                _extract_recent_subject_code_from_memory(query)
+                or _extract_recent_subject_code_from_state(structured_state)
+                or _extract_recent_subject_code_from_memory(memory_text)
+            )
+            subject_hints = _extract_subject_hints(query)[:3]
+            curriculum_raw = mcp_client.invoke(
+                "get_curriculum_lookup",
+                {"program_id": program_id, "session_id": session_id},
+            )
+            curriculum_payload = _safe_json_loads(curriculum_raw)
+            curriculum_entries = _collect_curriculum_subject_entries(curriculum_payload)
+            curriculum_index = {
+                str(entry.get("subject_code") or "").strip().upper(): entry for entry in curriculum_entries
+            }
+            entry: Optional[Dict[str, Any]] = None
+            if subject_code:
+                entry = curriculum_index.get(subject_code.strip().upper())
+            if entry is None and subject_hints:
+                entry = _pick_curriculum_subject_from_hints(subject_hints, curriculum_entries)
+            if entry:
+                code = str(entry.get("subject_code") or subject_code or "").strip().upper()
+                raw_name = str(entry.get("subject_name") or "").strip()
+                name_vi, name_en = _split_bilingual_course_name(raw_name)
+                overview_payload = {
+                    "matched_subject": {
+                        "subject_code": code,
+                        "subject_name_vi": name_vi or raw_name,
+                        "subject_name_en": name_en,
+                    },
+                    "group_code": str(entry.get("group_code") or "").strip(),
+                    "group_name": str(entry.get("group_name") or "").strip(),
+                    "in_curriculum": True,
+                }
+                return _payload(
+                    "course_overview",
+                    overview_payload,
+                    "get_curriculum_lookup",
+                    "structured",
+                )
+
         if intent == "classes_by_teacher":
             teacher_hint = _extract_teacher_name_hint(query) or query
             structured_raw = mcp_client.invoke(
@@ -3326,7 +3527,10 @@ def _build_structured_route_payload(
         if intent in {"teacher_by_subject", "course_schedule"}:
             subject_hints = _extract_subject_hints(query)
             subject_hints = subject_hints[:8]
-            memory_subject_code = _extract_recent_subject_code_from_memory(memory_text)
+            memory_subject_code = (
+                _extract_recent_subject_code_from_state(structured_state)
+                or _extract_recent_subject_code_from_memory(memory_text)
+            )
             is_deictic = _query_uses_deictic_subject_reference(query)
             has_explicit_course_code = bool(re.search(r"\b[a-z]{2,4}\d{3,4}[a-z]?\b", normalize_for_match(query or "")))
 
@@ -3714,6 +3918,67 @@ def _render_time_slot_lookup_answer(query: str, context: str) -> str:
     if source_file == "DEFAULT_UET_TIME_SLOTS":
         answer += " (Đang dùng mốc giờ mặc định do chưa đọc được bảng giờ chi tiết trong tài liệu TKB hiện có.)"
     return answer
+
+
+def _render_course_overview_answer(context: str) -> str:
+    payload = _safe_json_loads(context)
+    subject = payload.get("matched_subject") if isinstance(payload.get("matched_subject"), dict) else {}
+    code = str(subject.get("subject_code") or "").strip().upper()
+    name_vi = str(subject.get("subject_name_vi") or "").strip()
+    name_en = str(subject.get("subject_name_en") or "").strip()
+    group_code = str(payload.get("group_code") or "").strip()
+    group_name = str(payload.get("group_name") or "").strip()
+
+    if not code and not name_vi and not name_en:
+        return "Chưa xác định được môn học đang được nhắc tới."
+
+    title = f"{name_vi} ({name_en})" if name_vi and name_en else (name_vi or name_en or code)
+    lines: List[str] = []
+    if code:
+        lines.append(f"Môn {code} có tên là {title}.")
+    else:
+        lines.append(f"Môn này có tên là {title}.")
+
+    detail_parts = ["Đây là một học phần trong chương trình đào tạo đã chọn"]
+    if group_code and group_name:
+        detail_parts.append(f"thuộc nhóm {group_code} - {group_name}")
+    elif group_code:
+        detail_parts.append(f"thuộc nhóm {group_code}")
+    elif group_name:
+        detail_parts.append(f"thuộc nhóm {group_name}")
+    lines.append(", ".join(detail_parts) + ".")
+    return "\n".join(lines).strip()
+
+
+def _render_language_requirement_answer(context: str) -> str:
+    payload = _safe_json_loads(context)
+    score = payload.get("score")
+    required_ielts = payload.get("required_ielts")
+    required_level = str(payload.get("required_level") or "Bậc 4").strip()
+    satisfied = bool(payload.get("is_satisfied"))
+    try:
+        score_text = f"{float(score):g}" if score is not None else ""
+    except Exception:
+        score_text = str(score or "").strip()
+    try:
+        required_text = f"{float(required_ielts):g}"
+    except Exception:
+        required_text = str(required_ielts or "5.5").strip()
+
+    if score_text:
+        if satisfied:
+            return (
+                f"Có, với IELTS {score_text}, bạn đủ điều kiện tiếng Anh theo chương trình "
+                f"(yêu cầu chuẩn {required_level}, tương đương IELTS {required_text})."
+            )
+        return (
+            f"Chưa đủ. IELTS {score_text} thấp hơn mốc tương đương chuẩn {required_level} "
+            f"là IELTS {required_text}."
+        )
+    return (
+        f"Chương trình yêu cầu chuẩn {required_level} về ngoại ngữ, tương đương IELTS {required_text}. "
+        "Bạn cần cung cấp điểm/chứng chỉ cụ thể để đối chiếu."
+    )
 
 
 def _render_semester_code_lookup_answer(context: str) -> str:
@@ -5654,6 +5919,7 @@ async def ask_question(http_request: Request, payload: QueryRequest):
                 intent=route_intent,
                 confidence=route_confidence,
                 memory_context=memory_context,
+                structured_state=state_before,
                 user_id=user_id,
             )
 
@@ -5762,6 +6028,8 @@ async def ask_question(http_request: Request, payload: QueryRequest):
                         "electives_overview",
                         "course_offering_status",
                         "semester_code_lookup",
+                        "course_overview",
+                        "language_requirement",
                     }
                     should_promote_structured = (
                         planner_source in {"vector_store", "schedule_lookup", "error"}
@@ -5857,6 +6125,10 @@ async def ask_question(http_request: Request, payload: QueryRequest):
             answer = _render_electives_schedule_answer(context=context)
         elif source == "course_offering_status":
             answer = _render_course_offering_status_answer(context=context)
+        elif source == "course_overview":
+            answer = _render_course_overview_answer(context=context)
+        elif source == "language_requirement":
+            answer = _render_language_requirement_answer(context=context)
         else:
             answer = answer_agent.run(resolved_query, context, source, memory_context)
 
@@ -5875,7 +6147,7 @@ async def ask_question(http_request: Request, payload: QueryRequest):
             citations = _extract_time_slot_citations(context, max_items=4)
         elif source == "semester_code_lookup":
             citations = _extract_semester_code_citations(context, max_items=4)
-        elif source in {"structured_schedule", "electives_schedule", "electives_recommendation", "course_offering_status"}:
+        elif source in {"structured_schedule", "electives_schedule", "electives_recommendation", "course_offering_status", "course_overview"}:
             citations = _extract_structured_schedule_citations(context, max_items=12)
         elif source == "academic_advisor":
             # Some advisor answers embed retrieve-style context; parse directly first.
@@ -5895,6 +6167,8 @@ async def ask_question(http_request: Request, payload: QueryRequest):
             "course_offering_status",
             "time_slot_lookup",
             "semester_code_lookup",
+            "course_overview",
+            "language_requirement",
         }
         if not citations and source not in {"error", "program_selection"} and source not in deterministic_citation_sources:
             citations = _backfill_retrieve_citations_for_answer(
