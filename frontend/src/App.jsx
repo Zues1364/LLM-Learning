@@ -19,6 +19,7 @@ const inferApiBase = () => {
 const API_BASE = ENV_API_BASE || inferApiBase();
 const APP_AUTH_CALLBACK_URI = `${API_BASE}/api/auth/google/callback`;
 const MAIL_CONNECT_CALLBACK_URI = `${API_BASE}/api/mail/connect/callback`;
+const DEFAULT_SESSION_TITLE = "Phiên mới";
 const createSessionId = () =>
   (crypto?.randomUUID ? crypto.randomUUID() : `session-${Date.now()}-${Math.random().toString(16).slice(2)}`);
 
@@ -41,6 +42,25 @@ const normalizeQueryForIntent = (text) =>
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
+
+const isPlaceholderSessionTitle = (title) => {
+  const normalized = normalizeQueryForIntent(title)
+    .replace(/đ/g, "d")
+    .replace(/\s+/g, " ")
+    .trim();
+  return (
+    !normalized ||
+    normalized === "phien moi" ||
+    normalized === "phien cu" ||
+    /^phien \d+$/.test(normalized)
+  );
+};
+
+const deriveSessionTitleFromQuery = (query) => {
+  const text = String(query || "").replace(/\s+/g, " ").trim();
+  if (!text) return DEFAULT_SESSION_TITLE;
+  return text.length <= 80 ? text : `${text.slice(0, 77).trimEnd()}...`;
+};
 
 const stripSourceFooterFromMessage = (value) => {
   const text = String(value || "");
@@ -355,7 +375,7 @@ const LEGACY_CHAT_STORAGE_KEYS = [
 ];
 
 const emptyChatState = (sessionId = createSessionId()) => ({
-  sessions: [{ id: sessionId, title: "Phien 1" }],
+  sessions: [{ id: sessionId, title: DEFAULT_SESSION_TITLE }],
   currentSession: sessionId,
   messagesBySession: { [sessionId]: [] },
   selectedFilesBySession: {},
@@ -376,7 +396,7 @@ const readGuestChatState = (fallbackSessionId) => {
     ? storedSessions
         .map((item, index) => ({
           id: String(item?.id || "").trim(),
-          title: String(item?.title || `Phien ${index + 1}`).trim() || `Phien ${index + 1}`,
+          title: String(item?.title || DEFAULT_SESSION_TITLE).trim() || DEFAULT_SESSION_TITLE,
         }))
         .filter((item) => item.id)
     : empty.sessions;
@@ -549,7 +569,7 @@ const normalizeChatSession = (item, index = 0) => {
   if (!id) return null;
   return {
     id,
-    title: String(item?.title || `Phien ${index + 1}`).trim() || `Phien ${index + 1}`,
+    title: String(item?.title || DEFAULT_SESSION_TITLE).trim() || DEFAULT_SESSION_TITLE,
     selected_program_id: item?.selected_program_id || "",
     selected_file_ids: Array.isArray(item?.selected_file_ids) ? item.selected_file_ids.filter(Boolean) : [],
   };
@@ -922,15 +942,28 @@ export default function App() {
     });
   }, [programs]);
 
-  const updateSelectedFiles = useCallback((sessionId, updater) => {
-    setSelectedFilesBySession((prev) => {
-      const existing = prev[sessionId] || [];
-      const nextRaw = typeof updater === "function" ? updater(existing) : updater;
-      return { ...prev, [sessionId]: normalizeFileIds(nextRaw) };
-    });
-  }, [normalizeFileIds]);
+  const updateSelectedFiles = useCallback((sessionId, updater, options = {}) => {
+    const existing = selectedFilesBySession[sessionId] || [];
+    const nextRaw = typeof updater === "function" ? updater(existing) : updater;
+    const nextIds = normalizeFileIds(nextRaw);
+    setSelectedFilesBySession((prev) => ({ ...prev, [sessionId]: nextIds }));
 
-  const handleSelectAllFiles = () => updateSelectedFiles(currentSession, files.map((f) => f.file_id));
+    if (options.persist && authState.authenticated) {
+      const programId = selectedProgramBySession[sessionId] || pendingProgramBySession[sessionId] || null;
+      updateChatSessionApi(sessionId, {
+        selected_program_id: programId,
+        selected_file_ids: nextIds,
+      }).catch((err) => console.error("Update server chat files failed", err));
+    }
+  }, [
+    authState.authenticated,
+    normalizeFileIds,
+    pendingProgramBySession,
+    selectedFilesBySession,
+    selectedProgramBySession,
+  ]);
+
+  const handleSelectAllFiles = () => updateSelectedFiles(currentSession, files.map((f) => f.file_id), { persist: true });
 
   const refreshFiles = useCallback(async () => {
     try {
@@ -1076,7 +1109,11 @@ export default function App() {
         return;
       }
 
-      setSessions(serverSessions.map(({ id, title }) => ({ id, title })));
+      setSessions((prev) => serverSessions.map(({ id, title }) => {
+        const localTitle = prev.find((session) => session.id === id)?.title || "";
+        const shouldKeepLocalTitle = localTitle && !isPlaceholderSessionTitle(localTitle) && isPlaceholderSessionTitle(title);
+        return { id, title: shouldKeepLocalTitle ? localTitle : title };
+      }));
       const serverSelectedPrograms = {};
       serverSessions.forEach((session) => {
         if (session.selected_program_id) serverSelectedPrograms[session.id] = session.selected_program_id;
@@ -1101,10 +1138,16 @@ export default function App() {
         });
         return next;
       });
-      setSelectedFilesBySession(() => {
+      setSelectedFilesBySession((prev) => {
         const next = {};
         serverSessions.forEach((session) => {
-          if (session.selected_file_ids.length) next[session.id] = session.selected_file_ids;
+          const hasLocalSelection = Object.prototype.hasOwnProperty.call(prev || {}, session.id);
+          const localFileIds = normalizeFileIds(prev?.[session.id] || []);
+          if (hasLocalSelection) {
+            next[session.id] = localFileIds;
+          } else if (session.selected_file_ids.length) {
+            next[session.id] = normalizeFileIds(session.selected_file_ids);
+          }
         });
         return next;
       });
@@ -1123,7 +1166,7 @@ export default function App() {
         console.error("Fetch chat sessions failed", err);
       }
     }
-  }, [authState.authenticated, currentSession, replaceChatState]);
+  }, [authState.authenticated, currentSession, normalizeFileIds, replaceChatState]);
 
   useEffect(() => {
     if (!sessions.some((s) => s.id === currentSession)) {
@@ -1339,7 +1382,7 @@ export default function App() {
 
   const handleNewChat = async () => {
     let newId = createSessionId();
-    let newTitle = `Phien ${sessions.length + 1}`;
+    let newTitle = DEFAULT_SESSION_TITLE;
     const inheritedProgramId =
       selectedProgramBySession[currentSession] ||
       pendingProgramBySession[currentSession] ||
@@ -1391,7 +1434,7 @@ export default function App() {
         set.add(fileId);
       }
       return Array.from(set);
-    });
+    }, { persist: true });
   };
 
   const handleDeleteSession = async (sessionId) => {
@@ -1430,7 +1473,7 @@ export default function App() {
       const remaining = sessions.filter((s) => s.id !== sessionId);
       const fallbackId = remaining[0]?.id || createSessionId();
       if (!remaining[0]) {
-        setSessions([{ id: fallbackId, title: "Phien 1" }]);
+        setSessions([{ id: fallbackId, title: DEFAULT_SESSION_TITLE }]);
       }
       setCurrentSession(fallbackId);
       setHistoryList([]);
@@ -1452,6 +1495,25 @@ export default function App() {
     setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, title: nextTitle } : s)));
   };
 
+  const applyFirstQuestionTitle = useCallback(async (sessionId, query) => {
+    const target = sessions.find((s) => s.id === sessionId);
+    if (!target || !isPlaceholderSessionTitle(target.title)) return;
+    const hasPriorUserMessage = (messagesBySession[sessionId] || []).some((msg) => msg?.type === "user");
+    if (hasPriorUserMessage) return;
+
+    const nextTitle = deriveSessionTitleFromQuery(query);
+    if (!nextTitle || nextTitle === target.title) return;
+
+    setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, title: nextTitle } : s)));
+    if (authState.authenticated) {
+      try {
+        await updateChatSessionApi(sessionId, { title: nextTitle });
+      } catch (err) {
+        console.error("Update server chat title from first question failed", err);
+      }
+    }
+  }, [authState.authenticated, messagesBySession, sessions]);
+
   const handleFileSelect = async (e) => {
     const selected = e.target.files ? Array.from(e.target.files) : [];
     if (!selected.length) return;
@@ -1466,7 +1528,7 @@ export default function App() {
           const set = new Set(prev || []);
           set.add(resp.file_id);
           return Array.from(set);
-        });
+        }, { persist: true });
         setUploadedFile(file.name);
       } else {
         const resp = await uploadPdfs(selected);
@@ -1477,7 +1539,7 @@ export default function App() {
           const set = new Set(prev || []);
           newIds.forEach((id) => set.add(id));
           return Array.from(set);
-        });
+        }, { persist: true });
       }
       await refreshFiles();
     } catch (err) {
@@ -1790,6 +1852,7 @@ export default function App() {
     if (!inputStr.trim()) return;
 
     const sessionId = currentSession;
+    const query = inputStr;
     const selectedProgramId = selectedProgramBySession[sessionId] || "";
     if (!selectedProgramId) {
       updateMessages(sessionId, (prev) => [
@@ -1802,7 +1865,7 @@ export default function App() {
       return;
     }
 
-    const query = inputStr;
+    await applyFirstQuestionTitle(sessionId, query);
 
     const normalizedQuery = normalizeQueryForIntent(query);
     const transcriptNeedPattern = /(bang diem|tin chi|gpa|lap lich|lich hoc|mon con thieu|con thieu mon|thieu mon|hoc ky sau)/;
@@ -1929,7 +1992,7 @@ export default function App() {
           {sessions.map((s) => (
             <div
               key={s.id}
-              className="history-item"
+              className="history-item chat-session-item"
               onClick={() => handleSwitchSession(s.id)}
               style={
                 s.id === currentSession
@@ -1938,29 +2001,29 @@ export default function App() {
               }
             >
               <i className="far fa-comment-alt"></i>
-              <span style={{ flex: 1 }}>{s.title}</span>
+              <span className="history-item-title" title={s.title}>{s.title}</span>
+              <div className="history-item-actions">
               <button
-                className="icon-btn"
+                className="icon-btn session-action-btn"
                 title="Doi ten phien"
                 onClick={(e) => {
                   e.stopPropagation();
                   handleRenameSession(s.id);
                 }}
-                style={{ padding: 6, fontSize: 14 }}
               >
                 <i className="fas fa-pen"></i>
               </button>
               <button
-                className="icon-btn"
+                className="icon-btn session-action-btn"
                 title="Xoa phien"
                 onClick={(e) => {
                   e.stopPropagation();
                   handleDeleteSession(s.id);
                 }}
-                style={{ padding: 6, fontSize: 14 }}
               >
                 <i className="fas fa-trash"></i>
               </button>
+              </div>
             </div>
           ))}
 
@@ -2642,7 +2705,7 @@ export default function App() {
                   style={{ cursor: "pointer", marginLeft: 5 }}
                   onClick={() => {
                     setUploadedFile(null);
-                    updateSelectedFiles(currentSession, []);
+                    updateSelectedFiles(currentSession, [], { persist: true });
                   }}
                 ></i>
               </div>

@@ -154,6 +154,7 @@ async function setupApiMock(page, state) {
 
     if (path === "/api/chat/sessions" && request.method() === "GET") {
       state.chatSessionsGetCount = (state.chatSessionsGetCount || 0) + 1;
+      const sessionsForResponse = JSON.parse(JSON.stringify(state.serverSessionsByUser[userId] || []));
       if (
         state.delayChatSessionsFromRequest &&
         state.chatSessionsGetCount >= state.delayChatSessionsFromRequest
@@ -161,7 +162,25 @@ async function setupApiMock(page, state) {
         await new Promise((resolve) => setTimeout(resolve, state.delayChatSessionsMs || 0));
       }
       await fulfillJson(route, {
-        sessions: state.serverSessionsByUser[userId] || [],
+        sessions: sessionsForResponse,
+      });
+      return;
+    }
+
+    if (path === "/ask" && request.method() === "POST") {
+      const payload = request.postDataJSON();
+      state.askRequests ||= [];
+      state.askRequests.push(payload);
+      if (state.authenticated) {
+        state.serverMessagesByUser[userId] ||= {};
+        state.serverMessagesByUser[userId][payload.session_id] ||= [];
+        state.serverMessagesByUser[userId][payload.session_id].push(textMessage("user", payload.query || ""));
+        state.serverMessagesByUser[userId][payload.session_id].push(textMessage("assistant", "ok"));
+      }
+      await fulfillJson(route, {
+        answer: "ok",
+        selected_program_id: payload.program_id || "",
+        citations: [],
       });
       return;
     }
@@ -230,6 +249,15 @@ async function setupApiMock(page, state) {
       return;
     }
 
+    if (sessionMatch && request.method() === "DELETE") {
+      const sessionId = decodeURIComponent(sessionMatch[1]);
+      state.serverSessionsByUser[userId] = (state.serverSessionsByUser[userId] || []).filter(
+        (item) => item.id !== sessionId
+      );
+      await fulfillJson(route, { ok: true });
+      return;
+    }
+
     const match = path.match(/^\/api\/chat\/sessions\/([^/]+)\/messages$/);
     if (match && request.method() === "GET") {
       const sessionId = decodeURIComponent(match[1]);
@@ -272,7 +300,7 @@ test("authenticated sessions are isolated across users and cleared on logout", a
 
   await page.goto("/");
   await expect(page.getByText("Guest User")).toBeVisible();
-  await expect(page.getByText("Phien 1")).toBeVisible();
+  await expect(page.getByText("Phiên mới")).toBeVisible();
   await expect(page.getByText("Alice graduation plan")).toHaveCount(0);
   await expect(page.getByText("Bob timetable review")).toHaveCount(0);
 
@@ -283,11 +311,107 @@ test("authenticated sessions are isolated across users and cleared on logout", a
   await page.getByRole("button", { name: /Sign out/i }).click();
   await expect(page.getByText("Guest User")).toBeVisible();
   await expect(page.getByText("Alice graduation plan")).toHaveCount(0);
-  await expect(page.getByText("Phien 1")).toBeVisible();
+  await expect(page.getByText("Phiên mới")).toBeVisible();
 
   await loginAs(page, state, users.bob);
   await expect(page.getByText("Bob timetable review")).toBeVisible();
   await expect(page.getByText("Alice graduation plan")).toHaveCount(0);
+});
+
+test("server session refresh does not overwrite selected transcript files", async ({ page }) => {
+  const state = {
+    authenticated: true,
+    user: users.alice,
+    migrationRequests: [],
+    askRequests: [],
+    chatSessionsGetCount: 0,
+    delayChatSessionsFromRequest: 2,
+    delayChatSessionsMs: 800,
+    serverSessionsByUser: {
+      [users.alice.id]: [
+        {
+          id: "alice-session",
+          title: "Alice transcript",
+          selected_program_id: "cs_2022",
+          selected_file_ids: [],
+        },
+      ],
+    },
+    serverMessagesByUser: {
+      [users.alice.id]: {
+        "alice-session": [],
+      },
+    },
+  };
+  await setupApiMock(page, state);
+
+  await page.goto("/");
+  await expect(page.getByText("Alice transcript")).toBeVisible();
+  await expect(page.getByText("transcript.pdf")).toBeVisible();
+  await expect.poll(() => state.chatSessionsGetCount, { timeout: 5_000 }).toBeGreaterThanOrEqual(2);
+
+  await page.locator(".file-chip", { hasText: "transcript.pdf" }).click();
+  await expect(page.locator(".file-chip.selected", { hasText: "transcript.pdf" })).toBeVisible();
+
+  await page.waitForTimeout(state.delayChatSessionsMs + 150);
+  await expect(page.locator(".file-chip.selected", { hasText: "transcript.pdf" })).toBeVisible();
+
+  const query = "lieu voi so tin chi con lai toi co the len bang gioi khong";
+  await page.locator("textarea").fill(query);
+  await page.locator(".input-row .icon-btn").last().click();
+
+  await expect.poll(() => state.askRequests.length, { timeout: 5_000 }).toBe(1);
+  expect(state.askRequests[0].file_ids).toEqual(["transcript.pdf"]);
+  expect(state.serverSessionsByUser[users.alice.id][0].selected_file_ids).toEqual(["transcript.pdf"]);
+});
+
+test("first question names placeholder session and keeps session actions visible", async ({ page }) => {
+  const query = "toi con bao nhieu tin chi la co the tot nghiep voi chuong trinh khoa hoc may tinh";
+  const expectedTitle = `${query.slice(0, 77).trimEnd()}...`;
+  const state = {
+    authenticated: true,
+    user: users.alice,
+    migrationRequests: [],
+    askRequests: [],
+    serverSessionsByUser: {
+      [users.alice.id]: [
+        {
+          id: "new-session",
+          title: "Phien 6",
+          selected_program_id: "cs_2022",
+          selected_file_ids: ["transcript.pdf"],
+        },
+      ],
+    },
+    serverMessagesByUser: {
+      [users.alice.id]: {
+        "new-session": [],
+      },
+    },
+  };
+  await setupApiMock(page, state);
+
+  await page.goto("/");
+  await expect(page.getByText("Phien 6")).toBeVisible();
+
+  await page.locator("textarea").fill(query);
+  await page.locator(".input-row .icon-btn").last().click();
+
+  await expect.poll(() => state.askRequests.length, { timeout: 5_000 }).toBe(1);
+  await expect(page.locator(".chat-session-item").filter({ hasText: expectedTitle })).toBeVisible();
+  expect(state.serverSessionsByUser[users.alice.id][0].title).toBe(expectedTitle);
+
+  const item = page.locator(".chat-session-item").filter({ hasText: expectedTitle }).first();
+  const actions = item.locator(".session-action-btn");
+  await expect(actions).toHaveCount(2);
+  const itemBox = await item.boundingBox();
+  const deleteBox = await actions.nth(1).boundingBox();
+  expect(itemBox).not.toBeNull();
+  expect(deleteBox).not.toBeNull();
+  expect(deleteBox.x + deleteBox.width).toBeLessThanOrEqual(itemBox.x + itemBox.width + 1);
+
+  await actions.nth(1).click();
+  await expect(page.locator(".chat-session-item").filter({ hasText: expectedTitle })).toHaveCount(0);
 });
 
 test("legacy browser chat is migrated into the authenticated account once", async ({ page }) => {

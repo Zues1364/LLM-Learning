@@ -129,6 +129,34 @@ def test_chat_sessions_and_messages_are_scoped_by_user(tmp_path):
     assert len(mem.list_chat_sessions("user-b")) == 1
 
 
+def test_placeholder_chat_title_is_replaced_by_first_question(tmp_path):
+    db_path = tmp_path / "mem.db"
+    mem = PersistentMemory(db_path=str(db_path), max_history=5)
+
+    mem.ensure_chat_session(
+        session_id="placeholder",
+        user_id="user-a",
+        title="Phien 6",
+        selected_program_id="cs_2022",
+    )
+    updated = mem.ensure_chat_session(
+        session_id="placeholder",
+        user_id="user-a",
+        title="toi con thieu mon nao",
+        selected_program_id="cs_2022",
+    )
+
+    mem.ensure_chat_session(session_id="custom", user_id="user-a", title="Custom title")
+    unchanged = mem.ensure_chat_session(
+        session_id="custom",
+        user_id="user-a",
+        title="new question",
+    )
+
+    assert updated["title"] == "toi con thieu mon nao"
+    assert unchanged["title"] == "Custom title"
+
+
 def test_migrate_legacy_history_to_chat_sessions_claims_raw_sessions(tmp_path):
     db_path = tmp_path / "mem.db"
     mem = PersistentMemory(db_path=str(db_path), max_history=5)

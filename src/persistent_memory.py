@@ -1,6 +1,8 @@
 ﻿import json
 import logging
+import re
 import sqlite3
+import unicodedata
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -23,6 +25,22 @@ class PersistentMemory:
         if not uid:
             return sid
         return f"user:{uid}:session:{sid}"
+
+    @staticmethod
+    def _normalize_title_key(value: Any) -> str:
+        text = unicodedata.normalize("NFD", str(value or "").strip().lower())
+        text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+        text = text.replace("đ", "d")
+        return re.sub(r"\s+", " ", text).strip()
+
+    @staticmethod
+    def _is_placeholder_chat_title(value: Any) -> bool:
+        normalized = PersistentMemory._normalize_title_key(value)
+        return (
+            not normalized
+            or normalized in {"phien moi", "phien cu"}
+            or re.fullmatch(r"phien \d+", normalized) is not None
+        )
 
     def _init_db(self):
         try:
@@ -275,7 +293,11 @@ class PersistentMemory:
                     )
                 else:
                     existing_title = str(existing["title"] or "").strip()
-                    update_title = existing_title if existing_title and existing_title != "Phiên mới" else title_value
+                    update_title = (
+                        existing_title
+                        if existing_title and not self._is_placeholder_chat_title(existing_title)
+                        else title_value
+                    )
                     update_program = selected_program_value or existing["selected_program_id"]
                     update_files = selected_files_json if selected_file_ids is not None else existing["selected_file_ids_json"]
                     conn.execute(

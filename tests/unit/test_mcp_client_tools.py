@@ -24,7 +24,7 @@ class DummyResponse:
 def test_mcp_client_discover_calls_correct_url(monkeypatch):
     called = {}
 
-    def fake_get(url):
+    def fake_get(url, **kwargs):
         called["url"] = url
         return DummyResponse({"tools": ["a", "b"]})
 
@@ -40,7 +40,7 @@ def test_mcp_client_discover_calls_correct_url(monkeypatch):
 def test_mcp_client_invoke_posts_payload(monkeypatch):
     captured = {}
 
-    def fake_post(url, json=None):
+    def fake_post(url, json=None, **kwargs):
         captured["url"] = url
         captured["json"] = json
         return DummyResponse({"result": "ok"})
@@ -56,7 +56,7 @@ def test_mcp_client_invoke_posts_payload(monkeypatch):
 
 
 def test_mcp_client_invoke_raises_on_http_error(monkeypatch):
-    def fake_post(url, json=None):
+    def fake_post(url, json=None, **kwargs):
         return DummyResponse({"result": "fail"}, status=500)
 
     monkeypatch.setattr(client_mod.requests, "post", fake_post)

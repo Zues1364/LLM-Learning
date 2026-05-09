@@ -156,13 +156,41 @@ body {
   font-size: 14px;
   color: var(--text-secondary);
   cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   transition: all var(--duration-fast) var(--ease-out);
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.history-item:not(.chat-session-item) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-session-item {
+  overflow: visible;
+}
+
+.history-item-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.session-action-btn {
+  padding: 6px;
+  font-size: 14px;
+  border-radius: 8px;
 }
 
 .history-item:hover {

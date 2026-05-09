@@ -1,5 +1,7 @@
 import json
 import logging
+import re
+import unicodedata
 from typing import Any, Dict, List, Optional
 
 from conversation_state import default_conversation_state
@@ -28,6 +30,24 @@ class PostgresPersistentMemory:
         if not uid:
             return sid
         return f"user:{uid}:session:{sid}"
+
+    @staticmethod
+    def _normalize_title_key(value: Any) -> str:
+        text = unicodedata.normalize("NFD", str(value or "").strip().lower())
+        text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+        text = text.replace("đ", "d")
+        return re.sub(r"\s+", " ", text).strip()
+
+    @staticmethod
+    def _is_placeholder_chat_title(value: Any) -> bool:
+        raw = str(value or "").strip().lower()
+        normalized = PostgresPersistentMemory._normalize_title_key(value)
+        return (
+            not normalized
+            or raw in {"phiãªn má»›i", "phiãªn cå©"}
+            or normalized in {"phien moi", "phien cu"}
+            or re.fullmatch(r"phien \d+", normalized) is not None
+        )
 
     @staticmethod
     def _json_list(values: Optional[List[str]]) -> str:
@@ -281,7 +301,11 @@ class PostgresPersistentMemory:
                         "archived_at": existing[8],
                     }
                     existing_title = str(existing_row["title"] or "").strip()
-                    update_title = existing_title if existing_title and existing_title != "Phiên mới" else title_value
+                    update_title = (
+                        existing_title
+                        if existing_title and not self._is_placeholder_chat_title(existing_title)
+                        else title_value
+                    )
                     update_program = selected_program_value or existing_row["selected_program_id"]
                     update_files = selected_files_json if selected_file_ids is not None else existing_row["selected_file_ids_json"]
                     cur.execute(
