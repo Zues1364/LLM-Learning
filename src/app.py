@@ -61,6 +61,8 @@ from storage_runtime import (
     build_resource_key,
     build_transcript_key,
     delete_blob_key,
+    get_blob_store,
+    local_path_from_key,
     sync_blob_to_local,
     upload_local_file_to_blob,
 )
@@ -1852,6 +1854,10 @@ def _extract_subject_hints(query: str) -> List[str]:
             "co nam trong",
             "cua toi",
             "cua em",
+            "bao nhieu",
+            "tin chi",
+            "con thieu",
+            "thieu mon",
             "co mo khong",
             "mo khong",
             "ky nay co mo",
@@ -1894,6 +1900,27 @@ def _extract_subject_hints(query: str) -> List[str]:
             )
             for part in parts:
                 _append_chunk(part)
+
+    if not cleaned:
+        followup_match = re.search(r"^(?:the\s+con|vay\s+con|con)\s+(.+)$", text, flags=re.IGNORECASE)
+        if followup_match:
+            followup_candidate = followup_match.group(1).strip()
+            followup_norm = normalize_for_match(followup_candidate)
+            blocked_followup_markers = (
+                "bao nhieu",
+                "tin chi",
+                "con thieu",
+                "thieu",
+                "mon nao",
+                "nhung mon",
+                "cac mon",
+                "khong",
+                "gi",
+            )
+            if followup_norm and not any(
+                re.search(rf"\b{re.escape(marker)}\b", followup_norm) for marker in blocked_followup_markers
+            ):
+                _append_chunk(followup_candidate)
 
     if not cleaned:
         fallback = _extract_subject_hint(text)
@@ -2713,6 +2740,7 @@ def _structured_intent_classifier(query: str) -> Dict[str, Any]:
     has_course_marker = any(marker in norm for marker in ("mon ", "hoc phan", "ma mon", "mon nay", "lop nay"))
     has_teacher_name = _extract_teacher_name_hint(query or "") is not None
     has_course_code = bool(re.search(r"\b[a-z]{2,4}\d{3,4}[a-z]?\b", norm))
+    has_followup_subject_marker = bool(re.match(r"^(?:the\s+con|vay\s+con|con)\s+", norm))
     has_subject_hint = bool(subject_hints)
     has_correction_marker = "khong phai" in norm and "ma la" in norm
     has_elective_marker = any(
@@ -2784,6 +2812,8 @@ def _structured_intent_classifier(query: str) -> Dict[str, Any]:
         signals.append("teacher_name")
     if has_correction_marker:
         signals.append("correction_marker")
+    if has_followup_subject_marker:
+        signals.append("followup_subject_marker")
     if has_elective_marker:
         signals.append("elective_marker")
     if has_opening_marker:
@@ -2825,6 +2855,8 @@ def _structured_intent_classifier(query: str) -> Dict[str, Any]:
     if has_schedule_marker and (has_course_marker or has_course_code or has_class_marker or has_subject_hint):
         confidence = 0.84 if has_teacher_marker else 0.78
         return {"intent": "course_schedule", "confidence": confidence, "signals": signals}
+    if has_followup_subject_marker and subject_hint_specific and not has_teacher_marker and not asks_list_marker:
+        return {"intent": "course_schedule", "confidence": 0.78, "signals": signals}
     if has_teacher_marker and (has_course_marker or has_course_code or has_subject_hint):
         return {"intent": "teacher_by_subject", "confidence": 0.82, "signals": signals}
     if has_correction_marker and (has_course_marker or has_course_code or has_subject_hint):
@@ -4767,6 +4799,58 @@ def _sync_transcript_file_to_blob(local_path: Path, session_id: Optional[str] = 
     upload_local_file_to_blob(local_path, object_key, content_type="application/pdf")
 
 
+def _sync_transcript_blobs_to_local(session_id: Optional[str] = None) -> None:
+    if not blob_mode_enabled():
+        return
+    prefixes = ["sessions/global/pdfs/"]
+    safe_session = _normalize_session_id(session_id) if session_id else None
+    if safe_session and safe_session != "global":
+        prefixes.append(f"sessions/{safe_session}/pdfs/")
+    try:
+        store = get_blob_store()
+        for prefix in prefixes:
+            for obj in store.list_objects(prefix):
+                key = str(getattr(obj, "key", "") or "").strip()
+                if not key.lower().endswith(".pdf"):
+                    continue
+                local_path = local_path_from_key(key)
+                if local_path.exists():
+                    continue
+                local_path.parent.mkdir(parents=True, exist_ok=True)
+                store.download_to_path(key, local_path)
+    except Exception as exc:
+        logger.warning("Khong sync duoc transcript blobs cho session=%s: %s", session_id, exc)
+
+
+def _list_transcript_files(session_id: Optional[str] = None) -> List[Dict[str, str]]:
+    _sync_transcript_blobs_to_local(session_id=session_id)
+    items: Dict[str, Dict[str, str]] = {}
+
+    def _add_file(path: Path, original_name: Optional[str] = None) -> None:
+        if not path.name.lower().endswith(".pdf"):
+            return
+        file_id = path.name
+        items[file_id] = {
+            "file_id": file_id,
+            "file_name": str(original_name or file_meta.get(file_id) or file_id),
+        }
+
+    for fid in sorted(loaded_file_ids):
+        _add_file(PDF_DIR / fid, file_meta.get(fid, fid))
+    if PDF_DIR.exists():
+        for pdf_path in sorted(PDF_DIR.glob("*.pdf")):
+            _add_file(pdf_path)
+
+    safe_session = _normalize_session_id(session_id) if session_id else None
+    if safe_session:
+        session_pdf_dir = DATA_DIR / "sessions" / safe_session / "pdfs"
+        if session_pdf_dir.exists():
+            for pdf_path in sorted(session_pdf_dir.glob("*.pdf")):
+                _add_file(pdf_path)
+
+    return list(items.values())
+
+
 def _save_resource_batch(
     files: List[UploadFile],
     target_dir: Path,
@@ -5362,9 +5446,15 @@ async def reject_mail_candidate(candidate_id: str, req: MailCandidateActionReque
 
 
 @app.post("/upload_pdf")
-async def upload_pdf(file: UploadFile = File(...)):
+async def upload_pdf(
+    request: Request,
+    file: UploadFile = File(...),
+    session_id: Optional[str] = Form(default=None),
+):
     global last_file_id, last_uploaded_file_ids
     try:
+        normalized_session = _normalize_session_id(session_id) if session_id else None
+        user_id = _current_user_id_from_request(request)
         original_name = _validate_upload_file(file, {".pdf"}, {"application/pdf"})
         stem = Path(original_name).stem
         ext = Path(original_name).suffix or ".pdf"
@@ -5372,12 +5462,16 @@ async def upload_pdf(file: UploadFile = File(...)):
         dest_path = PDF_DIR / file_id
 
         _copy_upload_to_path(file, dest_path, MAX_TRANSCRIPT_UPLOAD_BYTES)
-        _sync_transcript_file_to_blob(dest_path)
+        _sync_transcript_file_to_blob(dest_path, session_id=normalized_session)
         logger.info("Da luu PDF %s, se xu ly khi truy van dau tien", file_id)
 
         file_meta[file_id] = original_name
         loaded_file_ids.add(file_id)
+        last_file_id = file_id
         last_uploaded_file_ids = [file_id]
+        if normalized_session:
+            existing_ids = _load_session_files(normalized_session, user_id=user_id)
+            _save_session_files(normalized_session, existing_ids + [file_id], user_id=user_id)
 
         return {"message": "PDF da duoc xu ly thanh cong", "file_id": file_id, "file_name": original_name}
     except HTTPException:
@@ -5388,16 +5482,23 @@ async def upload_pdf(file: UploadFile = File(...)):
 
 
 @app.get("/files")
-def list_files():
-    return [{"file_id": fid, "file_name": file_meta.get(fid, fid)} for fid in loaded_file_ids]
+def list_files(request: Request, session_id: Optional[str] = Query(default=None)):
+    normalized_session = _normalize_session_id(session_id) if session_id else None
+    return _list_transcript_files(session_id=normalized_session)
 
 
 @app.post("/upload_pdfs")
-async def upload_multiple_pdfs(files: List[UploadFile] = File(...)):
+async def upload_multiple_pdfs(
+    request: Request,
+    files: List[UploadFile] = File(...),
+    session_id: Optional[str] = Form(default=None),
+):
     global last_file_id, last_uploaded_file_ids
     if not files:
         raise HTTPException(status_code=400, detail="Chua chon file PDF")
     _validate_batch_size(files)
+    normalized_session = _normalize_session_id(session_id) if session_id else None
+    user_id = _current_user_id_from_request(request)
 
     results = []
     errors = []
@@ -5409,7 +5510,7 @@ async def upload_multiple_pdfs(files: List[UploadFile] = File(...)):
         file_id_local = f"{stem}_{uuid4().hex[:8]}{ext}"
         dest_path = PDF_DIR / file_id_local
         _copy_upload_to_path(upload_file, dest_path, MAX_TRANSCRIPT_UPLOAD_BYTES)
-        _sync_transcript_file_to_blob(dest_path)
+        _sync_transcript_file_to_blob(dest_path, session_id=normalized_session)
         logger.info("Da luu PDF %s, se xu ly khi truy van dau tien", file_id_local)
         return file_id_local, original_name
 
@@ -5430,6 +5531,9 @@ async def upload_multiple_pdfs(files: List[UploadFile] = File(...)):
         raise HTTPException(status_code=status_code, detail="; ".join(errors))
     if results:
         last_uploaded_file_ids = [item["file_id"] for item in results]
+        if normalized_session:
+            existing_ids = _load_session_files(normalized_session, user_id=user_id)
+            _save_session_files(normalized_session, existing_ids + last_uploaded_file_ids, user_id=user_id)
 
     return {"uploaded": results, "errors": errors}
 

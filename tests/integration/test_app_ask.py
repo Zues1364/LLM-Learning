@@ -3034,6 +3034,45 @@ def test_structured_intent_classifier_detects_time_slot_definition_query():
     assert app_mod._query_prefers_global_resource_retrieval("ca 1 bắt đầu từ mấy giờ và kết thúc lúc mấy giờ") is True
 
 
+def test_structured_intent_classifier_detects_followup_subject_schedule_query():
+    app_mod = importlib.reload(importlib.import_module("app"))
+    route = app_mod._structured_intent_classifier("thế còn thị giác máy tính")
+    assert route["intent"] == "course_schedule"
+    assert float(route["confidence"]) >= 0.75
+    assert app_mod._extract_subject_hints("thế còn thị giác máy tính") == ["thi giac may tinh"]
+
+
+def test_structured_route_unresolved_schedule_falls_back_to_retrieve(monkeypatch):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    invoke_log: list[str] = []
+
+    def fake_invoke(tool, args):
+        invoke_log.append(tool)
+        if tool == "get_curriculum_lookup":
+            return {"groups": {}}
+        if tool == "resolve_course_alias":
+            return {"matched_subject": None, "confidence": 0.0}
+        if tool == "retrieve_chunks":
+            return ["[TKB.pdf - Chunk 1] INT3412E 1: Thứ 3, Ca 2, phòng 209-T"]
+        return {}
+
+    monkeypatch.setattr(app_mod.mcp_client, "invoke", fake_invoke)
+
+    payload = app_mod._build_structured_route_payload(
+        query="thế còn thị giác máy tính",
+        session_id="s_followup_unresolved",
+        program_id="cs_2022",
+        intent="course_schedule",
+        confidence=0.78,
+        memory_context="",
+    )
+
+    assert payload is not None
+    assert payload.get("source") == "vector_store"
+    assert "retrieve_chunks" in invoke_log
+    assert "INT3412E" in str(payload.get("context") or "")
+
+
 def test_build_structured_route_payload_uses_time_slot_lookup_tool(monkeypatch):
     app_mod = importlib.reload(importlib.import_module("app"))
     invoke_calls: list[tuple[str, dict]] = []

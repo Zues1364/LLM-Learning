@@ -644,20 +644,41 @@ def test_query_needs_schedule_context_for_gpa_and_missing_credits():
     assert server._query_needs_schedule_context("tôi còn thiếu bao nhiêu tín chỉ")
 
 
-def test_sync_schedule_scope_from_blob_loads_global_and_session(monkeypatch, tmp_path):
-    calls = []
+def test_sync_schedule_scope_from_blob_downloads_only_schedule_pdfs(monkeypatch, tmp_path):
+    class Blob:
+        def __init__(self, key, size=10):
+            self.key = key
+            self.size = size
 
-    def fake_scope_dirs(session_id=None, user_id=None):
-        calls.append({"session_id": session_id, "user_id": user_id})
-        return tmp_path / "pdfs", tmp_path / "html", tmp_path / "config.json"
+    class DummyStore:
+        def __init__(self):
+            self.downloaded = []
 
-    monkeypatch.setattr(server.resource_loader, "_scope_dirs", fake_scope_dirs)
+        def list_objects(self, prefix):
+            if prefix == "resources/global/pdf/":
+                return [
+                    Blob("resources/global/pdf/PHU_LUC_TKB.pdf"),
+                    Blob("resources/global/pdf/SO_TAY_HOC_VU.pdf"),
+                    Blob("resources/global/html/CTDT.html"),
+                ]
+            if prefix == "resources/s_schedule/pdf/":
+                return [Blob("resources/s_schedule/pdf/Signed_CV_TKB.pdf")]
+            return []
+
+        def download_to_path(self, key, target_path):
+            self.downloaded.append(key)
+            target_path.write_bytes(b"schedule")
+
+    store = DummyStore()
+    monkeypatch.setattr(server, "blob_mode_enabled", lambda: True)
+    monkeypatch.setattr(server, "get_blob_store", lambda: store)
+    monkeypatch.setattr(server, "local_path_from_key", lambda key: tmp_path / key.replace("/", "_"))
 
     server._sync_schedule_scope_from_blob(session_id="s_schedule", user_id=None)
 
-    assert calls == [
-        {"session_id": None, "user_id": None},
-        {"session_id": "s_schedule", "user_id": None},
+    assert store.downloaded == [
+        "resources/global/pdf/PHU_LUC_TKB.pdf",
+        "resources/s_schedule/pdf/Signed_CV_TKB.pdf",
     ]
 
 

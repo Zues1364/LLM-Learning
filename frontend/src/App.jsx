@@ -506,18 +506,20 @@ const buildBrowserChatMigrationSessions = (currentState) => {
 };
 
 // API helpers
-async function uploadPdf(file) {
+async function uploadPdf(file, sessionId) {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(`${API_BASE}/upload_pdf`, { method: "POST", body: form });
+  if (sessionId) form.append("session_id", sessionId);
+  const res = await fetch(`${API_BASE}/upload_pdf`, { method: "POST", credentials: "include", body: form });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
-async function uploadPdfs(files) {
+async function uploadPdfs(files, sessionId) {
   const form = new FormData();
   files.forEach((f) => form.append("files", f));
-  const res = await fetch(`${API_BASE}/upload_pdfs`, { method: "POST", body: form });
+  if (sessionId) form.append("session_id", sessionId);
+  const res = await fetch(`${API_BASE}/upload_pdfs`, { method: "POST", credentials: "include", body: form });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -547,8 +549,10 @@ async function fetchHistory(sessionId) {
   return res.json();
 }
 
-async function fetchFiles() {
-  const res = await fetch(`${API_BASE}/files`);
+async function fetchFiles(sessionId) {
+  const url = new URL(`${API_BASE}/files`);
+  if (sessionId) url.searchParams.set("session_id", sessionId);
+  const res = await fetch(url.toString(), { credentials: "include" });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -583,6 +587,28 @@ const normalizeChatMessage = (item) => {
     text: String(item?.content || ""),
     citations: Array.isArray(item?.citations) ? item.citations : [],
   };
+};
+
+const normalizeUploadedFileItem = (item) => {
+  const fileId = String(item?.file_id || "").trim();
+  if (!fileId) return null;
+  return {
+    file_id: fileId,
+    file_name: String(item?.file_name || item?.name || fileId).trim() || fileId,
+  };
+};
+
+const mergeFileLists = (...lists) => {
+  const byId = new Map();
+  lists.flat().forEach((item) => {
+    const normalized = normalizeUploadedFileItem(item);
+    if (!normalized) return;
+    const existing = byId.get(normalized.file_id);
+    if (!existing || existing.file_name === normalized.file_id) {
+      byId.set(normalized.file_id, normalized);
+    }
+  });
+  return Array.from(byId.values());
 };
 
 async function fetchChatSessions() {
@@ -865,6 +891,9 @@ export default function App() {
   const [pendingProgramBySession, setPendingProgramBySession] = useState(() => {
     return initialGuestChatState.pendingProgramBySession;
   });
+  const selectedProgramBySessionRef = useRef(selectedProgramBySession);
+  const pendingProgramBySessionRef = useRef(pendingProgramBySession);
+  const selectedFilesBySessionRef = useRef(selectedFilesBySession);
 
   const fileInputRef = useRef(null);
   const resourceUploadInputRef = useRef(null);
@@ -879,13 +908,40 @@ export default function App() {
 
   const currentMessages = messagesBySession[currentSession] || [];
   const selectedFileIds = selectedFilesBySession[currentSession] || [];
-  const selectedNames = files.filter((f) => selectedFileIds.includes(f.file_id)).map((f) => f.file_name);
-  const visibleFiles = files;
+  const fileNameById = useMemo(() => {
+    const map = new Map();
+    files.forEach((file) => {
+      if (file?.file_id) map.set(file.file_id, file.file_name || file.file_id);
+    });
+    return map;
+  }, [files]);
+  const selectedNames = selectedFileIds.map((id) => fileNameById.get(id) || id);
+  const visibleFiles = useMemo(
+    () =>
+      mergeFileLists(
+        files,
+        selectedFileIds.map((id) => ({ file_id: id, file_name: fileNameById.get(id) || id }))
+      ),
+    [fileNameById, files, selectedFileIds]
+  );
   const currentSelectedProgramId = selectedProgramBySession[currentSession] || "";
   const currentPendingProgramId =
     pendingProgramBySession[currentSession] || currentSelectedProgramId || "";
   const currentProgramDisplayName =
     programs.find((p) => p.id === currentSelectedProgramId)?.display_name || currentSelectedProgramId || "";
+
+  useEffect(() => {
+    selectedProgramBySessionRef.current = selectedProgramBySession;
+  }, [selectedProgramBySession]);
+
+  useEffect(() => {
+    pendingProgramBySessionRef.current = pendingProgramBySession;
+  }, [pendingProgramBySession]);
+
+  useEffect(() => {
+    selectedFilesBySessionRef.current = selectedFilesBySession;
+  }, [selectedFilesBySession]);
+
   const mailConnected = Boolean(mailStatus?.connected);
   const isGoogleSignedIn = Boolean(authState?.authenticated);
   const canManageMail = isGoogleSignedIn;
@@ -943,13 +999,17 @@ export default function App() {
   }, [programs]);
 
   const updateSelectedFiles = useCallback((sessionId, updater, options = {}) => {
-    const existing = selectedFilesBySession[sessionId] || [];
+    const existing = selectedFilesBySessionRef.current[sessionId] || [];
     const nextRaw = typeof updater === "function" ? updater(existing) : updater;
     const nextIds = normalizeFileIds(nextRaw);
+    selectedFilesBySessionRef.current = { ...selectedFilesBySessionRef.current, [sessionId]: nextIds };
     setSelectedFilesBySession((prev) => ({ ...prev, [sessionId]: nextIds }));
 
     if (options.persist && authState.authenticated) {
-      const programId = selectedProgramBySession[sessionId] || pendingProgramBySession[sessionId] || null;
+      const programId =
+        selectedProgramBySessionRef.current[sessionId] ||
+        pendingProgramBySessionRef.current[sessionId] ||
+        null;
       updateChatSessionApi(sessionId, {
         selected_program_id: programId,
         selected_file_ids: nextIds,
@@ -958,30 +1018,19 @@ export default function App() {
   }, [
     authState.authenticated,
     normalizeFileIds,
-    pendingProgramBySession,
-    selectedFilesBySession,
-    selectedProgramBySession,
   ]);
 
   const handleSelectAllFiles = () => updateSelectedFiles(currentSession, files.map((f) => f.file_id), { persist: true });
 
-  const refreshFiles = useCallback(async () => {
+  const refreshFiles = useCallback(async (sessionId = currentSession) => {
     try {
-      const data = await fetchFiles();
-      filesRef.current = data;
-      setFiles(data);
-      const validIds = new Set(data.map((f) => f.file_id));
-      setSelectedFilesBySession((prev) => {
-        const next = {};
-        Object.entries(prev || {}).forEach(([sessionId, ids]) => {
-          next[sessionId] = (ids || []).filter((id) => validIds.has(id));
-        });
-        return next;
-      });
+      const data = await fetchFiles(sessionId);
+      filesRef.current = mergeFileLists(filesRef.current, data);
+      setFiles((prev) => mergeFileLists(prev, data));
     } catch (err) {
       console.error("Fetch files failed", err);
     }
-  }, []);
+  }, [currentSession]);
 
   const refreshResources = useCallback(async (sessionId = currentSession) => {
     try {
@@ -1047,6 +1096,9 @@ export default function App() {
     setSessions(nextState.sessions);
     setCurrentSession(nextState.currentSession);
     setMessagesBySession(nextState.messagesBySession);
+    selectedFilesBySessionRef.current = nextState.selectedFilesBySession;
+    selectedProgramBySessionRef.current = nextState.selectedProgramBySession;
+    pendingProgramBySessionRef.current = nextState.pendingProgramBySession;
     setSelectedFilesBySession(nextState.selectedFilesBySession);
     setSelectedProgramBySession(nextState.selectedProgramBySession);
     setPendingProgramBySession(nextState.pendingProgramBySession);
@@ -1114,6 +1166,9 @@ export default function App() {
         const shouldKeepLocalTitle = localTitle && !isPlaceholderSessionTitle(localTitle) && isPlaceholderSessionTitle(title);
         return { id, title: shouldKeepLocalTitle ? localTitle : title };
       }));
+      const localSelectedPrograms = selectedProgramBySessionRef.current || {};
+      const localPendingPrograms = pendingProgramBySessionRef.current || {};
+      const localSelectedFiles = selectedFilesBySessionRef.current || {};
       const serverSelectedPrograms = {};
       serverSessions.forEach((session) => {
         if (session.selected_program_id) serverSelectedPrograms[session.id] = session.selected_program_id;
@@ -1121,35 +1176,58 @@ export default function App() {
       setSelectedProgramBySession(() => {
         const next = {};
         serverSessions.forEach((session) => {
-          if (session.selected_program_id) next[session.id] = session.selected_program_id;
+          const serverProgramId = serverSelectedPrograms[session.id] || "";
+          const localPending = localPendingPrograms[session.id] || "";
+          const localSelected = localSelectedPrograms[session.id] || "";
+          const chosen =
+            localPending && localPending !== serverProgramId
+              ? localPending
+              : serverProgramId || localSelected;
+          if (chosen) next[session.id] = chosen;
         });
+        selectedProgramBySessionRef.current = next;
         return next;
       });
-      setPendingProgramBySession((prev) => {
+      setPendingProgramBySession(() => {
         const next = {};
         serverSessions.forEach((session) => {
           const serverProgramId = serverSelectedPrograms[session.id] || "";
-          const previousPending = prev[session.id] || "";
-          if (previousPending && previousPending !== serverProgramId) {
-            next[session.id] = previousPending;
+          const localPending = localPendingPrograms[session.id] || "";
+          const localSelected = localSelectedPrograms[session.id] || "";
+          if (localPending && localPending !== serverProgramId) {
+            next[session.id] = localPending;
           } else if (serverProgramId) {
             next[session.id] = serverProgramId;
+          } else if (localSelected) {
+            next[session.id] = localSelected;
           }
         });
+        pendingProgramBySessionRef.current = next;
         return next;
       });
-      setSelectedFilesBySession((prev) => {
+      setSelectedFilesBySession(() => {
         const next = {};
         serverSessions.forEach((session) => {
-          const hasLocalSelection = Object.prototype.hasOwnProperty.call(prev || {}, session.id);
-          const localFileIds = normalizeFileIds(prev?.[session.id] || []);
-          if (hasLocalSelection) {
+          const localFileIds = normalizeFileIds(localSelectedFiles[session.id] || []);
+          const serverFileIds = normalizeFileIds(session.selected_file_ids || []);
+          if (localFileIds.length) {
             next[session.id] = localFileIds;
-          } else if (session.selected_file_ids.length) {
-            next[session.id] = normalizeFileIds(session.selected_file_ids);
+          } else if (serverFileIds.length) {
+            next[session.id] = serverFileIds;
           }
         });
+        selectedFilesBySessionRef.current = next;
         return next;
+      });
+      setFiles((prev) => {
+        const selectedFilePlaceholders = [];
+        serverSessions.forEach((session) => {
+          const ids = localSelectedFiles[session.id]?.length
+            ? localSelectedFiles[session.id]
+            : session.selected_file_ids || [];
+          ids.forEach((id) => selectedFilePlaceholders.push({ file_id: id, file_name: id }));
+        });
+        return mergeFileLists(prev, selectedFilePlaceholders);
       });
       setMessagesBySession((prev) => {
         const next = {};
@@ -1402,10 +1480,15 @@ export default function App() {
     setSessions((prev) => [...prev, { id: newId, title: newTitle }]);
     setCurrentSession(newId);
     setMessagesBySession((prev) => ({ ...prev, [newId]: [] }));
+    selectedFilesBySessionRef.current = { ...selectedFilesBySessionRef.current, [newId]: [] };
     setSelectedFilesBySession((prev) => ({ ...prev, [newId]: [] }));
+    if (inheritedProgramId) {
+      selectedProgramBySessionRef.current = { ...selectedProgramBySessionRef.current, [newId]: inheritedProgramId };
+    }
     setSelectedProgramBySession((prev) => (
       inheritedProgramId ? { ...prev, [newId]: inheritedProgramId } : prev
     ));
+    pendingProgramBySessionRef.current = { ...pendingProgramBySessionRef.current, [newId]: inheritedProgramId };
     setPendingProgramBySession((prev) => ({ ...prev, [newId]: inheritedProgramId }));
     setHistoryList([]);
     setUploadedFile(null);
@@ -1453,16 +1536,22 @@ export default function App() {
       delete next[sessionId];
       return Object.keys(next).length ? next : { [initialSessionId]: [] };
     });
+    selectedProgramBySessionRef.current = { ...selectedProgramBySessionRef.current };
+    delete selectedProgramBySessionRef.current[sessionId];
     setSelectedProgramBySession((prev) => {
       const next = { ...prev };
       delete next[sessionId];
       return next;
     });
+    selectedFilesBySessionRef.current = { ...selectedFilesBySessionRef.current };
+    delete selectedFilesBySessionRef.current[sessionId];
     setSelectedFilesBySession((prev) => {
       const next = { ...prev };
       delete next[sessionId];
       return next;
     });
+    pendingProgramBySessionRef.current = { ...pendingProgramBySessionRef.current };
+    delete pendingProgramBySessionRef.current[sessionId];
     setPendingProgramBySession((prev) => {
       const next = { ...prev };
       delete next[sessionId];
@@ -1523,7 +1612,12 @@ export default function App() {
       setUploading(true);
       if (selected.length === 1) {
         const file = selected[0];
-        const resp = await uploadPdf(file);
+        const resp = await uploadPdf(file, sessionId);
+        const uploadedItem = normalizeUploadedFileItem(resp);
+        if (uploadedItem) {
+          filesRef.current = mergeFileLists(filesRef.current, [uploadedItem]);
+          setFiles((prev) => mergeFileLists(prev, [uploadedItem]));
+        }
         updateSelectedFiles(sessionId, (prev) => {
           const set = new Set(prev || []);
           set.add(resp.file_id);
@@ -1531,9 +1625,11 @@ export default function App() {
         }, { persist: true });
         setUploadedFile(file.name);
       } else {
-        const resp = await uploadPdfs(selected);
+        const resp = await uploadPdfs(selected, sessionId);
         const names = resp.uploaded?.map((f) => f.file_name).join(", ");
         const newIds = resp.uploaded?.map((f) => f.file_id).filter(Boolean) || [];
+        filesRef.current = mergeFileLists(filesRef.current, resp.uploaded || []);
+        setFiles((prev) => mergeFileLists(prev, resp.uploaded || []));
         setUploadedFile(names || `${selected.length} files`);
         updateSelectedFiles(sessionId, (prev) => {
           const set = new Set(prev || []);
@@ -1541,7 +1637,7 @@ export default function App() {
           return Array.from(set);
         }, { persist: true });
       }
-      await refreshFiles();
+      await refreshFiles(sessionId);
     } catch (err) {
       updateMessages(sessionId, (prev) => [...prev, { type: "system", text: `Loi upload: ${err.message}` }]);
     } finally {
@@ -1817,6 +1913,7 @@ export default function App() {
   };
 
   const handleProgramChange = (sessionId, programId) => {
+    pendingProgramBySessionRef.current = { ...pendingProgramBySessionRef.current, [sessionId]: programId };
     setPendingProgramBySession((prev) => ({ ...prev, [sessionId]: programId }));
   };
 
@@ -1832,6 +1929,8 @@ export default function App() {
       ]);
       return;
     }
+    selectedProgramBySessionRef.current = { ...selectedProgramBySessionRef.current, [currentSession]: selected };
+    pendingProgramBySessionRef.current = { ...pendingProgramBySessionRef.current, [currentSession]: selected };
     setSelectedProgramBySession((prev) => ({ ...prev, [currentSession]: selected }));
     setPendingProgramBySession((prev) => ({ ...prev, [currentSession]: selected }));
     if (authState.authenticated) {
@@ -1908,7 +2007,14 @@ export default function App() {
         const priorProgramId = selectedProgramId || pendingProgramBySession[sessionId] || "";
         const nextProgramId = validProgramIds.has(priorProgramId) ? priorProgramId : "";
         setPrograms(incomingPrograms);
+        pendingProgramBySessionRef.current = { ...pendingProgramBySessionRef.current, [sessionId]: nextProgramId };
         setPendingProgramBySession((prev) => ({ ...prev, [sessionId]: nextProgramId }));
+        selectedProgramBySessionRef.current = { ...selectedProgramBySessionRef.current };
+        if (nextProgramId) {
+          selectedProgramBySessionRef.current[sessionId] = nextProgramId;
+        } else {
+          delete selectedProgramBySessionRef.current[sessionId];
+        }
         setSelectedProgramBySession((prev) => {
           const next = { ...prev };
           if (nextProgramId) {
@@ -1932,6 +2038,8 @@ export default function App() {
 
       if (response?.selected_program_id) {
         const resolvedProgramId = response.selected_program_id;
+        selectedProgramBySessionRef.current = { ...selectedProgramBySessionRef.current, [sessionId]: resolvedProgramId };
+        pendingProgramBySessionRef.current = { ...pendingProgramBySessionRef.current, [sessionId]: resolvedProgramId };
         setSelectedProgramBySession((prev) => ({ ...prev, [sessionId]: resolvedProgramId }));
         setPendingProgramBySession((prev) => ({ ...prev, [sessionId]: resolvedProgramId }));
       }

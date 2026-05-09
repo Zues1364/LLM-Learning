@@ -169,7 +169,9 @@ body {
 }
 
 .chat-session-item {
-  overflow: visible;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  overflow: hidden;
 }
 
 .history-item-title {
@@ -185,11 +187,17 @@ body {
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+  justify-content: flex-end;
 }
 
 .session-action-btn {
-  padding: 6px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 8px;
 }
 

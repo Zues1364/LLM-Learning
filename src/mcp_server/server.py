@@ -417,12 +417,39 @@ def _schedule_scope_key(session_id: Optional[str], user_id: Optional[str] = None
 
 
 def _sync_schedule_scope_from_blob(session_id: Optional[str] = None, user_id: Optional[str] = None) -> None:
+    def _sync_pdf_prefix(prefix: str) -> int:
+        store = get_blob_store()
+        downloaded = 0
+        for obj in store.list_objects(prefix):
+            key = str(obj.key or "").strip()
+            if not key.lower().endswith(".pdf"):
+                continue
+            if not _looks_like_schedule_pdf(Path(key)):
+                continue
+            local_path = local_path_from_key(key)
+            if local_path.exists():
+                try:
+                    if int(getattr(obj, "size", 0) or 0) <= 0 or local_path.stat().st_size == int(obj.size or 0):
+                        continue
+                except Exception:
+                    pass
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            store.download_to_path(key, local_path)
+            downloaded += 1
+        return downloaded
+
+    if not blob_mode_enabled():
+        return
+
     try:
-        resource_loader._scope_dirs()
         safe_user = _normalize_user_id(user_id)
         safe_session = _normalize_session_id(session_id)
-        if safe_user or safe_session:
-            resource_loader._scope_dirs(session_id=safe_session, user_id=safe_user)
+        downloaded = _sync_pdf_prefix("resources/global/pdf/")
+        if safe_user:
+            downloaded += _sync_pdf_prefix(f"resources/users/{safe_user}/pdf/")
+        elif safe_session:
+            downloaded += _sync_pdf_prefix(f"resources/{safe_session}/pdf/")
+        logger.info("[schedule] Synced %s schedule PDF(s) from blob.", downloaded)
     except Exception as exc:
         logger.warning("[schedule] Failed to sync schedule resources from blob: %s", exc)
 
@@ -1086,7 +1113,7 @@ def startup_event():
 
     logger.info("MCP Server Startup: lazy vector store initialization enabled.")
 
-def _resolve_pdf_path(file_id: str) -> Path:
+def _resolve_pdf_path(file_id: str, session_id: Optional[str] = None) -> Path:
     """
     Resolve an incoming file_id to an actual PDF path.
     Accepts:
@@ -1098,18 +1125,21 @@ def _resolve_pdf_path(file_id: str) -> Path:
     if candidate.exists():
         return candidate
 
+    safe_session = _normalize_session_id(session_id)
     if blob_mode_enabled():
         try:
             store = get_blob_store()
-            possible_keys = [
-                build_transcript_key(file_id, session_id="global"),
-            ]
+            possible_keys = []
+            if safe_session:
+                possible_keys.append(build_transcript_key(file_id, session_id=safe_session))
+            possible_keys.append(build_transcript_key(file_id, session_id="global"))
             for key in possible_keys:
                 if store.exists(key):
-                    candidate.parent.mkdir(parents=True, exist_ok=True)
-                    store.download_to_path(key, candidate)
-                    if candidate.exists():
-                        return candidate
+                    local_target = local_path_from_key(key)
+                    local_target.parent.mkdir(parents=True, exist_ok=True)
+                    store.download_to_path(key, local_target)
+                    if local_target.exists():
+                        return local_target
         except Exception as blob_exc:
             logger.warning("Blob transcript fetch fallback failed for %s: %s", file_id, blob_exc)
 
@@ -1117,7 +1147,13 @@ def _resolve_pdf_path(file_id: str) -> Path:
     if needle.lower().endswith(".pdf"):
         needle = needle[:-4]
 
-    matches = [p for p in PDF_DIR.glob(f"*{needle}*.pdf")]
+    search_dirs = [PDF_DIR]
+    if safe_session:
+        search_dirs.append(DATA_DIR / "sessions" / safe_session / "pdfs")
+    matches: List[Path] = []
+    for folder in search_dirs:
+        if folder.exists():
+            matches.extend(folder.glob(f"*{needle}*.pdf"))
     if not matches:
         raise HTTPException(404, f"File_id khong ton tai: {file_id}")
     if len(matches) > 1:
@@ -1125,7 +1161,7 @@ def _resolve_pdf_path(file_id: str) -> Path:
     return matches[0]
 
 
-def _ensure_file_loaded(file_id: str) -> str:
+def _ensure_file_loaded(file_id: str, session_id: Optional[str] = None) -> str:
     """Lazy load a PDF into the shared FAISS store. Returns the resolved file_id."""
     global _embedder, _store
     _init_vector_store() # Ensure initialized
@@ -1138,7 +1174,7 @@ def _ensure_file_loaded(file_id: str) -> str:
     # But resource_loader uses self.loaded_resources. We should sync them?
     # Or just trust _store has it.
     
-    pdf_path = _resolve_pdf_path(file_id)
+    pdf_path = _resolve_pdf_path(file_id, session_id=session_id)
     resolved_id = pdf_path.name
     if resolved_id in _loaded_files:
         return resolved_id
@@ -1159,13 +1195,13 @@ def _ensure_file_loaded(file_id: str) -> str:
     return resolved_id
 
 
-def _ensure_transcript_file_available(file_id: str) -> Tuple[str, Path]:
+def _ensure_transcript_file_available(file_id: str, session_id: Optional[str] = None) -> Tuple[str, Path]:
     """
     Resolve/download a transcript PDF without indexing it into the vector store.
     Transcript analysis only needs extracted text; embedding these files can load a
     large model and exhaust small Railway containers.
     """
-    pdf_path = _resolve_pdf_path(file_id)
+    pdf_path = _resolve_pdf_path(file_id, session_id=session_id)
     return pdf_path.name, pdf_path
 
 
@@ -1267,7 +1303,7 @@ def _is_transcript_usable(payload: Dict[str, Any] | None) -> bool:
 
 
 @mcp_tool("analyze_transcript")
-def analyze_transcript(file_ids: str | List[str]) -> str:
+def analyze_transcript(file_ids: str | List[str], session_id: Optional[str] = None) -> str:
     """
     Trich xuat du lieu chi tiet tu bang diem sinh vien (PDF) bang Gemini.
     Parse theo hoc ky, tra ve JSON cau truc va chuan hoa diem.
@@ -1303,7 +1339,7 @@ def analyze_transcript(file_ids: str | List[str]) -> str:
         try:
             logger.info("Processing transcript file_id=%s", fid)
             try:
-                resolved_id, pdf_path = _ensure_transcript_file_available(fid)
+                resolved_id, pdf_path = _ensure_transcript_file_available(fid, session_id=session_id)
             except HTTPException:
                 logger.warning(f"File ID not found or invalid: {fid}. Skipping.")
                 continue
@@ -3562,6 +3598,35 @@ def _query_needs_schedule_context(query: str) -> bool:
     return _query_targets_elective_opened_not_taken(query) or any(marker in norm_query for marker in schedule_markers)
 
 
+def _query_requests_missing_schedule_plan(query: str) -> bool:
+    norm_query = normalize_for_match(query or "")
+    if not norm_query:
+        return False
+    has_plan_marker = any(
+        marker in norm_query
+        for marker in (
+            "lap lich",
+            "goi y lich",
+            "lich hoc",
+            "dang ky",
+            "nen hoc",
+            "hoc mon nao",
+        )
+    )
+    has_missing_marker = any(
+        marker in norm_query
+        for marker in (
+            "mon con thieu",
+            "con thieu",
+            "thieu mon",
+            "tin chi con lai",
+            "de tot nghiep",
+            "tot nghiep",
+        )
+    )
+    return has_plan_marker and has_missing_marker
+
+
 def _looks_like_transient_model_error(answer: str) -> bool:
     text = str(answer or "").strip()
     if not text:
@@ -4069,6 +4134,77 @@ def _render_gpa_feasibility_text(query: str, advisor_context: Dict[str, Any]) ->
     return "\n".join(lines).strip()
 
 
+def _render_missing_schedule_plan_text(advisor_context: Dict[str, Any]) -> str:
+    credit_summary = advisor_context.get("credit_summary") or {}
+    missing_subjects = advisor_context.get("missing_subjects") or {}
+    mandatory_missing = missing_subjects.get("mandatory_missing") or []
+    elective_credit_plan = missing_subjects.get("elective_credit_plan") or []
+    schedule_rows = advisor_context.get("schedule_table_rows")
+    if not isinstance(schedule_rows, list):
+        schedule_rows = []
+    schedule_source = str(advisor_context.get("schedule_source_file") or "").strip()
+
+    lines: List[str] = []
+    lines.append("1) Thiếu tín chỉ")
+    lines.append(f"- Tổng tín chỉ tích lũy trên bảng điểm: {int(credit_summary.get('transcript_total_credits') or 0)}")
+    lines.append(f"- Tổng tín chỉ được công nhận theo chương trình đào tạo: {int(credit_summary.get('curriculum_applicable_credits') or 0)}")
+    lines.append(f"- Tổng tín chỉ còn thiếu: {int(credit_summary.get('total_missing_credits') or 0)}")
+
+    if mandatory_missing:
+        lines.append("")
+        lines.append("2) Môn bắt buộc còn thiếu")
+        for subj in mandatory_missing[:12]:
+            code = subj.get("code")
+            name = _format_subject_name_vi_en(subj.get("name"))
+            credits = _coerce_int(subj.get("credits"))
+            lines.append(f"- {code} - {name} ({credits} tín chỉ)")
+
+    if elective_credit_plan:
+        lines.append("")
+        lines.append("3) Khối tự chọn còn thiếu")
+        for plan in elective_credit_plan[:8]:
+            block_name = str(plan.get("block_name") or "").strip()
+            missing_credits = _coerce_int(plan.get("missing_credits"))
+            selected_codes = ", ".join(str(code) for code in (plan.get("selected_codes") or []) if code)
+            if selected_codes:
+                lines.append(f"- {block_name}: thiếu {missing_credits} tín chỉ, có thể ưu tiên {selected_codes}.")
+            else:
+                lines.append(f"- {block_name}: thiếu {missing_credits} tín chỉ.")
+
+    lines.append("")
+    lines.append("4) Gợi ý lịch")
+    if schedule_rows:
+        lines.append("| Ngày học | Ca học | Tiết + Thời gian | Mã môn học | Tên môn học | Tín chỉ | Ghi chú về lớp |")
+        lines.append("|---|---|---|---|---|---:|---|")
+        for row in schedule_rows[:16]:
+            if not isinstance(row, dict):
+                continue
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        str(row.get("day") or ""),
+                        str(row.get("ca_hoc") or ""),
+                        str(row.get("period_time") or ""),
+                        str(row.get("subject_code") or ""),
+                        _format_subject_name_vi_en(row.get("subject_name")),
+                        str(_coerce_int(row.get("credits")) or ""),
+                        str(row.get("class_note") or ""),
+                    ]
+                )
+                + " |"
+            )
+        if schedule_source:
+            lines.append("")
+            lines.append(f"Nguồn TKB: {schedule_source}")
+    else:
+        lines.append("Chưa tìm thấy dòng lịch chi tiết cho các môn còn thiếu trong TKB hiện có.")
+        if schedule_source:
+            lines.append(f"Nguồn TKB đã kiểm tra: {schedule_source}")
+
+    return "\n".join(lines).strip()
+
+
 def _render_advisor_fallback_text(query: str, advisor_context: Dict[str, Any]) -> str:
     """
     Deterministic fallback text when advisor LLM is temporarily unavailable.
@@ -4228,7 +4364,12 @@ def consult_advisor(
     transcript_data: Dict[str, Any] | None = None
     logger.info(f"[consult_advisor] Calling analyze_transcript with ids={ids}")
     try:
-        transcript = analyze_transcript(ids)
+        try:
+            transcript = analyze_transcript(ids, session_id=session_id)
+        except TypeError as call_err:
+            if "session_id" not in str(call_err):
+                raise
+            transcript = analyze_transcript(ids)
         logger.info(f"[consult_advisor] analyze_transcript result length: {len(transcript)}")
         try:
             transcript_data = json.loads(transcript)
@@ -4846,6 +4987,8 @@ def consult_advisor(
         return _postprocess_advisor_answer_text(_render_elective_opened_not_taken_text(advisor_context))
     if _query_targets_gpa_feasibility(query) and gpa_projection:
         return _postprocess_advisor_answer_text(_render_gpa_feasibility_text(query, advisor_context))
+    if _query_requests_missing_schedule_plan(query):
+        return _postprocess_advisor_answer_text(_render_missing_schedule_plan_text(advisor_context))
 
     prompt = (
         "--- CONTEXT ---\n"
@@ -4929,7 +5072,12 @@ def retrieve_chunks(
     ids = [fid for fid in ids_input if fid]
     if ids:
         for fid in ids:
-            _ensure_file_loaded(fid)
+            try:
+                _ensure_file_loaded(fid, session_id=safe_session)
+            except TypeError as call_err:
+                if "session_id" not in str(call_err):
+                    raise
+                _ensure_file_loaded(fid)
         # Explicit file_ids should stay strict to avoid cross-program/global noise.
         # The caller can still pass multiple files when cross-file context is desired.
         strict_ids = list(dict.fromkeys(ids))
