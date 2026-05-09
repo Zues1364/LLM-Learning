@@ -574,13 +574,14 @@ def _pick_best_alias_candidate(candidates: List[Dict[str, Any]]) -> Optional[Dic
 
 def _looks_like_schedule_pdf(path: Path) -> bool:
     norm_name = normalize_for_match(path.name)
+    norm_words = re.sub(r"[_\-.]+", " ", norm_name)
     if "tkb" in norm_name:
         return True
-    if "thoi khoa bieu" in norm_name:
+    if "thoi khoa bieu" in norm_words:
         return True
-    if "phu luc" in norm_name and ("thoi khoa" in norm_name or "hoc ky" in norm_name):
+    if "phu luc" in norm_words and ("thoi khoa" in norm_words or "hoc ky" in norm_words):
         return True
-    return any(hint in norm_name for hint in SCHEDULE_NAME_HINTS)
+    return any(hint in norm_words or hint in norm_name for hint in SCHEDULE_NAME_HINTS)
 
 
 def _collect_schedule_files(

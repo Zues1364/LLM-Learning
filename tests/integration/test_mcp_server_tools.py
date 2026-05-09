@@ -657,7 +657,7 @@ def test_sync_schedule_scope_from_blob_downloads_only_schedule_pdfs(monkeypatch,
         def list_objects(self, prefix):
             if prefix == "resources/global/pdf/":
                 return [
-                    Blob("resources/global/pdf/PHU_LUC_TKB.pdf"),
+                    Blob("resources/global/pdf/PHU_LUC_THOI_KHOA_BIEU_HKII_2025-2026_DU_LIEU_CAP_NHAT_DEN_22012026_.xlsx_-_Sheet1.pdf"),
                     Blob("resources/global/pdf/SO_TAY_HOC_VU.pdf"),
                     Blob("resources/global/html/CTDT.html"),
                 ]
@@ -677,7 +677,7 @@ def test_sync_schedule_scope_from_blob_downloads_only_schedule_pdfs(monkeypatch,
     server._sync_schedule_scope_from_blob(session_id="s_schedule", user_id=None)
 
     assert store.downloaded == [
-        "resources/global/pdf/PHU_LUC_TKB.pdf",
+        "resources/global/pdf/PHU_LUC_THOI_KHOA_BIEU_HKII_2025-2026_DU_LIEU_CAP_NHAT_DEN_22012026_.xlsx_-_Sheet1.pdf",
         "resources/s_schedule/pdf/Signed_CV_TKB.pdf",
     ]
 
