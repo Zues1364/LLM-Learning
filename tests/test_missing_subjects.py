@@ -2,6 +2,10 @@ import sys
 import types
 from pathlib import Path
 
+SRC_DIR = Path(__file__).resolve().parents[1] / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.append(str(SRC_DIR))
+
 # Provide lightweight stubs so we can import server helpers without FastAPI in test envs.
 if "fastapi" not in sys.modules:
     class _DummyApp:
@@ -25,12 +29,20 @@ if "pydantic" not in sys.modules:
     class _DummyBaseModel: ...
     sys.modules["pydantic"] = types.SimpleNamespace(BaseModel=_DummyBaseModel)
 if "agents" not in sys.modules:
-    class _DummyAgent:
-        def run(self, _prompt):
-            return type("Resp", (), {"content": ""})()
-    sys.modules["agents"] = types.SimpleNamespace(get_academic_advisor_agent=lambda: _DummyAgent())
+    try:
+        __import__("agents")
+    except Exception:
+        class _DummyAgent:
+            def run(self, _prompt):
+                return type("Resp", (), {"content": ""})()
 
-sys.path.append(str(Path(__file__).resolve().parents[1] / "src"))
+        sys.modules["agents"] = types.SimpleNamespace(
+            AnswerGeneratorAgent=_DummyAgent,
+            get_academic_advisor_agent=lambda: _DummyAgent(),
+            get_elective_interest_agent=lambda: _DummyAgent(),
+            get_mcp_planner_agent=lambda allow_web_search=False: _DummyAgent(),
+            get_rag_agent=lambda: _DummyAgent(),
+        )
 
 from mcp_server.server import (  # noqa: E402
     _extract_target_gpa,

@@ -1117,9 +1117,41 @@ def _extract_structured_schedule_citations(context: Any, max_items: int = 10) ->
         return []
 
     rows = payload.get("rows") if isinstance(payload.get("rows"), list) else []
-    source_files = payload.get("source_files") if isinstance(payload.get("source_files"), list) else []
-    fallback_source_file = str(payload.get("source_file") or "").strip()
+    source_files: List[str] = []
+
+    def _add_source(value: Any) -> None:
+        source_name = str(value or "").strip()
+        if source_name and source_name not in source_files:
+            source_files.append(source_name)
+
+    for key in ("source_files", "schedule_source_files"):
+        values = payload.get(key)
+        if isinstance(values, list):
+            for value in values:
+                _add_source(value)
+    for key in ("source_file", "schedule_source_file"):
+        _add_source(payload.get(key))
+
+    fallback_source_file = source_files[0] if len(source_files) == 1 else ""
     coverage_note = str(payload.get("coverage_note") or "").strip()
+    if not coverage_note:
+        schedule_error = str(payload.get("schedule_error") or "").strip()
+        if schedule_error:
+            coverage_note = f"Không lấy được dữ liệu lịch học: {schedule_error}"
+    if not coverage_note:
+        no_data_subjects = payload.get("no_data_subjects")
+        if isinstance(no_data_subjects, list) and no_data_subjects:
+            subject_labels = []
+            for item in no_data_subjects[:8]:
+                if not isinstance(item, dict):
+                    continue
+                code = str(item.get("subject_code") or "").strip().upper()
+                name = str(item.get("subject_name_vi") or item.get("subject_name_en") or "").strip()
+                label = " - ".join(part for part in (code, name) if part)
+                if label:
+                    subject_labels.append(label)
+            if subject_labels:
+                coverage_note = "Chưa thấy dữ liệu lịch/giảng viên cho: " + "; ".join(subject_labels)
 
     citations: List[Dict[str, Any]] = []
     seen: Set[Tuple[str, Optional[int], Optional[int], str]] = set()
@@ -1144,7 +1176,7 @@ def _extract_structured_schedule_citations(context: Any, max_items: int = 10) ->
     for row in rows:
         if not isinstance(row, dict):
             continue
-        source_file = str(row.get("source_file") or "").strip()
+        source_file = str(row.get("source_file") or row.get("schedule_source_file") or row.get("file_id") or "").strip()
         if not source_file and len(source_files) == 1:
             source_file = str(source_files[0] or "").strip()
         if not source_file and fallback_source_file:
@@ -1290,6 +1322,58 @@ def _extract_semester_code_citations(context: Any, max_items: int = 4) -> List[D
                 "excerpt": excerpt,
             }
         )
+    return citations
+
+
+def _extract_advisor_text_citations(answer: str, max_items: int = 8) -> List[Dict[str, Any]]:
+    text = str(answer or "")
+    if not text.strip():
+        return []
+
+    source_files: List[str] = []
+    for line in text.splitlines():
+        match = re.match(r"^\s*Nguồn\s+TKB(?:\s+đã\s+kiểm\s+tra)?\s*:\s*(.+?)\s*$", line, flags=re.IGNORECASE)
+        if not match:
+            continue
+        source_name = match.group(1).strip()
+        if source_name and source_name not in source_files:
+            source_files.append(source_name)
+
+    if not source_files:
+        return []
+
+    excerpts: List[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if "|" not in stripped:
+            continue
+        if re.search(r"\b[A-Z]{2,4}\d{3,4}[A-Z]?\b", stripped):
+            compact = " | ".join(part.strip() for part in stripped.strip("|").split("|"))
+            if compact and compact not in excerpts:
+                excerpts.append(compact)
+
+    if not excerpts:
+        excerpts = [f"Nguồn TKB: {source_files[0]}"]
+
+    citations: List[Dict[str, Any]] = []
+    for source_name in source_files:
+        for excerpt in excerpts:
+            citations.append(
+                {
+                    "source_file": source_name,
+                    "chunk_index": None,
+                    "page": None,
+                    "source_line": None,
+                    "excerpt": excerpt[:1600],
+                }
+            )
+            if len(citations) >= max_items:
+                break
+        if len(citations) >= max_items:
+            break
+
+    for idx, item in enumerate(citations, start=1):
+        item["id"] = idx
     return citations
 
 
@@ -3042,6 +3126,24 @@ def _build_structured_route_payload(
                     "get_electives_with_schedule",
                     "structured",
                 )
+            if isinstance(electives_payload, dict) and (
+                "opened" in electives_payload
+                or "schedule_error" in electives_payload
+                or "schedule_source_file" in electives_payload
+                or "schedule_source_files" in electives_payload
+            ):
+                coverage_note = str(electives_payload.get("coverage_note") or "").strip()
+                if not coverage_note and not str(electives_payload.get("schedule_error") or "").strip():
+                    electives_payload = dict(electives_payload)
+                    electives_payload["coverage_note"] = (
+                        "Không tìm thấy học phần tự chọn đang mở lớp trong thời khóa biểu hiện có."
+                    )
+                return _payload(
+                    "electives_schedule",
+                    electives_payload,
+                    "get_electives_with_schedule",
+                    "structured_no_opened",
+                )
 
         if intent == "course_offering_status":
             subject_hints = _extract_subject_hints(query)[:4]
@@ -3124,6 +3226,8 @@ def _build_structured_route_payload(
                 resolution_strategy = "curriculum_only"
 
             rows: List[Dict[str, Any]] = []
+            schedule_source_files: Set[str] = set()
+            schedule_coverage_note = ""
             if resolved_code:
                 schedule_raw = mcp_client.invoke(
                     "get_schedule_rows",
@@ -3132,6 +3236,16 @@ def _build_structured_route_payload(
                 schedule_payload = _safe_json_loads(schedule_raw)
                 schedule_rows = schedule_payload.get("rows") if isinstance(schedule_payload.get("rows"), list) else []
                 rows = _dedupe_schedule_rows([r for r in schedule_rows if isinstance(r, dict)])
+                source_values = (
+                    schedule_payload.get("source_files")
+                    if isinstance(schedule_payload.get("source_files"), list)
+                    else []
+                )
+                schedule_source_files.update(str(src).strip() for src in source_values if str(src).strip())
+                single_source = str(schedule_payload.get("source_file") or schedule_payload.get("schedule_source_file") or "").strip()
+                if single_source:
+                    schedule_source_files.add(single_source)
+                schedule_coverage_note = str(schedule_payload.get("coverage_note") or "").strip()
 
             curriculum_entry = curriculum_index.get(resolved_code) if resolved_code else None
             in_curriculum = curriculum_entry is not None
@@ -3149,6 +3263,13 @@ def _build_structured_route_payload(
                     "curriculum_group_name": curriculum_group_name,
                     "resolution_confidence": round(float(resolution_confidence or 0.0), 3),
                     "resolution_strategy": resolution_strategy,
+                    "source_files": sorted(schedule_source_files),
+                    "coverage_note": schedule_coverage_note
+                    or (
+                        "Tìm thấy dữ liệu lịch học cho môn trong thời khóa biểu hiện có."
+                        if rows
+                        else "Chưa thấy dữ liệu lịch cho môn được hỏi trong thời khóa biểu hiện có."
+                    ),
                 }
                 return _payload(
                     "course_offering_status",
@@ -3423,6 +3544,7 @@ def _build_structured_route_payload(
                         )
                     structured_payload = {
                         "rows": [],
+                        "source_files": sorted(merged_source_files),
                         "matched_subject": (
                             (primary_alias or {}).get("matched_subject") if len(subject_codes) == 1 else {}
                         ),
@@ -5656,8 +5778,18 @@ async def ask_question(http_request: Request, payload: QueryRequest):
                 query=resolved_query,
                 answer=answer,
             )
+            if not citations:
+                citations = _extract_advisor_text_citations(answer, max_items=10)
 
-        if not citations and source not in {"error", "program_selection"}:
+        deterministic_citation_sources = {
+            "structured_schedule",
+            "electives_schedule",
+            "electives_recommendation",
+            "course_offering_status",
+            "time_slot_lookup",
+            "semester_code_lookup",
+        }
+        if not citations and source not in {"error", "program_selection"} and source not in deterministic_citation_sources:
             citations = _backfill_retrieve_citations_for_answer(
                 query=resolved_query,
                 session_id=session_id,

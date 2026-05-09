@@ -639,6 +639,54 @@ def test_consult_advisor_retries_broad_schedule_for_unresolved_rows(monkeypatch)
     assert int4050.get("ca_hoc") == "Ca 2"
 
 
+def test_query_needs_schedule_context_for_gpa_and_missing_credits():
+    assert server._query_needs_schedule_context("với tình trạng điểm gpa của tôi có khả năng lên bằng giỏi không")
+    assert server._query_needs_schedule_context("tôi còn thiếu bao nhiêu tín chỉ")
+
+
+def test_render_gpa_feasibility_text_includes_schedule_rows():
+    advisor_context = {
+        "credit_summary": {
+            "transcript_total_credits": 129,
+            "curriculum_applicable_credits": 129,
+            "total_missing_credits": 7,
+        },
+        "missing_subjects": {
+            "mandatory_missing": [{"code": "INT4050", "name": "Khoa luan tot nghiep", "credits": 7}],
+        },
+        "gpa_projection": {
+            "target_gpa": 3.2,
+            "current_gpa": 2.897,
+            "max_gpa_no_retakes": 2.9521,
+            "max_possible_gpa": 3.4807,
+            "feasible_no_retakes": False,
+            "feasible_with_retakes": True,
+        },
+        "schedule_source_file": "PHU LUC TKB HKII 2025-2026.pdf",
+        "schedule_table_rows": [
+            {
+                "day": "Thứ 5",
+                "ca_hoc": "Ca 2",
+                "period_time": "Tiết 4-6 (09:50 – 12:30)",
+                "subject_code": "INT4050",
+                "subject_name": "Khóa luận tốt nghiệp",
+                "credits": 7,
+                "class_note": "Lớp INT4050 1",
+            }
+        ],
+    }
+
+    answer = server._render_gpa_feasibility_text(
+        "với tình trạng điểm gpa của tôi có khả năng lên bằng giỏi không",
+        advisor_context,
+    )
+
+    assert "Gợi ý lịch" in answer
+    assert "INT4050" in answer
+    assert "Thứ 5" in answer
+    assert "PHU LUC TKB HKII 2025-2026.pdf" in answer
+
+
 
 def test_extract_time_slot_map_parses_standard_table():
     text = """

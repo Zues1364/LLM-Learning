@@ -3534,6 +3534,16 @@ def _query_needs_schedule_context(query: str) -> bool:
         "mon nao",
         "nen hoc",
         "lap lich",
+        "tin chi",
+        "con thieu",
+        "thieu mon",
+        "mon con thieu",
+        "tot nghiep",
+        "gpa",
+        "bang gioi",
+        "bang kha",
+        "xuat sac",
+        "xep loai",
     )
     return _query_targets_elective_opened_not_taken(query) or any(marker in norm_query for marker in schedule_markers)
 
@@ -3994,6 +4004,42 @@ def _render_gpa_feasibility_text(query: str, advisor_context: Dict[str, Any]) ->
             name = _format_subject_name_vi_en(subj.get("name"))
             credits = _coerce_int(subj.get("credits"))
             lines.append(f"- {code} - {name} ({credits} tín chỉ)")
+
+    schedule_rows = advisor_context.get("schedule_table_rows")
+    if not isinstance(schedule_rows, list):
+        schedule_rows = []
+    schedule_source = str(advisor_context.get("schedule_source_file") or "").strip()
+    if schedule_rows:
+        lines.append("")
+        lines.append("Gợi ý lịch:")
+        lines.append("| Ngày học | Ca học | Tiết + Thời gian | Mã môn học | Tên môn học | Tín chỉ | Ghi chú về lớp |")
+        lines.append("|---|---|---|---|---|---:|---|")
+        for row in schedule_rows[:12]:
+            if not isinstance(row, dict):
+                continue
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        str(row.get("day") or ""),
+                        str(row.get("ca_hoc") or ""),
+                        str(row.get("period_time") or ""),
+                        str(row.get("subject_code") or ""),
+                        _format_subject_name_vi_en(row.get("subject_name")),
+                        str(_coerce_int(row.get("credits")) or ""),
+                        str(row.get("class_note") or ""),
+                    ]
+                )
+                + " |"
+            )
+        if schedule_source:
+            lines.append("")
+            lines.append(f"Nguồn TKB: {schedule_source}")
+    elif mandatory_missing and schedule_source:
+        lines.append("")
+        lines.append("Gợi ý lịch:")
+        lines.append("Chưa tìm thấy dòng lịch chi tiết cho các môn còn thiếu trong TKB hiện có.")
+        lines.append(f"Nguồn TKB đã kiểm tra: {schedule_source}")
 
     retake_candidates = gpa_projection.get("retake_candidates") or []
     if feasible_no_retakes is False and feasible_with_retakes is True and retake_candidates:

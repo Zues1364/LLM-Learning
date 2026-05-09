@@ -710,6 +710,51 @@ def test_extract_structured_schedule_citations_builds_row_excerpts(monkeypatch, 
     assert "3-G3" in citations[0]["excerpt"]
 
 
+def test_extract_structured_schedule_citations_uses_schedule_source_file_without_rows(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    (app_mod.SESSION_CACHE_DIR).mkdir(parents=True, exist_ok=True)
+
+    context = json.dumps(
+        {
+            "rows": [],
+            "schedule_source_file": "PHU LUC TKB HKII 2025-2026.pdf",
+            "coverage_note": "Không tìm thấy học phần tự chọn đang mở lớp trong thời khóa biểu hiện có.",
+        },
+        ensure_ascii=False,
+    )
+
+    citations = app_mod._extract_structured_schedule_citations(context, max_items=10)
+
+    assert len(citations) == 1
+    assert citations[0]["source_file"] == "PHU LUC TKB HKII 2025-2026.pdf"
+    assert "Không tìm thấy học phần tự chọn" in citations[0]["excerpt"]
+
+
+def test_extract_advisor_text_citations_from_gpa_schedule_table(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    (app_mod.SESSION_CACHE_DIR).mkdir(parents=True, exist_ok=True)
+
+    answer = "\n".join(
+        [
+            "Gợi ý lịch:",
+            "| Ngày học | Ca học | Tiết + Thời gian | Mã môn học | Tên môn học | Tín chỉ | Ghi chú về lớp |",
+            "|---|---|---|---|---|---:|---|",
+            "| Thứ 5 | Ca 2 | Tiết 4-6 (09:50 – 12:30) | INT4050 | Khóa luận tốt nghiệp | 7 | Lớp INT4050 1 |",
+            "",
+            "Nguồn TKB: PHU LUC TKB HKII 2025-2026.pdf",
+        ]
+    )
+
+    citations = app_mod._extract_advisor_text_citations(answer, max_items=10)
+
+    assert len(citations) == 1
+    assert citations[0]["source_file"] == "PHU LUC TKB HKII 2025-2026.pdf"
+    assert "INT4050" in citations[0]["excerpt"]
+    assert "09:50" in citations[0]["excerpt"]
+
+
 def test_ask_structured_schedule_response_includes_citations(monkeypatch, tmp_path):
     app_mod = importlib.reload(importlib.import_module("app"))
     monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
@@ -2497,6 +2542,121 @@ def test_ask_course_offering_status_reports_not_opened_and_curriculum_group(monk
     assert "khong mo lop" in norm_answer
     assert "v.2.4" in norm_answer
     assert planner_calls["count"] == 0
+
+
+def test_ask_course_offering_status_no_rows_uses_schedule_citation_without_retrieve(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    (app_mod.SESSION_CACHE_DIR).mkdir(parents=True, exist_ok=True)
+
+    class DummyPlanner:
+        def run(self, prompt):
+            payload = {"source": "vector_store", "context": "planner-ctx", "memory": "mem", "chunk_index": None}
+            return type("Resp", (), {"content": json.dumps(payload)})()
+
+    monkeypatch.setattr(app_mod, "get_mcp_planner_agent", lambda allow_web_search=False: DummyPlanner())
+
+    def fake_invoke(tool, args, timeout=None):
+        if tool == "get_available_programs":
+            return {"programs": [{"id": "cs_2022", "display_name": "CS"}]}
+        if tool == "memory_get":
+            return []
+        if tool == "resolve_course_alias":
+            return {
+                "matched_subject": {
+                    "subject_code": "INT3404E",
+                    "subject_name_vi": "Xu ly anh",
+                    "subject_name_en": "Image Processing",
+                },
+                "confidence": 0.95,
+            }
+        if tool == "get_schedule_rows":
+            return {
+                "rows": [],
+                "source_files": ["PHU LUC TKB HKII 2025-2026.pdf"],
+                "coverage_note": "Chưa thấy dữ liệu lịch cho INT3404E trong thời khóa biểu hiện có.",
+            }
+        if tool == "get_curriculum_lookup":
+            return {
+                "groups": {
+                    "V.2.4": {
+                        "group_name": "Nhom cac hoc phan ve Tuong tac nguoi-may",
+                        "subjects": [{"code": "INT3404E", "name": "Xu ly anh"}],
+                    }
+                }
+            }
+        if tool == "memory_add":
+            return "ok"
+        if tool == "retrieve_chunks":
+            raise AssertionError("structured no-data route must not backfill citations with retrieve_chunks")
+        return "ok"
+
+    monkeypatch.setattr(app_mod.mcp_client, "invoke", fake_invoke)
+
+    client = TestClient(app_mod.app)
+    resp = client.post(
+        "/ask",
+        json={
+            "query": "mon xu ly anh ky nay co mo lop khong",
+            "session_id": "s_course_status_no_rows_citations",
+            "program_id": "cs_2022",
+            "file_ids": ["dummy_transcript.pdf"],
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["source"] == "course_offering_status"
+    assert body["citations"][0]["source_file"] == "PHU LUC TKB HKII 2025-2026.pdf"
+    assert "khong mo lop" in app_mod.normalize_for_match(body["answer"])
+
+
+def test_ask_electives_no_opened_uses_schedule_citation_without_retrieve(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    (app_mod.SESSION_CACHE_DIR).mkdir(parents=True, exist_ok=True)
+
+    class DummyPlanner:
+        def run(self, prompt):
+            payload = {"source": "vector_store", "context": "planner-ctx", "memory": "mem", "chunk_index": None}
+            return type("Resp", (), {"content": json.dumps(payload)})()
+
+    monkeypatch.setattr(app_mod, "get_mcp_planner_agent", lambda allow_web_search=False: DummyPlanner())
+
+    def fake_invoke(tool, args, timeout=None):
+        if tool == "get_available_programs":
+            return {"programs": [{"id": "cs_2022", "display_name": "CS"}]}
+        if tool == "memory_get":
+            return []
+        if tool == "get_electives_with_schedule":
+            return {
+                "opened": [],
+                "opened_count": 0,
+                "not_opened": [{"code": "INT3404E", "name": "Xu ly anh", "credits": 3}],
+                "schedule_source_file": "PHU LUC TKB HKII 2025-2026.pdf",
+            }
+        if tool == "memory_add":
+            return "ok"
+        if tool == "retrieve_chunks":
+            raise AssertionError("structured elective no-opened route must not call retrieve_chunks")
+        return "ok"
+
+    monkeypatch.setattr(app_mod.mcp_client, "invoke", fake_invoke)
+
+    client = TestClient(app_mod.app)
+    resp = client.post(
+        "/ask",
+        json={
+            "query": "ki nay co nhung mon tu chon nao mo lop",
+            "session_id": "s_electives_no_opened_citations",
+            "program_id": "cs_2022",
+            "file_ids": [],
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["source"] == "electives_schedule"
+    assert "khong tim thay hoc phan tu chon dang mo lop" in app_mod.normalize_for_match(body["answer"])
+    assert body["citations"][0]["source_file"] == "PHU LUC TKB HKII 2025-2026.pdf"
 
 
 def test_extract_subject_hints_ignores_curriculum_tail_phrase():
