@@ -280,6 +280,50 @@ def chunk_table_rows(table: List[List[str]], chunk_size: int = 1000) -> List[str
     return chunks
 
 
+def process_pdf_text_only(file_path: str) -> List[Document]:
+    """
+    Fast PDF text/table extraction for generated schedule PDFs.
+    This avoids OCR/img2table so production schedule lookups do not load
+    Tesseract or image-processing paths for text-based PDFs.
+    """
+    docs: List[Document] = []
+    try:
+        with pdfplumber.open(file_path) as pdf:
+            for page_num, page in enumerate(pdf.pages, start=1):
+                parts: List[str] = []
+                try:
+                    for table in page.extract_tables() or []:
+                        lines: List[str] = []
+                        for row in table or []:
+                            cells = [str(cell or "").strip() for cell in (row or [])]
+                            if any(cells):
+                                lines.append(" | ".join(cells))
+                        if lines:
+                            parts.append("\n".join(lines))
+                except Exception as table_err:
+                    logger.debug("pdfplumber table extraction failed on page %s: %s", page_num, table_err)
+
+                raw_text = page.extract_text() or ""
+                if raw_text.strip():
+                    parts.append(raw_text)
+
+                page_text = "\n".join(part for part in parts if part.strip()).strip()
+                if page_text:
+                    docs.append(
+                        Document(
+                            page_content=page_text,
+                            metadata={
+                                "source": file_path,
+                                "page": page_num,
+                                "parser": "pdfplumber_text_only",
+                            },
+                        )
+                    )
+    except Exception as exc:
+        logger.warning("Fast PDF text extraction failed for %s: %s", file_path, exc)
+    return docs
+
+
 def process_pdf(file_path: str, chunk_size: int = 1000, chunk_overlap: int = 200) -> List[Document]:
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"File not found: {file_path}")

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from utils import normalize_for_match, process_pdf
+from utils import normalize_for_match, process_pdf, process_pdf_text_only
 
 
 COURSE_CODE_RE = re.compile(r"\b(?:UET\.)?([A-Z]{2,4}\d{3,4}[A-Z]?)\b", re.IGNORECASE)
@@ -880,7 +880,7 @@ class StructuredScheduleStore:
         return [a for a in aliases if a]
 
     def _parse_schedule_pdf(self, path: Path) -> List[Dict[str, Any]]:
-        docs = process_pdf(str(path))
+        docs = process_pdf_text_only(str(path)) or process_pdf(str(path))
         full_text = "\n".join(str(doc.page_content or "") for doc in docs)
         semester = _infer_semester_label(path.name, full_text)
 

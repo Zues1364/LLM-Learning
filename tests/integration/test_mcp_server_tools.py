@@ -10,6 +10,7 @@ from langchain_core.documents import Document
 sys.path.append(str(Path(__file__).resolve().parents[2] / "src"))
 
 import mcp_server.server as server  # noqa: E402
+import mcp_server.structured_schedule_store as schedule_store  # noqa: E402
 from persistent_memory import PersistentMemory  # noqa: E402
 
 
@@ -680,6 +681,35 @@ def test_sync_schedule_scope_from_blob_downloads_only_schedule_pdfs(monkeypatch,
         "resources/global/pdf/PHU_LUC_THOI_KHOA_BIEU_HKII_2025-2026_DU_LIEU_CAP_NHAT_DEN_22012026_.xlsx_-_Sheet1.pdf",
         "resources/s_schedule/pdf/Signed_CV_TKB.pdf",
     ]
+
+
+def test_structured_schedule_pdf_parser_prefers_text_only(monkeypatch, tmp_path):
+    pdf_path = tmp_path / "PHU_LUC_THOI_KHOA_BIEU.xlsx_-_Sheet1.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n% schedule fixture")
+    doc = Document(
+        page_content=(
+            "K68I-CS4 | INT2041 | Tương tác người-máy | 3 | 45 |  |  | 1 | 74 | "
+            "INT2041 2 | CL | LT | 5 | 2 | 3-G3 | Ngô Thị Duyên |  | "
+            "Học 1 ca/15 tuần, thi đợt 2"
+        ),
+        metadata={"page": 4},
+    )
+    monkeypatch.setattr(schedule_store, "process_pdf_text_only", lambda path: [doc])
+    monkeypatch.setattr(
+        schedule_store,
+        "process_pdf",
+        lambda path: (_ for _ in ()).throw(AssertionError("schedule parser should not invoke OCR path")),
+    )
+
+    store = schedule_store.StructuredScheduleStore(db_path=tmp_path / "structured_schedule.db")
+    rows = store._parse_schedule_pdf(pdf_path)
+
+    int2041 = next((row for row in rows if row.get("subject_code") == "INT2041"), None)
+    assert int2041 is not None
+    assert int2041["class_code"] == "INT2041 2"
+    assert int2041["day_of_week"] == "Thứ 5"
+    assert int2041["slot"] == "2"
+    assert int2041["room"] == "3-G3"
 
 
 def test_render_gpa_feasibility_text_includes_schedule_rows():

@@ -24,6 +24,7 @@ from utils import (
     VietnameseEmbedder,
     FAISSVectorStore,
     process_pdf,
+    process_pdf_text_only,
     generate_summary,
     load_embeddings_with_cache,
     normalize_for_match,
@@ -663,7 +664,7 @@ def _load_best_schedule_text(
     ranked: List[Tuple[Path, int, str]] = []
     for path in candidates:
         try:
-            docs = process_pdf(str(path))
+            docs = process_pdf_text_only(str(path)) or process_pdf(str(path))
             text = "\n".join(d.page_content for d in docs)
             ranked.append((path, len(text), text))
         except Exception as e:
@@ -899,7 +900,7 @@ def _load_schedule_time_slot_map(
     ranked: List[Tuple[int, int, Path, Dict[str, Dict[str, str]]]] = []
     for path in candidates:
         try:
-            docs = process_pdf(str(path))
+            docs = process_pdf_text_only(str(path)) or process_pdf(str(path))
             text = "\n".join(d.page_content for d in docs)
             slot_map = _extract_time_slot_map(text)
             if not slot_map:
