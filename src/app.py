@@ -424,7 +424,11 @@ def _load_session_files(
     ).get("file_ids", [])
 
 def _save_session_files(session_id: str, file_ids: List[str], user_id: Optional[str] = None):
-    meta = _load_session_meta(session_id, user_id=user_id)
+    meta = _load_session_meta(
+        session_id,
+        user_id=user_id,
+        allow_legacy_fallback=not bool(user_id),
+    )
     meta["file_ids"] = _normalize_file_ids(file_ids)
     _write_session_meta(session_id, meta, user_id=user_id)
 
@@ -432,7 +436,11 @@ def _load_session_program(session_id: str, user_id: Optional[str] = None) -> Opt
     return _load_session_meta(session_id, user_id=user_id).get("program_id")
 
 def _save_session_program(session_id: str, program_id: Optional[str], user_id: Optional[str] = None):
-    meta = _load_session_meta(session_id, user_id=user_id)
+    meta = _load_session_meta(
+        session_id,
+        user_id=user_id,
+        allow_legacy_fallback=not bool(user_id),
+    )
     meta["program_id"] = str(program_id).strip() if program_id else None
     _write_session_meta(session_id, meta, user_id=user_id)
 
@@ -5831,7 +5839,11 @@ async def upload_pdf(
         last_file_id = file_id
         last_uploaded_file_ids = [file_id]
         if normalized_session:
-            existing_ids = _load_session_files(normalized_session, user_id=user_id)
+            existing_ids = _load_session_files(
+                normalized_session,
+                user_id=user_id,
+                allow_legacy_fallback=not bool(user_id),
+            )
             _save_session_files(normalized_session, existing_ids + [file_id], user_id=user_id)
 
         return {"message": "PDF da duoc xu ly thanh cong", "file_id": file_id, "file_name": original_name}
@@ -5900,7 +5912,11 @@ async def upload_multiple_pdfs(
     if results:
         last_uploaded_file_ids = [item["file_id"] for item in results]
         if normalized_session:
-            existing_ids = _load_session_files(normalized_session, user_id=user_id)
+            existing_ids = _load_session_files(
+                normalized_session,
+                user_id=user_id,
+                allow_legacy_fallback=not bool(user_id),
+            )
             _save_session_files(normalized_session, existing_ids + last_uploaded_file_ids, user_id=user_id)
 
     return {"uploaded": results, "errors": errors}
@@ -5924,12 +5940,16 @@ async def ask_question(http_request: Request, payload: QueryRequest):
             resolution.get("applied_referents") or [],
         )
     selected_files = _normalize_file_ids(payload.file_ids or [])
-    session_meta = _load_session_meta(session_id, user_id=user_id)
+    session_meta = _load_session_meta(
+        session_id,
+        user_id=user_id,
+        allow_legacy_fallback=not bool(user_id),
+    )
     if not selected_files:
         cached_files = session_meta.get("file_ids") or []
         if cached_files:
             selected_files = _normalize_file_ids(cached_files)
-        elif last_uploaded_file_ids:
+        elif not user_id and last_uploaded_file_ids:
             selected_files = _normalize_file_ids(last_uploaded_file_ids)
 
     if not selected_files and _query_requires_transcript_files(resolved_query):

@@ -93,6 +93,30 @@ def test_authenticated_session_files_do_not_fallback_to_legacy_meta(monkeypatch,
     assert [item["file_id"] for item in legacy_files] == ["legacy.pdf"]
 
 
+def test_save_session_files_for_authenticated_user_does_not_inherit_legacy(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "PDF_DIR", tmp_path / "pdfs")
+    monkeypatch.setattr(app_mod, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    monkeypatch.setattr(app_mod, "blob_mode_enabled", lambda: False)
+    app_mod.PDF_DIR.mkdir(parents=True, exist_ok=True)
+    app_mod.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    app_mod.SESSION_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    app_mod._save_session_files("user_session_1", ["legacy-1.pdf", "legacy-2.pdf"])
+    app_mod._save_session_files("user_session_1", ["owned.pdf"], user_id="student@example.com")
+
+    owner_ids = app_mod._load_session_files(
+        "user_session_1",
+        user_id="student@example.com",
+        allow_legacy_fallback=False,
+    )
+    legacy_ids = app_mod._load_session_files("user_session_1")
+
+    assert owner_ids == ["owned.pdf"]
+    assert legacy_ids == ["legacy-1.pdf", "legacy-2.pdf"]
+
+
 def test_delete_uploaded_file_removes_it_from_session(monkeypatch, tmp_path):
     app_mod = importlib.reload(importlib.import_module("app"))
     monkeypatch.setattr(app_mod, "PDF_DIR", tmp_path / "pdfs")

@@ -1221,7 +1221,6 @@ export default function App() {
       }));
       const localSelectedPrograms = selectedProgramBySessionRef.current || {};
       const localPendingPrograms = pendingProgramBySessionRef.current || {};
-      const localSelectedFiles = selectedFilesBySessionRef.current || {};
       const serverSelectedPrograms = {};
       serverSessions.forEach((session) => {
         if (session.selected_program_id) serverSelectedPrograms[session.id] = session.selected_program_id;
@@ -1261,11 +1260,8 @@ export default function App() {
       setSelectedFilesBySession(() => {
         const next = {};
         serverSessions.forEach((session) => {
-          const localFileIds = normalizeFileIds(localSelectedFiles[session.id] || []);
           const serverFileIds = normalizeFileIds(session.selected_file_ids || []);
-          if (localFileIds.length) {
-            next[session.id] = localFileIds;
-          } else if (serverFileIds.length) {
+          if (serverFileIds.length) {
             next[session.id] = serverFileIds;
           }
         });
@@ -1351,12 +1347,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [
-    authState.authenticated,
-    authState.userId,
-    migrateBrowserChatSessionsForAccount,
-    refreshChatSessions,
-  ]);
+  }, [authState.authenticated, authState.userId]);
 
   useEffect(() => {
     if (!authState.authenticated || !currentSession) return;
