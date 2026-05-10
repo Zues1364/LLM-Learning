@@ -1272,16 +1272,6 @@ export default function App() {
         selectedFilesBySessionRef.current = next;
         return next;
       });
-      setFiles((prev) => {
-        const selectedFilePlaceholders = [];
-        serverSessions.forEach((session) => {
-          const ids = localSelectedFiles[session.id]?.length
-            ? localSelectedFiles[session.id]
-            : session.selected_file_ids || [];
-          ids.forEach((id) => selectedFilePlaceholders.push({ file_id: id, file_name: id }));
-        });
-        return mergeFileLists(prev, selectedFilePlaceholders);
-      });
       setMessagesBySession((prev) => {
         const next = {};
         serverSessions.forEach((session) => {
@@ -1531,6 +1521,9 @@ export default function App() {
       }
     }
     setSessions((prev) => [...prev, { id: newId, title: newTitle }]);
+    filesRef.current = [];
+    setFiles([]);
+    setFilesSessionId(newId);
     setCurrentSession(newId);
     setMessagesBySession((prev) => ({ ...prev, [newId]: [] }));
     selectedFilesBySessionRef.current = { ...selectedFilesBySessionRef.current, [newId]: [] };
