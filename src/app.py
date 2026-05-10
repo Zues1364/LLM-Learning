@@ -5910,6 +5910,8 @@ async def upload_pdf(
 def list_files(request: Request, session_id: Optional[str] = Query(default=None)):
     normalized_session = _normalize_session_id(session_id) if session_id else None
     user_id = _current_user_id_from_request(request)
+    if user_id and not normalized_session:
+        return []
     return _list_transcript_files(session_id=normalized_session, user_id=user_id)
 
 

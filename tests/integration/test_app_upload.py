@@ -142,6 +142,27 @@ def test_authenticated_files_endpoint_ignores_untracked_session_cache_files(monk
     assert [item["file_id"] for item in files] == ["owned.pdf"]
 
 
+def test_authenticated_files_endpoint_requires_session_scope(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "PDF_DIR", tmp_path / "pdfs")
+    monkeypatch.setattr(app_mod, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    monkeypatch.setattr(app_mod, "blob_mode_enabled", lambda: False)
+    app_mod.PDF_DIR.mkdir(parents=True, exist_ok=True)
+    app_mod.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    app_mod.SESSION_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    (app_mod.PDF_DIR / "global.pdf").write_bytes(b"%PDF-1.4")
+    app_mod.loaded_file_ids = {"global.pdf"}
+    app_mod.file_meta = {"global.pdf": "Global transcript.pdf"}
+    monkeypatch.setattr(app_mod, "_current_user_id_from_request", lambda request: "student@example.com")
+
+    client = TestClient(app_mod.app)
+    resp = client.get("/files")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
 def test_delete_uploaded_file_removes_it_from_session(monkeypatch, tmp_path):
     app_mod = importlib.reload(importlib.import_module("app"))
     monkeypatch.setattr(app_mod, "PDF_DIR", tmp_path / "pdfs")
