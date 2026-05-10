@@ -6345,7 +6345,6 @@ async def ask_question(http_request: Request, payload: QueryRequest):
             "time_slot_lookup",
             "semester_code_lookup",
             "course_overview",
-            "language_requirement",
         }
         if not citations and source not in {"error", "program_selection"} and source not in deterministic_citation_sources:
             citations = _backfill_retrieve_citations_for_answer(

@@ -2763,6 +2763,8 @@ def test_ask_ielts_requirement_uses_deterministic_language_route(monkeypatch, tm
 
     monkeypatch.setattr(app_mod, "get_mcp_planner_agent", lambda allow_web_search=False: DummyPlanner())
 
+    retrieve_calls: list[dict] = []
+
     def fake_invoke(tool, args, timeout=None):
         if tool == "get_available_programs":
             return {"programs": [{"id": "cs_2022", "display_name": "CS"}]}
@@ -2771,7 +2773,11 @@ def test_ask_ielts_requirement_uses_deterministic_language_route(monkeypatch, tm
         if tool == "memory_add":
             return "ok"
         if tool == "retrieve_chunks":
-            raise AssertionError("IELTS requirement query must not call retrieve_chunks")
+            retrieve_calls.append(dict(args))
+            return [
+                "[SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf - Chunk 6 - Page 12 - Line 8] "
+                "IELTS tối thiểu 5.5 để đáp ứng điều kiện ngoại ngữ."
+            ]
         return "ok"
 
     monkeypatch.setattr(app_mod.mcp_client, "invoke", fake_invoke)
@@ -2792,6 +2798,11 @@ def test_ask_ielts_requirement_uses_deterministic_language_route(monkeypatch, tm
     norm_answer = app_mod.normalize_for_match(body["answer"])
     assert "du dieu kien" in norm_answer
     assert "ielts 5.5" in norm_answer
+    assert len(retrieve_calls) >= 1
+    assert all(list(call.get("file_ids") or []) == [] for call in retrieve_calls)
+    assert isinstance(body.get("citations"), list)
+    assert len(body["citations"]) >= 1
+    assert body["citations"][0]["source_file"] == "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf"
 
 
 def test_ask_electives_no_opened_uses_schedule_citation_without_retrieve(monkeypatch, tmp_path):
