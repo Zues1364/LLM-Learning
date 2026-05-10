@@ -6,6 +6,7 @@ sys.path.append(str(Path(__file__).resolve().parents[2] / "src"))
 import mcp_client.client as client_mod  # noqa: E402
 import mcp_tools  # noqa: E402
 import pytest  # noqa: E402
+import requests  # noqa: E402
 
 
 class DummyResponse:
@@ -63,6 +64,44 @@ def test_mcp_client_invoke_raises_on_http_error(monkeypatch):
     cli = client_mod.MCPClient(server_url="http://example.com")
     with pytest.raises(RuntimeError):
         cli.invoke("tool", {})
+
+
+def test_mcp_client_invoke_retries_on_connection_error(monkeypatch):
+    attempts = {"count": 0}
+
+    def fake_post(url, json=None, **kwargs):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise requests.ConnectionError("connection refused")
+        return DummyResponse({"result": "ok"})
+
+    monkeypatch.setattr(client_mod.requests, "post", fake_post)
+    monkeypatch.setenv("MCP_RETRY_ATTEMPTS", "2")
+    monkeypatch.setenv("MCP_RETRY_BACKOFF_SEC", "0")
+
+    cli = client_mod.MCPClient(server_url="http://example.com")
+    assert cli.invoke("tool_name", {"foo": "bar"}) == "ok"
+    assert attempts["count"] == 2
+
+
+def test_mcp_client_invoke_failover_to_fallback_base(monkeypatch):
+    urls = []
+
+    def fake_post(url, json=None, **kwargs):
+        urls.append(url)
+        if url.startswith("http://primary.local"):
+            raise requests.ConnectionError("primary down")
+        return DummyResponse({"result": "ok"})
+
+    monkeypatch.setattr(client_mod.requests, "post", fake_post)
+    monkeypatch.setenv("MCP_SERVER_FALLBACK_URLS", "http://fallback.local")
+    monkeypatch.setenv("MCP_RETRY_ATTEMPTS", "1")
+
+    cli = client_mod.MCPClient(server_url="http://primary.local")
+    assert cli.invoke("tool_name", {"foo": "bar"}) == "ok"
+    assert urls[0] == "http://primary.local/mcp/invoke"
+    assert urls[1] == "http://fallback.local/mcp/invoke"
+    assert cli.base == "http://fallback.local"
 
 
 def test_mcp_tools_wrappers_call_invoke(monkeypatch):
