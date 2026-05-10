@@ -1409,6 +1409,69 @@ def _extract_advisor_text_citations(answer: str, max_items: int = 8) -> List[Dic
     return citations
 
 
+def _extract_language_requirement_resource_citations(
+    session_id: str,
+    user_id: Optional[str] = None,
+    max_items: int = 3,
+) -> List[Dict[str, Any]]:
+    try:
+        resources = resource_loader.get_resources(session_id=session_id, user_id=user_id)
+    except Exception as exc:
+        logger.info("[citations] language resource lookup failed session=%s: %s", session_id, exc)
+        return []
+
+    candidates: List[Tuple[int, str]] = []
+    for item in resources:
+        if not isinstance(item, dict):
+            continue
+        resource_type = str(item.get("type") or "").strip().lower()
+        if resource_type not in {"pdf", "html"}:
+            continue
+        source_name = str(item.get("name") or "").strip()
+        if not source_name:
+            continue
+        norm_name = normalize_for_match(source_name)
+        score = 0
+        if "so tay hoc vu" in norm_name:
+            score += 6
+        if any(marker in norm_name for marker in ("ngoai ngu", "ielts", "toeic", "toefl", "vstep", "aptis", "cambridge")):
+            score += 4
+        if any(marker in norm_name for marker in ("quy che", "chuong trinh dao tao", "ctdt")):
+            score += 2
+        if str(item.get("scope") or "").strip().lower() == "global":
+            score += 1
+        if score <= 0:
+            continue
+        candidates.append((score, source_name))
+
+    if not candidates:
+        return []
+
+    candidates.sort(key=lambda entry: (-entry[0], entry[1]))
+    seen: Set[str] = set()
+    citations: List[Dict[str, Any]] = []
+    excerpt = "Đối chiếu chuẩn ngoại ngữ Bậc 4 (tương đương IELTS 5.5) theo tài liệu học vụ/chương trình đào tạo."
+    for _, source_name in candidates:
+        if source_name in seen:
+            continue
+        seen.add(source_name)
+        citations.append(
+            {
+                "source_file": source_name,
+                "chunk_index": None,
+                "page": None,
+                "source_line": None,
+                "excerpt": excerpt,
+            }
+        )
+        if len(citations) >= max_items:
+            break
+
+    for idx, item in enumerate(citations, start=1):
+        item["id"] = idx
+    return citations
+
+
 def _backfill_retrieve_citations_for_answer(
     *,
     query: str,
@@ -6359,6 +6422,12 @@ async def ask_question(http_request: Request, payload: QueryRequest):
                 session_id=session_id,
                 file_ids=selected_files,
                 max_items=10,
+            )
+        if source == "language_requirement" and not citations:
+            citations = _extract_language_requirement_resource_citations(
+                session_id=session_id,
+                user_id=user_id,
+                max_items=3,
             )
 
         if user_id:
