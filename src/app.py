@@ -1425,7 +1425,7 @@ def _backfill_retrieve_citations_for_answer(
     extra retrieval hops on advisory flows that already prioritize
     consult_advisor determinism and timeout safety.
     """
-    if _query_requires_transcript_files(query):
+    if _query_requires_transcript_files(query) and not _query_prefers_global_resource_retrieval(query):
         return []
     # For non-transcript queries, do not constrain retrieval to selected transcript files.
     # Otherwise citations can point to irrelevant grade-sheet chunks instead of the
@@ -4837,6 +4837,11 @@ def _query_prefers_global_resource_retrieval(query: str) -> bool:
     norm_q = normalize_for_match(query or "")
     if not norm_q:
         return False
+    # Policy equivalence questions (IELTS/TOEIC/ngoai ngu) should always source
+    # canonical handbook/curriculum resources, even if the phrasing contains
+    # transcript-like markers such as "chuong trinh dao tao".
+    if _query_targets_language_requirement(query):
+        return True
     if _query_requires_transcript_files(query):
         return False
     if _query_targets_time_slot_definition(query):
@@ -6006,7 +6011,9 @@ async def ask_question(http_request: Request, payload: QueryRequest):
         elif not user_id and last_uploaded_file_ids:
             selected_files = _normalize_file_ids(last_uploaded_file_ids)
 
-    if not selected_files and _query_requires_transcript_files(resolved_query):
+    requires_transcript_files = _query_requires_transcript_files(resolved_query)
+    can_use_global_policy_scope = _query_prefers_global_resource_retrieval(resolved_query)
+    if not selected_files and requires_transcript_files and not can_use_global_policy_scope:
         return {
             "answer": (
                 "Bạn chưa chọn file bảng điểm cho phiên này. "

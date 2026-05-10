@@ -2805,6 +2805,58 @@ def test_ask_ielts_requirement_uses_deterministic_language_route(monkeypatch, tm
     assert body["citations"][0]["source_file"] == "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf"
 
 
+def test_ask_ielts_requirement_without_selected_files_uses_global_policy_citations(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    (app_mod.SESSION_CACHE_DIR).mkdir(parents=True, exist_ok=True)
+
+    class DummyPlanner:
+        def run(self, prompt):
+            raise AssertionError("IELTS requirement query must not require planner/retrieve planning")
+
+    monkeypatch.setattr(app_mod, "get_mcp_planner_agent", lambda allow_web_search=False: DummyPlanner())
+
+    retrieve_calls: list[dict] = []
+
+    def fake_invoke(tool, args, timeout=None):
+        if tool == "get_available_programs":
+            return {"programs": [{"id": "cs_2022", "display_name": "CS"}]}
+        if tool == "memory_get":
+            return []
+        if tool == "memory_add":
+            return "ok"
+        if tool == "retrieve_chunks":
+            retrieve_calls.append(dict(args))
+            return [
+                "[SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf - Chunk 6 - Page 12 - Line 8] "
+                "IELTS tối thiểu 5.5 để đáp ứng điều kiện ngoại ngữ."
+            ]
+        return "ok"
+
+    monkeypatch.setattr(app_mod.mcp_client, "invoke", fake_invoke)
+
+    client = TestClient(app_mod.app)
+    resp = client.post(
+        "/ask",
+        json={
+            "query": "với 6.5 ielts tôi có đủ điều kiện tiếng anh theo chương trình đào tạo không",
+            "session_id": "s_ielts_structured_no_files",
+            "program_id": "cs_2022",
+            "file_ids": [],
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["source"] == "language_requirement"
+    norm_answer = app_mod.normalize_for_match(body["answer"])
+    assert "du dieu kien" in norm_answer
+    assert len(retrieve_calls) >= 1
+    assert all(list(call.get("file_ids") or []) == [] for call in retrieve_calls)
+    assert isinstance(body.get("citations"), list)
+    assert len(body["citations"]) >= 1
+    assert body["citations"][0]["source_file"] == "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf"
+
+
 def test_ask_electives_no_opened_uses_schedule_citation_without_retrieve(monkeypatch, tmp_path):
     app_mod = importlib.reload(importlib.import_module("app"))
     monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
