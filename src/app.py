@@ -4727,6 +4727,42 @@ def _fallback_planner_payload(
                 tool_err,
             )
             if tool_name == "consult_advisor" and len(tool_chain) == 1:
+                # If stale cache accidentally pushed many transcript files into one
+                # session, retry once with the most recent pair to avoid hard timeout.
+                if transcript_intensive and len(selected_files) > 2:
+                    trimmed_files = _normalize_file_ids(selected_files[-2:])
+                    retry_args = dict(args)
+                    retry_args["file_ids"] = trimmed_files
+                    try:
+                        retry_result = _invoke_mcp_tool(
+                            "consult_advisor",
+                            retry_args,
+                            timeout_seconds=MCP_TOOL_TIMEOUTS_TRANSCRIPT.get("consult_advisor"),
+                        )
+                        logger.info(
+                            "Planner fallback consult_advisor recovered with trimmed file set for session %s: %s -> %s",
+                            session_id,
+                            len(selected_files),
+                            len(trimmed_files),
+                        )
+                        return {
+                            "source": "academic_advisor",
+                            "context": _context_to_text(retry_result),
+                            "memory": memory_context,
+                            "chunk_index": None,
+                            "route_meta": {
+                                "intent": "planner_fallback",
+                                "confidence": 0.0,
+                                "tool_used": "consult_advisor",
+                                "fallback_stage": "fallback_advisor_trimmed_retry",
+                            },
+                        }
+                    except Exception as retry_err:
+                        logger.warning(
+                            "Planner fallback consult_advisor trimmed retry failed for session %s: %s",
+                            session_id,
+                            retry_err,
+                        )
                 return {
                     "source": "error",
                     "context": (

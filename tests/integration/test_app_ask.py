@@ -3045,6 +3045,51 @@ def test_ask_transcript_bypass_returns_error_when_advisor_times_out(monkeypatch,
     assert not any(name == "retrieve_chunks" for name, _ in invoke_log)
 
 
+def test_ask_transcript_timeout_retries_with_trimmed_files(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    (app_mod.SESSION_CACHE_DIR).mkdir(parents=True, exist_ok=True)
+
+    invoke_log: list[tuple[str, list[str], float | None]] = []
+
+    def fake_invoke(tool, args, timeout=None):
+        if tool == "get_available_programs":
+            return {"programs": [{"id": "cs_2022", "display_name": "CS"}]}
+        if tool == "memory_get":
+            return []
+        if tool == "consult_advisor":
+            file_ids = [str(item) for item in (args.get("file_ids") or [])]
+            invoke_log.append((tool, file_ids, timeout))
+            if len(file_ids) > 2:
+                raise RuntimeError("simulated advisor timeout on large file set")
+            return "trimmed-advisor-answer"
+        if tool == "memory_add":
+            return "ok"
+        return "ok"
+
+    monkeypatch.setattr(app_mod.mcp_client, "invoke", fake_invoke)
+
+    client = TestClient(app_mod.app)
+    resp = client.post(
+        "/ask",
+        json={
+            "query": "toi can ban kiem tra giup toi xem toi con thieu nhung mon nao theo chuong trinh dao tao voi",
+            "session_id": "s_transcript_trimmed_retry",
+            "program_id": "cs_2022",
+            "file_ids": ["a.pdf", "b.pdf", "c.pdf", "d.pdf"],
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["answer"] == "trimmed-advisor-answer"
+
+    consult_calls = [entry for entry in invoke_log if entry[0] == "consult_advisor"]
+    assert len(consult_calls) == 2
+    assert len(consult_calls[0][1]) == 4
+    assert len(consult_calls[1][1]) == 2
+    assert all(timeout == app_mod.MCP_TOOL_TIMEOUTS_TRANSCRIPT["consult_advisor"] for _, _, timeout in consult_calls)
+
+
 def test_ask_missing_subjects_prefers_advisor_even_when_structured_route_is_high_confidence(monkeypatch, tmp_path):
     app_mod = importlib.reload(importlib.import_module("app"))
     monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
