@@ -117,6 +117,31 @@ def test_save_session_files_for_authenticated_user_does_not_inherit_legacy(monke
     assert legacy_ids == ["legacy-1.pdf", "legacy-2.pdf"]
 
 
+def test_authenticated_files_endpoint_ignores_untracked_session_cache_files(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "PDF_DIR", tmp_path / "pdfs")
+    monkeypatch.setattr(app_mod, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    monkeypatch.setattr(app_mod, "blob_mode_enabled", lambda: False)
+    app_mod.PDF_DIR.mkdir(parents=True, exist_ok=True)
+    app_mod.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    app_mod.SESSION_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    app_mod.loaded_file_ids = set()
+    app_mod.file_meta = {}
+
+    owner_id = "student@example.com"
+    session_id = "session-a"
+    (app_mod.PDF_DIR / "owned.pdf").write_bytes(b"%PDF-1.4")
+    session_dir = app_mod.DATA_DIR / "sessions" / session_id / "pdfs"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    # Stale file exists physically in session cache dir but is not tracked in this session meta.
+    (session_dir / "stale-cache.pdf").write_bytes(b"%PDF-1.4")
+    app_mod._save_session_files(session_id, ["owned.pdf"], user_id=owner_id)
+
+    files = app_mod._list_transcript_files(session_id, user_id=owner_id)
+    assert [item["file_id"] for item in files] == ["owned.pdf"]
+
+
 def test_delete_uploaded_file_removes_it_from_session(monkeypatch, tmp_path):
     app_mod = importlib.reload(importlib.import_module("app"))
     monkeypatch.setattr(app_mod, "PDF_DIR", tmp_path / "pdfs")

@@ -5145,11 +5145,29 @@ def _sync_transcript_blobs_to_local(session_id: Optional[str] = None) -> None:
         logger.warning("Khong sync duoc transcript blobs cho session=%s: %s", session_id, exc)
 
 
+def _sync_transcript_blob_file_to_local(file_id: str, session_id: Optional[str] = None) -> None:
+    if not blob_mode_enabled():
+        return
+    safe_file = Path(str(file_id or "").strip()).name
+    if not safe_file:
+        return
+    safe_session = _normalize_session_id(session_id) if session_id else None
+    object_key = build_transcript_key(safe_file, session_id=safe_session)
+    local_path = local_path_from_key(object_key)
+    if local_path.exists():
+        return
+    try:
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        get_blob_store().download_to_path(object_key, local_path)
+    except Exception:
+        # Best-effort sync only. Listing must stay scoped even if blob download fails.
+        return
+
+
 def _list_transcript_files(
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
 ) -> List[Dict[str, str]]:
-    _sync_transcript_blobs_to_local(session_id=session_id)
     items: Dict[str, Dict[str, str]] = {}
 
     def _add_file(path: Path, original_name: Optional[str] = None) -> None:
@@ -5172,6 +5190,7 @@ def _list_transcript_files(
         for fid in session_ids:
             if not fid:
                 continue
+            _sync_transcript_blob_file_to_local(fid, session_id=safe_session)
             local_path = PDF_DIR / fid
             session_path = session_pdf_dir / fid
             if local_path.exists():
@@ -5183,9 +5202,6 @@ def _list_transcript_files(
                     "file_id": fid,
                     "file_name": str(file_meta.get(fid) or fid),
                 }
-        if session_pdf_dir.exists():
-            for pdf_path in sorted(session_pdf_dir.glob("*.pdf")):
-                _add_file(pdf_path)
         return list(items.values())
 
     for fid in sorted(loaded_file_ids):
