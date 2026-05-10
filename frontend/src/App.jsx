@@ -862,6 +862,7 @@ export default function App() {
   const [historyList, setHistoryList] = useState([]);
   const [uploadedFile, setUploadedFile] = useState(null);
   const [files, setFiles] = useState([]);
+  const [filesSessionId, setFilesSessionId] = useState("");
   const [deletingFileIds, setDeletingFileIds] = useState({});
   const [selectedFilesBySession, setSelectedFilesBySession] = useState(() => {
     return initialGuestChatState.selectedFilesBySession;
@@ -903,6 +904,8 @@ export default function App() {
   const selectedProgramBySessionRef = useRef(selectedProgramBySession);
   const pendingProgramBySessionRef = useRef(pendingProgramBySession);
   const selectedFilesBySessionRef = useRef(selectedFilesBySession);
+  const currentSessionRef = useRef(currentSession);
+  const lastFilesRequestRef = useRef("");
 
   const fileInputRef = useRef(null);
   const resourceUploadInputRef = useRef(null);
@@ -927,7 +930,10 @@ export default function App() {
   const selectedNames = selectedFileIds
     .filter((id) => fileNameById.has(id))
     .map((id) => fileNameById.get(id));
-  const visibleFiles = useMemo(() => files, [files]);
+  const visibleFiles = useMemo(
+    () => (filesSessionId && filesSessionId === currentSession ? files : []),
+    [currentSession, files, filesSessionId]
+  );
   const currentSelectedProgramId = selectedProgramBySession[currentSession] || "";
   const currentPendingProgramId =
     pendingProgramBySession[currentSession] || currentSelectedProgramId || "";
@@ -945,6 +951,10 @@ export default function App() {
   useEffect(() => {
     selectedFilesBySessionRef.current = selectedFilesBySession;
   }, [selectedFilesBySession]);
+
+  useEffect(() => {
+    currentSessionRef.current = currentSession;
+  }, [currentSession]);
 
   const mailConnected = Boolean(mailStatus?.connected);
   const isGoogleSignedIn = Boolean(authState?.authenticated);
@@ -1027,13 +1037,25 @@ export default function App() {
   const handleSelectAllFiles = () => updateSelectedFiles(currentSession, files.map((f) => f.file_id), { persist: true });
 
   const refreshFiles = useCallback(async (sessionId = currentSession) => {
+    const targetSessionId = String(sessionId || "").trim();
+    if (!targetSessionId) {
+      filesRef.current = [];
+      setFiles([]);
+      setFilesSessionId("");
+      return;
+    }
+    const requestId = `${targetSessionId}:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+    lastFilesRequestRef.current = requestId;
     try {
-      const data = await fetchFiles(sessionId);
+      const data = await fetchFiles(targetSessionId);
+      if (lastFilesRequestRef.current !== requestId) return;
+      if (currentSessionRef.current !== targetSessionId) return;
       const scopedFiles = mergeFileLists(data);
       filesRef.current = scopedFiles;
       setFiles(scopedFiles);
+      setFilesSessionId(targetSessionId);
       const validFileIds = new Set(scopedFiles.map((file) => file?.file_id).filter(Boolean));
-      const currentSelectedIds = selectedFilesBySessionRef.current[sessionId] || [];
+      const currentSelectedIds = selectedFilesBySessionRef.current[targetSessionId] || [];
       const prunedSelectedIds = normalizeFileIds(currentSelectedIds.filter((id) => validFileIds.has(id)));
       const selectionChanged =
         prunedSelectedIds.length !== currentSelectedIds.length ||
@@ -1041,18 +1063,18 @@ export default function App() {
       if (selectionChanged) {
         selectedFilesBySessionRef.current = {
           ...selectedFilesBySessionRef.current,
-          [sessionId]: prunedSelectedIds,
+          [targetSessionId]: prunedSelectedIds,
         };
         setSelectedFilesBySession((prev) => ({
           ...prev,
-          [sessionId]: prunedSelectedIds,
+          [targetSessionId]: prunedSelectedIds,
         }));
         if (authState.authenticated) {
           const programId =
-            selectedProgramBySessionRef.current[sessionId] ||
-            pendingProgramBySessionRef.current[sessionId] ||
+            selectedProgramBySessionRef.current[targetSessionId] ||
+            pendingProgramBySessionRef.current[targetSessionId] ||
             null;
-          updateChatSessionApi(sessionId, {
+          updateChatSessionApi(targetSessionId, {
             selected_program_id: programId,
             selected_file_ids: prunedSelectedIds,
           }).catch((err) => console.error("Prune server chat files failed", err));
@@ -1529,6 +1551,10 @@ export default function App() {
   };
 
   const handleSwitchSession = (sessionId) => {
+    const normalizedSessionId = String(sessionId || "").trim();
+    filesRef.current = [];
+    setFiles([]);
+    setFilesSessionId(normalizedSessionId);
     setCurrentSession(sessionId);
     setInputStr("");
     setUploadedFile(null);
@@ -1554,22 +1580,28 @@ export default function App() {
   const handleDeleteUploadedFile = async (fileId, fileName, event) => {
     event?.stopPropagation();
     if (!fileId || deletingFileIds[fileId]) return;
+    const sessionIdAtClick = currentSessionRef.current;
     const ok = window.confirm(`Xóa file "${fileName || fileId}" khỏi phiên hiện tại?`);
     if (!ok) return;
 
     setDeletingFileIds((prev) => ({ ...prev, [fileId]: true }));
     try {
-      await deleteUploadedFile(fileId, currentSession);
+      await deleteUploadedFile(fileId, sessionIdAtClick);
       filesRef.current = filesRef.current.filter((file) => file.file_id !== fileId);
       setFiles((prev) => prev.filter((file) => file.file_id !== fileId));
-      updateSelectedFiles(currentSession, (prev) => (prev || []).filter((id) => id !== fileId), { persist: true });
+      updateSelectedFiles(sessionIdAtClick, (prev) => (prev || []).filter((id) => id !== fileId), { persist: true });
       setUploadedFile(null);
-      await refreshFiles(currentSession);
+      await refreshFiles(sessionIdAtClick);
     } catch (err) {
-      updateMessages(currentSession, (prev) => [
-        ...prev,
-        { type: "system", text: `Lỗi xóa file: ${err.message}` },
-      ]);
+      const errorText = normalizeQueryForIntent(err?.message || "").replace(/đ/g, "d");
+      if (errorText.includes("khong nam trong phien hien tai")) {
+        await refreshFiles(sessionIdAtClick);
+      } else {
+        updateMessages(sessionIdAtClick, (prev) => [
+          ...prev,
+          { type: "system", text: `Lỗi xóa file: ${err.message}` },
+        ]);
+      }
     } finally {
       setDeletingFileIds((prev) => {
         const next = { ...prev };
