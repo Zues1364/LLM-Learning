@@ -1025,8 +1025,9 @@ export default function App() {
   const refreshFiles = useCallback(async (sessionId = currentSession) => {
     try {
       const data = await fetchFiles(sessionId);
-      filesRef.current = mergeFileLists(filesRef.current, data);
-      setFiles((prev) => mergeFileLists(prev, data));
+      const scopedFiles = mergeFileLists(data);
+      filesRef.current = scopedFiles;
+      setFiles(scopedFiles);
     } catch (err) {
       console.error("Fetch files failed", err);
     }

@@ -35,3 +35,32 @@ def test_upload_pdf_saves_and_tracks(monkeypatch, tmp_path):
     assert fid in app_mod.loaded_file_ids
     assert app_mod.last_uploaded_file_ids == [fid]
     assert (app_mod.PDF_DIR / fid).exists()
+
+
+def test_files_endpoint_scopes_results_to_session(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "PDF_DIR", tmp_path / "pdfs")
+    monkeypatch.setattr(app_mod, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    monkeypatch.setattr(app_mod, "blob_mode_enabled", lambda: False)
+    app_mod.PDF_DIR.mkdir(parents=True, exist_ok=True)
+    app_mod.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    app_mod.SESSION_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    app_mod.loaded_file_ids = set()
+    app_mod.file_meta = {}
+
+    (app_mod.PDF_DIR / "global.pdf").write_bytes(b"%PDF-1.4")
+    (app_mod.PDF_DIR / "owned.pdf").write_bytes(b"%PDF-1.4")
+    app_mod._save_session_files("session-a", ["owned.pdf"])
+
+    client = TestClient(app_mod.app)
+    scoped = client.get("/files?session_id=session-a")
+    empty_session = client.get("/files?session_id=session-b")
+    legacy = client.get("/files")
+
+    assert scoped.status_code == 200
+    assert [item["file_id"] for item in scoped.json()] == ["owned.pdf"]
+    assert empty_session.status_code == 200
+    assert empty_session.json() == []
+    assert legacy.status_code == 200
+    assert {item["file_id"] for item in legacy.json()} == {"global.pdf", "owned.pdf"}

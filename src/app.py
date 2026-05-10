@@ -5067,10 +5067,12 @@ def _sync_transcript_file_to_blob(local_path: Path, session_id: Optional[str] = 
 def _sync_transcript_blobs_to_local(session_id: Optional[str] = None) -> None:
     if not blob_mode_enabled():
         return
-    prefixes = ["sessions/global/pdfs/"]
     safe_session = _normalize_session_id(session_id) if session_id else None
-    if safe_session and safe_session != "global":
-        prefixes.append(f"sessions/{safe_session}/pdfs/")
+    prefixes = (
+        [f"sessions/{safe_session}/pdfs/"]
+        if safe_session and safe_session != "global"
+        else ["sessions/global/pdfs/"]
+    )
     try:
         store = get_blob_store()
         for prefix in prefixes:
@@ -5087,7 +5089,10 @@ def _sync_transcript_blobs_to_local(session_id: Optional[str] = None) -> None:
         logger.warning("Khong sync duoc transcript blobs cho session=%s: %s", session_id, exc)
 
 
-def _list_transcript_files(session_id: Optional[str] = None) -> List[Dict[str, str]]:
+def _list_transcript_files(
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> List[Dict[str, str]]:
     _sync_transcript_blobs_to_local(session_id=session_id)
     items: Dict[str, Dict[str, str]] = {}
 
@@ -5100,13 +5105,35 @@ def _list_transcript_files(session_id: Optional[str] = None) -> List[Dict[str, s
             "file_name": str(original_name or file_meta.get(file_id) or file_id),
         }
 
+    safe_session = _normalize_session_id(session_id) if session_id else None
+    if safe_session and safe_session != "global":
+        session_ids = _load_session_files(safe_session, user_id=user_id)
+        session_pdf_dir = DATA_DIR / "sessions" / safe_session / "pdfs"
+        for fid in session_ids:
+            if not fid:
+                continue
+            local_path = PDF_DIR / fid
+            session_path = session_pdf_dir / fid
+            if local_path.exists():
+                _add_file(local_path, file_meta.get(fid, fid))
+            elif session_path.exists():
+                _add_file(session_path, file_meta.get(fid, fid))
+            else:
+                items[fid] = {
+                    "file_id": fid,
+                    "file_name": str(file_meta.get(fid) or fid),
+                }
+        if session_pdf_dir.exists():
+            for pdf_path in sorted(session_pdf_dir.glob("*.pdf")):
+                _add_file(pdf_path)
+        return list(items.values())
+
     for fid in sorted(loaded_file_ids):
         _add_file(PDF_DIR / fid, file_meta.get(fid, fid))
     if PDF_DIR.exists():
         for pdf_path in sorted(PDF_DIR.glob("*.pdf")):
             _add_file(pdf_path)
 
-    safe_session = _normalize_session_id(session_id) if session_id else None
     if safe_session:
         session_pdf_dir = DATA_DIR / "sessions" / safe_session / "pdfs"
         if session_pdf_dir.exists():
@@ -5749,7 +5776,8 @@ async def upload_pdf(
 @app.get("/files")
 def list_files(request: Request, session_id: Optional[str] = Query(default=None)):
     normalized_session = _normalize_session_id(session_id) if session_id else None
-    return _list_transcript_files(session_id=normalized_session)
+    user_id = _current_user_id_from_request(request)
+    return _list_transcript_files(session_id=normalized_session, user_id=user_id)
 
 
 @app.post("/upload_pdfs")
