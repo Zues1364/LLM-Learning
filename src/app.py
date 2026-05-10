@@ -5159,6 +5159,59 @@ def _list_transcript_files(
     return list(items.values())
 
 
+def _delete_transcript_file_from_session(
+    session_id: str,
+    file_id: str,
+    user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    safe_session = _normalize_session_id(session_id)
+    safe_file = Path(str(file_id or "").strip()).name
+    if not safe_session or safe_session == "global":
+        raise HTTPException(status_code=400, detail="Can cung cap session_id hop le de xoa file.")
+    if not safe_file or not safe_file.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="File PDF khong hop le.")
+
+    current_ids = _load_session_files(
+        safe_session,
+        user_id=user_id,
+        allow_legacy_fallback=not bool(user_id),
+    )
+    session_pdf_path = DATA_DIR / "sessions" / safe_session / "pdfs" / safe_file
+    global_pdf_path = PDF_DIR / safe_file
+    was_session_file = safe_file in current_ids or session_pdf_path.exists()
+    if not was_session_file:
+        raise HTTPException(status_code=404, detail="File khong nam trong phien hien tai.")
+
+    next_ids = [fid for fid in current_ids if fid != safe_file]
+    _save_session_files(safe_session, next_ids, user_id=user_id)
+    if user_id:
+        try:
+            memory.update_chat_session(
+                session_id=safe_session,
+                user_id=user_id,
+                selected_file_ids=next_ids,
+            )
+        except Exception as exc:
+            logger.warning("Khong cap nhat selected_file_ids sau khi xoa file: %s", exc)
+
+    for path in (session_pdf_path, global_pdf_path):
+        try:
+            if path.exists():
+                path.unlink()
+        except Exception as exc:
+            logger.warning("Khong xoa duoc file PDF %s: %s", path, exc)
+    delete_blob_key(build_transcript_key(safe_file, session_id=safe_session))
+    file_meta.pop(safe_file, None)
+    loaded_file_ids.discard(safe_file)
+
+    return {
+        "message": "Da xoa file khoi phien hien tai",
+        "session_id": safe_session,
+        "file_id": safe_file,
+        "selected_file_ids": next_ids,
+    }
+
+
 def _save_resource_batch(
     files: List[UploadFile],
     target_dir: Path,
@@ -5794,6 +5847,12 @@ def list_files(request: Request, session_id: Optional[str] = Query(default=None)
     normalized_session = _normalize_session_id(session_id) if session_id else None
     user_id = _current_user_id_from_request(request)
     return _list_transcript_files(session_id=normalized_session, user_id=user_id)
+
+
+@app.delete("/files/{file_id}")
+def delete_uploaded_file(request: Request, file_id: str, session_id: str = Query(...)):
+    user_id = _current_user_id_from_request(request)
+    return _delete_transcript_file_from_session(session_id=session_id, file_id=file_id, user_id=user_id)
 
 
 @app.post("/upload_pdfs")

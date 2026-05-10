@@ -91,3 +91,29 @@ def test_authenticated_session_files_do_not_fallback_to_legacy_meta(monkeypatch,
 
     assert [item["file_id"] for item in owner_files] == ["owner.pdf"]
     assert [item["file_id"] for item in legacy_files] == ["legacy.pdf"]
+
+
+def test_delete_uploaded_file_removes_it_from_session(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "PDF_DIR", tmp_path / "pdfs")
+    monkeypatch.setattr(app_mod, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    monkeypatch.setattr(app_mod, "blob_mode_enabled", lambda: False)
+    app_mod.PDF_DIR.mkdir(parents=True, exist_ok=True)
+    app_mod.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    app_mod.SESSION_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    app_mod.loaded_file_ids = set()
+    app_mod.file_meta = {}
+
+    (app_mod.PDF_DIR / "owned.pdf").write_bytes(b"%PDF-1.4")
+    app_mod.file_meta["owned.pdf"] = "Owned transcript.pdf"
+    app_mod.loaded_file_ids.add("owned.pdf")
+    app_mod._save_session_files("session-a", ["owned.pdf"])
+
+    client = TestClient(app_mod.app)
+    resp = client.delete("/files/owned.pdf?session_id=session-a")
+
+    assert resp.status_code == 200
+    assert resp.json()["selected_file_ids"] == []
+    assert app_mod._list_transcript_files("session-a") == []
+    assert not (app_mod.PDF_DIR / "owned.pdf").exists()

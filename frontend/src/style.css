@@ -841,6 +841,32 @@ body {
   font-size: 16px;
 }
 
+.file-chip-delete {
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(248, 113, 113, 0.28);
+  border-radius: 8px;
+  background: rgba(127, 29, 29, 0.18);
+  color: #fca5a5;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.file-chip-delete:hover:not(:disabled) {
+  border-color: rgba(248, 113, 113, 0.55);
+  background: rgba(239, 68, 68, 0.2);
+  color: #fecaca;
+}
+
+.file-chip-delete:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 /* Input Row */
 .input-row {
   display: flex;

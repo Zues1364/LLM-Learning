@@ -557,6 +557,14 @@ async function fetchFiles(sessionId) {
   return res.json();
 }
 
+async function deleteUploadedFile(fileId, sessionId) {
+  const url = new URL(`${API_BASE}/files/${encodeURIComponent(fileId)}`);
+  url.searchParams.set("session_id", sessionId || "");
+  const res = await fetch(url.toString(), { method: "DELETE", credentials: "include" });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 async function deleteSessionApi(sessionId) {
   const res = await fetch(`${API_BASE}/session`, {
     method: "DELETE",
@@ -854,6 +862,7 @@ export default function App() {
   const [historyList, setHistoryList] = useState([]);
   const [uploadedFile, setUploadedFile] = useState(null);
   const [files, setFiles] = useState([]);
+  const [deletingFileIds, setDeletingFileIds] = useState({});
   const [selectedFilesBySession, setSelectedFilesBySession] = useState(() => {
     return initialGuestChatState.selectedFilesBySession;
   });
@@ -1540,6 +1549,34 @@ export default function App() {
       }
       return Array.from(set);
     }, { persist: true });
+  };
+
+  const handleDeleteUploadedFile = async (fileId, fileName, event) => {
+    event?.stopPropagation();
+    if (!fileId || deletingFileIds[fileId]) return;
+    const ok = window.confirm(`Xóa file "${fileName || fileId}" khỏi phiên hiện tại?`);
+    if (!ok) return;
+
+    setDeletingFileIds((prev) => ({ ...prev, [fileId]: true }));
+    try {
+      await deleteUploadedFile(fileId, currentSession);
+      filesRef.current = filesRef.current.filter((file) => file.file_id !== fileId);
+      setFiles((prev) => prev.filter((file) => file.file_id !== fileId));
+      updateSelectedFiles(currentSession, (prev) => (prev || []).filter((id) => id !== fileId), { persist: true });
+      setUploadedFile(null);
+      await refreshFiles(currentSession);
+    } catch (err) {
+      updateMessages(currentSession, (prev) => [
+        ...prev,
+        { type: "system", text: `Lỗi xóa file: ${err.message}` },
+      ]);
+    } finally {
+      setDeletingFileIds((prev) => {
+        const next = { ...prev };
+        delete next[fileId];
+        return next;
+      });
+    }
   };
 
   const handleDeleteSession = async (sessionId) => {
@@ -2816,6 +2853,16 @@ export default function App() {
                           <div className="file-chip-name">{f.file_name}</div>
                           <div className="file-chip-meta">PDF</div>
                         </div>
+                        <button
+                          type="button"
+                          className="file-chip-delete"
+                          onClick={(event) => handleDeleteUploadedFile(f.file_id, f.file_name, event)}
+                          disabled={Boolean(deletingFileIds[f.file_id])}
+                          title="Xóa file khỏi phiên"
+                          aria-label={`Xóa ${f.file_name}`}
+                        >
+                          <i className={`fas ${deletingFileIds[f.file_id] ? "fa-circle-notch fa-spin" : "fa-trash-alt"}`}></i>
+                        </button>
                         <div className="file-chip-check">
                           {active ? <i className="fas fa-check-circle"></i> : <i className="far fa-circle"></i>}
                         </div>
