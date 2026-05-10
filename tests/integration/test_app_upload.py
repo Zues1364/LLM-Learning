@@ -64,3 +64,30 @@ def test_files_endpoint_scopes_results_to_session(monkeypatch, tmp_path):
     assert empty_session.json() == []
     assert legacy.status_code == 200
     assert {item["file_id"] for item in legacy.json()} == {"global.pdf", "owned.pdf"}
+
+
+def test_authenticated_session_files_do_not_fallback_to_legacy_meta(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "PDF_DIR", tmp_path / "pdfs")
+    monkeypatch.setattr(app_mod, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    monkeypatch.setattr(app_mod, "blob_mode_enabled", lambda: False)
+    app_mod.PDF_DIR.mkdir(parents=True, exist_ok=True)
+    app_mod.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    app_mod.SESSION_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    app_mod.loaded_file_ids = set()
+    app_mod.file_meta = {}
+
+    (app_mod.PDF_DIR / "legacy.pdf").write_bytes(b"%PDF-1.4")
+    (app_mod.PDF_DIR / "owner.pdf").write_bytes(b"%PDF-1.4")
+    app_mod._save_session_files("shared-session", ["legacy.pdf"])
+
+    assert app_mod._list_transcript_files("shared-session", user_id="student@example.com") == []
+
+    app_mod._save_session_files("shared-session", ["owner.pdf"], user_id="student@example.com")
+
+    owner_files = app_mod._list_transcript_files("shared-session", user_id="student@example.com")
+    legacy_files = app_mod._list_transcript_files("shared-session")
+
+    assert [item["file_id"] for item in owner_files] == ["owner.pdf"]
+    assert [item["file_id"] for item in legacy_files] == ["legacy.pdf"]

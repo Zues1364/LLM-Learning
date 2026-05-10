@@ -915,15 +915,10 @@ export default function App() {
     });
     return map;
   }, [files]);
-  const selectedNames = selectedFileIds.map((id) => fileNameById.get(id) || id);
-  const visibleFiles = useMemo(
-    () =>
-      mergeFileLists(
-        files,
-        selectedFileIds.map((id) => ({ file_id: id, file_name: fileNameById.get(id) || id }))
-      ),
-    [fileNameById, files, selectedFileIds]
-  );
+  const selectedNames = selectedFileIds
+    .filter((id) => fileNameById.has(id))
+    .map((id) => fileNameById.get(id));
+  const visibleFiles = useMemo(() => files, [files]);
   const currentSelectedProgramId = selectedProgramBySession[currentSession] || "";
   const currentPendingProgramId =
     pendingProgramBySession[currentSession] || currentSelectedProgramId || "";
@@ -1028,10 +1023,36 @@ export default function App() {
       const scopedFiles = mergeFileLists(data);
       filesRef.current = scopedFiles;
       setFiles(scopedFiles);
+      const validFileIds = new Set(scopedFiles.map((file) => file?.file_id).filter(Boolean));
+      const currentSelectedIds = selectedFilesBySessionRef.current[sessionId] || [];
+      const prunedSelectedIds = normalizeFileIds(currentSelectedIds.filter((id) => validFileIds.has(id)));
+      const selectionChanged =
+        prunedSelectedIds.length !== currentSelectedIds.length ||
+        prunedSelectedIds.some((id, index) => id !== currentSelectedIds[index]);
+      if (selectionChanged) {
+        selectedFilesBySessionRef.current = {
+          ...selectedFilesBySessionRef.current,
+          [sessionId]: prunedSelectedIds,
+        };
+        setSelectedFilesBySession((prev) => ({
+          ...prev,
+          [sessionId]: prunedSelectedIds,
+        }));
+        if (authState.authenticated) {
+          const programId =
+            selectedProgramBySessionRef.current[sessionId] ||
+            pendingProgramBySessionRef.current[sessionId] ||
+            null;
+          updateChatSessionApi(sessionId, {
+            selected_program_id: programId,
+            selected_file_ids: prunedSelectedIds,
+          }).catch((err) => console.error("Prune server chat files failed", err));
+        }
+      }
     } catch (err) {
       console.error("Fetch files failed", err);
     }
-  }, [currentSession]);
+  }, [authState.authenticated, currentSession, normalizeFileIds]);
 
   const refreshResources = useCallback(async (sessionId = currentSession) => {
     try {

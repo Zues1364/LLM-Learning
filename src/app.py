@@ -369,10 +369,14 @@ def _session_meta_path(session_id: str, user_id: Optional[str] = None) -> Path:
 def _normalize_file_ids(file_ids: List[str] | None) -> List[str]:
     return list(dict.fromkeys([f for f in (file_ids or []) if f]))
 
-def _load_session_meta(session_id: str, user_id: Optional[str] = None) -> Dict[str, Any]:
+def _load_session_meta(
+    session_id: str,
+    user_id: Optional[str] = None,
+    allow_legacy_fallback: bool = True,
+) -> Dict[str, Any]:
     default_meta: Dict[str, Any] = {"file_ids": [], "program_id": None}
     meta_path = _session_meta_path(session_id, user_id=user_id)
-    if user_id and not meta_path.exists():
+    if user_id and allow_legacy_fallback and not meta_path.exists():
         # Backward-compatible read for sessions created before cache ownership
         # was namespaced. Writes always go to the owner-scoped location.
         legacy_path = _session_meta_path(session_id)
@@ -408,8 +412,16 @@ def _write_session_meta(session_id: str, data: Dict[str, Any], user_id: Optional
     except Exception as e:
         logger.warning("Khong luu duoc session meta cho %s: %s", session_id, e)
 
-def _load_session_files(session_id: str, user_id: Optional[str] = None) -> List[str]:
-    return _load_session_meta(session_id, user_id=user_id).get("file_ids", [])
+def _load_session_files(
+    session_id: str,
+    user_id: Optional[str] = None,
+    allow_legacy_fallback: bool = True,
+) -> List[str]:
+    return _load_session_meta(
+        session_id,
+        user_id=user_id,
+        allow_legacy_fallback=allow_legacy_fallback,
+    ).get("file_ids", [])
 
 def _save_session_files(session_id: str, file_ids: List[str], user_id: Optional[str] = None):
     meta = _load_session_meta(session_id, user_id=user_id)
@@ -5107,7 +5119,11 @@ def _list_transcript_files(
 
     safe_session = _normalize_session_id(session_id) if session_id else None
     if safe_session and safe_session != "global":
-        session_ids = _load_session_files(safe_session, user_id=user_id)
+        session_ids = _load_session_files(
+            safe_session,
+            user_id=user_id,
+            allow_legacy_fallback=not bool(user_id),
+        )
         session_pdf_dir = DATA_DIR / "sessions" / safe_session / "pdfs"
         for fid in session_ids:
             if not fid:
