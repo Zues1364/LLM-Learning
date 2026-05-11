@@ -1186,7 +1186,7 @@ def _extract_structured_schedule_citations(context: Any, max_items: int = 10) ->
                 coverage_note = "Chưa thấy dữ liệu lịch/giảng viên cho: " + "; ".join(subject_labels)
 
     citations: List[Dict[str, Any]] = []
-    seen: Set[Tuple[str, Optional[int], Optional[int], str]] = set()
+    semantic_citations: Dict[Tuple[str, Optional[int], str], Dict[str, Any]] = {}
 
     def _to_positive_int(value: Any) -> Optional[int]:
         if value is None:
@@ -1242,21 +1242,27 @@ def _extract_structured_schedule_citations(context: Any, max_items: int = 10) ->
             excerpt_parts.append(week_note)
         excerpt = " | ".join(excerpt_parts).strip() or str(row)
 
-        dedupe_key = (source_file, source_page, source_line, excerpt[:220])
-        if dedupe_key in seen:
-            continue
-        seen.add(dedupe_key)
-        citations.append(
-            {
+        semantic_key = (source_file, source_page, excerpt[:220])
+        existing = semantic_citations.get(semantic_key)
+        if existing is None:
+            semantic_citations[semantic_key] = {
                 "source_file": source_file,
                 "chunk_index": None,
                 "page": source_page,
                 "source_line": source_line,
                 "excerpt": excerpt[:1600],
             }
-        )
-        if len(citations) >= max_items:
+        else:
+            existing_line = existing.get("source_line")
+            if existing_line is None or (
+                source_line is not None and int(source_line) < int(existing_line)
+            ):
+                existing["source_line"] = source_line
+
+        if len(semantic_citations) >= max_items:
             break
+
+    citations.extend(semantic_citations.values())
 
     if not citations:
         fallback_excerpt = coverage_note or "Nguồn dữ liệu lịch học từ structured mapping."
@@ -1428,12 +1434,18 @@ def _is_handbook_resource_name(name: str) -> bool:
     return any(marker in norm_name for marker in handbook_markers)
 
 
-def _language_handbook_resources_exist(session_id: str, user_id: Optional[str] = None) -> bool:
+def _collect_language_handbook_resources(
+    session_id: str,
+    user_id: Optional[str] = None,
+) -> List[Dict[str, str]]:
     try:
         resources = resource_loader.get_resources(session_id=session_id, user_id=user_id)
     except Exception as exc:
         logger.info("[citations] language handbook lookup failed session=%s: %s", session_id, exc)
-        return False
+        return []
+
+    handbook_resources: List[Dict[str, str]] = []
+    seen_keys: Set[Tuple[str, str]] = set()
     for item in resources:
         if not isinstance(item, dict):
             continue
@@ -1441,9 +1453,51 @@ def _language_handbook_resources_exist(session_id: str, user_id: Optional[str] =
         if resource_type not in {"pdf", "html"}:
             continue
         source_name = str(item.get("name") or "").strip()
-        if source_name and _is_handbook_resource_name(source_name):
-            return True
-    return False
+        if not source_name or not _is_handbook_resource_name(source_name):
+            continue
+
+        scoped_user: Optional[str] = None
+        scoped_session: Optional[str] = None
+        normalized_name = source_name
+        ui_id = str(item.get("id") or "").strip()
+        if ui_id:
+            try:
+                parsed_user, parsed_session, parsed_name = resource_loader._parse_resource_ui_id(  # noqa: SLF001
+                    ui_id,
+                    session_id=session_id,
+                    user_id=user_id,
+                )
+                scoped_user = parsed_user
+                scoped_session = parsed_session
+                if parsed_name:
+                    normalized_name = str(parsed_name).strip()
+            except Exception:
+                pass
+
+        try:
+            resource_id = resource_loader._resource_id(  # noqa: SLF001
+                normalized_name,
+                session_id=scoped_session,
+                user_id=scoped_user,
+            )
+        except Exception:
+            resource_id = normalized_name
+
+        key = (normalized_name, resource_id)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        handbook_resources.append(
+            {
+                "source_name": normalized_name,
+                "resource_id": resource_id,
+            }
+        )
+    return handbook_resources
+
+
+def _language_handbook_resources_exist(session_id: str, user_id: Optional[str] = None) -> bool:
+    return bool(_collect_language_handbook_resources(session_id=session_id, user_id=user_id))
 
 
 def _extract_language_requirement_resource_citations(
@@ -1555,33 +1609,61 @@ def _backfill_retrieve_citations_for_answer(
     """
     if _query_requires_transcript_files(query) and not _query_prefers_global_resource_retrieval(query):
         return []
-    # For non-transcript queries, do not constrain retrieval to selected transcript files.
-    # Otherwise citations can point to irrelevant grade-sheet chunks instead of the
-    # canonical resource (e.g. handbook/timetable).
-    retrieve_file_ids: List[str] = []
-    try:
-        retrieve_result = _invoke_mcp_tool(
-            "retrieve_chunks",
-            {
-                "question": query,
-                "top_k": 25,
-                "file_ids": retrieve_file_ids,
-                "session_id": session_id,
-            },
-            timeout_seconds=MCP_TOOL_TIMEOUTS.get("retrieve_chunks"),
-        )
-    except Exception as exc:
-        logger.info("[citations] backfill retrieve_chunks failed session=%s: %s", session_id, exc)
-        return []
-
-    citations = _extract_retrieve_citations(
-        retrieve_result,
-        max_items=max_items,
-        query=query,
+    is_language_query = _query_targets_language_requirement(query)
+    handbook_resources = (
+        _collect_language_handbook_resources(session_id=session_id, user_id=user_id)
+        if is_language_query
+        else []
     )
-    if _query_targets_language_requirement(query):
-        handbook_exists = _language_handbook_resources_exist(session_id=session_id, user_id=user_id)
-        if handbook_exists:
+    handbook_resource_ids = [
+        str(item.get("resource_id") or "").strip()
+        for item in handbook_resources
+        if str(item.get("resource_id") or "").strip()
+    ]
+
+    retrieve_attempts: List[Tuple[str, List[str]]] = []
+    if is_language_query and handbook_resource_ids:
+        handbook_focus_query = (
+            f"{query}\n"
+            "Bang tham chieu ket qua cac bai thi tieng Anh (IELTS, TOEIC, TOEFL, VSTEP, Aptis, Cambridge)."
+        )
+        retrieve_attempts.append((handbook_focus_query, handbook_resource_ids))
+        retrieve_attempts.append((query, handbook_resource_ids))
+
+    # For non-transcript queries, default retrieval should not constrain to selected transcript files.
+    # Otherwise citations can point to irrelevant grade-sheet chunks instead of canonical resources.
+    retrieve_attempts.append((query, []))
+
+    last_retrieve_result: Any = None
+    for attempt_query, attempt_file_ids in retrieve_attempts:
+        try:
+            retrieve_result = _invoke_mcp_tool(
+                "retrieve_chunks",
+                {
+                    "question": attempt_query,
+                    "top_k": 25,
+                    "file_ids": list(attempt_file_ids),
+                    "session_id": session_id,
+                },
+                timeout_seconds=MCP_TOOL_TIMEOUTS.get("retrieve_chunks"),
+            )
+        except Exception as exc:
+            logger.info(
+                "[citations] backfill retrieve_chunks failed session=%s query=%s file_ids=%s err=%s",
+                session_id,
+                attempt_query[:80],
+                list(attempt_file_ids),
+                exc,
+            )
+            continue
+
+        last_retrieve_result = retrieve_result
+        citations = _extract_retrieve_citations(
+            retrieve_result,
+            max_items=max_items,
+            query=attempt_query,
+        )
+        if is_language_query and handbook_resource_ids:
             handbook_citations = [
                 item
                 for item in citations
@@ -1591,14 +1673,20 @@ def _backfill_retrieve_citations_for_answer(
                 for idx, item in enumerate(handbook_citations, start=1):
                     item["id"] = idx
                 return handbook_citations[:max_items]
-            # Force downstream fallback to handbook resource citations when retrieve
-            # points to non-handbook chunks (e.g. generic CTDT/chuẩn đầu ra pages).
-            return []
-    if citations:
-        return citations
+            continue
+
+        if citations:
+            return citations
+
+    if is_language_query and handbook_resource_ids:
+        # Force downstream fallback to handbook resource citations when retrieval
+        # does not provide handbook chunks.
+        return []
 
     # Defensive fallback in case retrieve payload is structured JSON-like.
-    return _extract_structured_schedule_citations(retrieve_result, max_items=max_items)
+    if last_retrieve_result is not None:
+        return _extract_structured_schedule_citations(last_retrieve_result, max_items=max_items)
+    return []
 
 
 def _normalize_output_text(text: str) -> str:
