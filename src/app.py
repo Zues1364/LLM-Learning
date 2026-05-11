@@ -1624,13 +1624,21 @@ def _backfill_retrieve_citations_for_answer(
             "Bang tham chieu ket qua cac bai thi tieng Anh (IELTS, TOEIC, TOEFL, VSTEP, Aptis, Cambridge)."
         )
         retrieve_attempts.append((handbook_focus_query, []))
+        retrieve_attempts.append((query, []))
 
-    # For non-transcript queries, default retrieval should not constrain to selected transcript files.
-    # Otherwise citations can point to irrelevant grade-sheet chunks instead of canonical resources.
-    retrieve_attempts.append((query, []))
+    if not retrieve_attempts:
+        # For non-transcript queries, default retrieval should not constrain to selected transcript files.
+        # Otherwise citations can point to irrelevant grade-sheet chunks instead of canonical resources.
+        retrieve_attempts.append((query, []))
 
     last_retrieve_result: Any = None
+    default_retrieve_timeout = MCP_TOOL_TIMEOUTS.get("retrieve_chunks")
     for attempt_query, attempt_file_ids in retrieve_attempts:
+        retrieve_timeout = default_retrieve_timeout
+        if is_language_query and handbook_exists:
+            # Citation backfill should not keep the whole request hanging too long.
+            if retrieve_timeout is None or float(retrieve_timeout) > 12.0:
+                retrieve_timeout = 12.0
         try:
             retrieve_result = _invoke_mcp_tool(
                 "retrieve_chunks",
@@ -1640,7 +1648,7 @@ def _backfill_retrieve_citations_for_answer(
                     "file_ids": list(attempt_file_ids),
                     "session_id": session_id,
                 },
-                timeout_seconds=MCP_TOOL_TIMEOUTS.get("retrieve_chunks"),
+                timeout_seconds=retrieve_timeout,
             )
         except Exception as exc:
             logger.info(
