@@ -1420,7 +1420,34 @@ def _extract_language_requirement_resource_citations(
         logger.info("[citations] language resource lookup failed session=%s: %s", session_id, exc)
         return []
 
-    candidates: List[Tuple[int, str]] = []
+    def _normalize_resource_name_for_markers(name: str) -> str:
+        normalized = normalize_for_match(name or "")
+        # Resource names frequently use separators like "_" and "-", so fold them
+        # into spaces before phrase matching ("so tay hoc vu", "bang tham chieu"...).
+        normalized = re.sub(r"[_\-./]+", " ", normalized)
+        return re.sub(r"\s+", " ", normalized).strip()
+
+    handbook_markers = (
+        "so tay hoc vu",
+        "so tay",
+        "cam nang hoc vu",
+        "handbook",
+    )
+    language_markers = (
+        "ngoai ngu",
+        "ielts",
+        "toeic",
+        "toefl",
+        "vstep",
+        "aptis",
+        "cambridge",
+        "bang tham chieu",
+        "knlnn",
+        "knlnnvn",
+    )
+    policy_markers = ("quy che", "quy dinh", "chuong trinh dao tao", "ctdt", "chuan dau ra")
+
+    candidates: List[Dict[str, Any]] = []
     for item in resources:
         if not isinstance(item, dict):
             continue
@@ -1430,28 +1457,41 @@ def _extract_language_requirement_resource_citations(
         source_name = str(item.get("name") or "").strip()
         if not source_name:
             continue
-        norm_name = normalize_for_match(source_name)
+        norm_name = _normalize_resource_name_for_markers(source_name)
+        is_handbook = any(marker in norm_name for marker in handbook_markers)
         score = 0
-        if "so tay hoc vu" in norm_name:
+        if is_handbook:
             score += 6
-        if any(marker in norm_name for marker in ("ngoai ngu", "ielts", "toeic", "toefl", "vstep", "aptis", "cambridge")):
+        if any(marker in norm_name for marker in language_markers):
             score += 4
-        if any(marker in norm_name for marker in ("quy che", "chuong trinh dao tao", "ctdt")):
+        if any(marker in norm_name for marker in policy_markers):
             score += 2
         if str(item.get("scope") or "").strip().lower() == "global":
             score += 1
         if score <= 0:
             continue
-        candidates.append((score, source_name))
+        candidates.append(
+            {
+                "score": score,
+                "source_name": source_name,
+                "is_handbook": is_handbook,
+            }
+        )
 
     if not candidates:
         return []
 
-    candidates.sort(key=lambda entry: (-entry[0], entry[1]))
+    # When handbook resources exist, keep citations anchored to that source family
+    # instead of drifting to generic CTDT/chuẩn đầu ra files.
+    if any(bool(item.get("is_handbook")) for item in candidates):
+        candidates = [item for item in candidates if bool(item.get("is_handbook"))]
+
+    candidates.sort(key=lambda entry: (-int(entry.get("score") or 0), str(entry.get("source_name") or "")))
     seen: Set[str] = set()
     citations: List[Dict[str, Any]] = []
     excerpt = "Đối chiếu chuẩn ngoại ngữ Bậc 4 (tương đương IELTS 5.5) theo tài liệu học vụ/chương trình đào tạo."
-    for _, source_name in candidates:
+    for item in candidates:
+        source_name = str(item.get("source_name") or "").strip()
         if source_name in seen:
             continue
         seen.add(source_name)
