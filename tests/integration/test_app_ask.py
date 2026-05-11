@@ -3100,8 +3100,8 @@ def test_ask_ielts_requirement_prefers_handbook_table_chunk_when_available(monke
             return "ok"
         if tool == "retrieve_chunks":
             retrieve_calls.append(dict(args))
-            file_ids = [str(fid) for fid in (args.get("file_ids") or [])]
-            if handbook_name in file_ids:
+            question_norm = app_mod.normalize_for_match(str(args.get("question") or ""))
+            if "bang tham chieu" in question_norm:
                 return [
                     f"[{handbook_name} - Chunk 73 - Page 26 - Line 5] ### BẢNG THAM CHIẾU KẾT QUẢ CÁC BÀI THI TIẾNG ANH\n"
                     "| KNLNVN | IELTS | TOEFL | Aptis ESOL | Cambridge Exam | VSTEP |\n"

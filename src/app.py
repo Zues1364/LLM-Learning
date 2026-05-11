@@ -1615,20 +1615,15 @@ def _backfill_retrieve_citations_for_answer(
         if is_language_query
         else []
     )
-    handbook_resource_ids = [
-        str(item.get("resource_id") or "").strip()
-        for item in handbook_resources
-        if str(item.get("resource_id") or "").strip()
-    ]
+    handbook_exists = bool(handbook_resources)
 
     retrieve_attempts: List[Tuple[str, List[str]]] = []
-    if is_language_query and handbook_resource_ids:
+    if is_language_query and handbook_exists:
         handbook_focus_query = (
             f"{query}\n"
             "Bang tham chieu ket qua cac bai thi tieng Anh (IELTS, TOEIC, TOEFL, VSTEP, Aptis, Cambridge)."
         )
-        retrieve_attempts.append((handbook_focus_query, handbook_resource_ids))
-        retrieve_attempts.append((query, handbook_resource_ids))
+        retrieve_attempts.append((handbook_focus_query, []))
 
     # For non-transcript queries, default retrieval should not constrain to selected transcript files.
     # Otherwise citations can point to irrelevant grade-sheet chunks instead of canonical resources.
@@ -1663,7 +1658,7 @@ def _backfill_retrieve_citations_for_answer(
             max_items=max_items,
             query=attempt_query,
         )
-        if is_language_query and handbook_resource_ids:
+        if is_language_query and handbook_exists:
             handbook_citations = [
                 item
                 for item in citations
@@ -1678,7 +1673,7 @@ def _backfill_retrieve_citations_for_answer(
         if citations:
             return citations
 
-    if is_language_query and handbook_resource_ids:
+    if is_language_query and handbook_exists:
         # Force downstream fallback to handbook resource citations when retrieval
         # does not provide handbook chunks.
         return []
