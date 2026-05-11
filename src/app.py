@@ -1409,6 +1409,43 @@ def _extract_advisor_text_citations(answer: str, max_items: int = 8) -> List[Dic
     return citations
 
 
+def _normalize_resource_name_for_markers(name: str) -> str:
+    normalized = normalize_for_match(name or "")
+    normalized = re.sub(r"[_\-./]+", " ", normalized)
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _is_handbook_resource_name(name: str) -> bool:
+    norm_name = _normalize_resource_name_for_markers(name)
+    if not norm_name:
+        return False
+    handbook_markers = (
+        "so tay hoc vu",
+        "so tay",
+        "cam nang hoc vu",
+        "handbook",
+    )
+    return any(marker in norm_name for marker in handbook_markers)
+
+
+def _language_handbook_resources_exist(session_id: str, user_id: Optional[str] = None) -> bool:
+    try:
+        resources = resource_loader.get_resources(session_id=session_id, user_id=user_id)
+    except Exception as exc:
+        logger.info("[citations] language handbook lookup failed session=%s: %s", session_id, exc)
+        return False
+    for item in resources:
+        if not isinstance(item, dict):
+            continue
+        resource_type = str(item.get("type") or "").strip().lower()
+        if resource_type not in {"pdf", "html"}:
+            continue
+        source_name = str(item.get("name") or "").strip()
+        if source_name and _is_handbook_resource_name(source_name):
+            return True
+    return False
+
+
 def _extract_language_requirement_resource_citations(
     session_id: str,
     user_id: Optional[str] = None,
@@ -1420,19 +1457,6 @@ def _extract_language_requirement_resource_citations(
         logger.info("[citations] language resource lookup failed session=%s: %s", session_id, exc)
         return []
 
-    def _normalize_resource_name_for_markers(name: str) -> str:
-        normalized = normalize_for_match(name or "")
-        # Resource names frequently use separators like "_" and "-", so fold them
-        # into spaces before phrase matching ("so tay hoc vu", "bang tham chieu"...).
-        normalized = re.sub(r"[_\-./]+", " ", normalized)
-        return re.sub(r"\s+", " ", normalized).strip()
-
-    handbook_markers = (
-        "so tay hoc vu",
-        "so tay",
-        "cam nang hoc vu",
-        "handbook",
-    )
     language_markers = (
         "ngoai ngu",
         "ielts",
@@ -1458,7 +1482,7 @@ def _extract_language_requirement_resource_citations(
         if not source_name:
             continue
         norm_name = _normalize_resource_name_for_markers(source_name)
-        is_handbook = any(marker in norm_name for marker in handbook_markers)
+        is_handbook = _is_handbook_resource_name(source_name)
         score = 0
         if is_handbook:
             score += 6
@@ -1517,6 +1541,7 @@ def _backfill_retrieve_citations_for_answer(
     query: str,
     session_id: str,
     file_ids: List[str],
+    user_id: Optional[str] = None,
     max_items: int = 10,
 ) -> List[Dict[str, Any]]:
     """
@@ -1554,6 +1579,21 @@ def _backfill_retrieve_citations_for_answer(
         max_items=max_items,
         query=query,
     )
+    if _query_targets_language_requirement(query):
+        handbook_exists = _language_handbook_resources_exist(session_id=session_id, user_id=user_id)
+        if handbook_exists:
+            handbook_citations = [
+                item
+                for item in citations
+                if _is_handbook_resource_name(str(item.get("source_file") or ""))
+            ]
+            if handbook_citations:
+                for idx, item in enumerate(handbook_citations, start=1):
+                    item["id"] = idx
+                return handbook_citations[:max_items]
+            # Force downstream fallback to handbook resource citations when retrieve
+            # points to non-handbook chunks (e.g. generic CTDT/chuẩn đầu ra pages).
+            return []
     if citations:
         return citations
 
@@ -6461,6 +6501,7 @@ async def ask_question(http_request: Request, payload: QueryRequest):
                 query=resolved_query,
                 session_id=session_id,
                 file_ids=selected_files,
+                user_id=user_id,
                 max_items=10,
             )
         if source == "language_requirement" and not citations:
