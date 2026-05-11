@@ -838,6 +838,7 @@ _CITATION_FORCE_KEYWORDS: Tuple[str, ...] = (
 )
 
 _COURSE_CODE_RE = re.compile(r"\b[A-Z]{2,4}\d{3,4}[A-Z]?\b")
+_LANGUAGE_TABLE_CITATION_CACHE: Dict[str, Dict[str, Any]] = {}
 
 
 def _extract_focus_tokens(query: str, answer: str) -> Set[str]:
@@ -1434,6 +1435,139 @@ def _is_handbook_resource_name(name: str) -> bool:
     return any(marker in norm_name for marker in handbook_markers)
 
 
+def _resolve_resource_pdf_path_by_name(
+    source_name: str,
+    *,
+    session_id: str,
+    user_id: Optional[str] = None,
+) -> Optional[Path]:
+    target_name = str(source_name or "").strip()
+    if not target_name:
+        return None
+    try:
+        resources = resource_loader.get_resources(session_id=session_id, user_id=user_id)
+    except Exception:
+        resources = []
+
+    for item in resources:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("type") or "").strip().lower() != "pdf":
+            continue
+        item_name = str(item.get("name") or "").strip()
+        if item_name != target_name:
+            continue
+
+        scoped_user: Optional[str] = None
+        scoped_session: Optional[str] = None
+        normalized_name = item_name
+        ui_id = str(item.get("id") or "").strip()
+        if ui_id:
+            try:
+                parsed_user, parsed_session, parsed_name = resource_loader._parse_resource_ui_id(  # noqa: SLF001
+                    ui_id,
+                    session_id=session_id,
+                    user_id=user_id,
+                )
+                scoped_user = parsed_user
+                scoped_session = parsed_session
+                if parsed_name:
+                    normalized_name = str(parsed_name).strip()
+            except Exception:
+                pass
+
+        try:
+            pdf_dir, _, _ = resource_loader._scope_dirs(session_id=scoped_session, user_id=scoped_user)  # noqa: SLF001
+            candidate = pdf_dir / normalized_name
+            if candidate.exists():
+                return candidate
+        except Exception:
+            continue
+
+    fallback = RESOURCE_PDF_DIR / target_name
+    if fallback.exists():
+        return fallback
+    return None
+
+
+def _extract_language_table_citation_from_handbook(
+    source_name: str,
+    *,
+    session_id: str,
+    user_id: Optional[str] = None,
+    max_chars: int = 1600,
+) -> Optional[Dict[str, Any]]:
+    if not _is_handbook_resource_name(source_name):
+        return None
+    pdf_path = _resolve_resource_pdf_path_by_name(source_name, session_id=session_id, user_id=user_id)
+    if not pdf_path or not pdf_path.exists():
+        return None
+
+    try:
+        stat = pdf_path.stat()
+        cache_key = f"{pdf_path}:{int(stat.st_mtime)}:{int(stat.st_size)}"
+        cached = _LANGUAGE_TABLE_CITATION_CACHE.get(cache_key)
+        if isinstance(cached, dict) and cached:
+            return dict(cached)
+    except Exception:
+        cache_key = ""
+
+    try:
+        import pdfplumber  # type: ignore
+    except Exception:
+        return None
+
+    try:
+        with pdfplumber.open(str(pdf_path)) as pdf:
+            for page_idx, page in enumerate(pdf.pages, start=1):
+                text = str(page.extract_text() or "")
+                if not text.strip():
+                    continue
+                norm_text = normalize_for_match(text)
+                if "bang tham chieu" not in norm_text:
+                    continue
+                if "ielts" not in norm_text:
+                    continue
+
+                lines = [ln.strip() for ln in text.splitlines() if str(ln or "").strip()]
+                if not lines:
+                    continue
+
+                best_idx = -1
+                for idx, line in enumerate(lines):
+                    norm_line = normalize_for_match(line)
+                    if "ielts" not in norm_line:
+                        continue
+                    if any(token in norm_line for token in ("knln", "toeic", "toefl", "vstep", "aptis", "cambridge", "bac")):
+                        best_idx = idx
+                        break
+                if best_idx < 0:
+                    for idx, line in enumerate(lines):
+                        norm_line = normalize_for_match(line)
+                        if "bang tham chieu" in norm_line:
+                            best_idx = idx
+                            break
+                if best_idx < 0:
+                    best_idx = 0
+
+                start = max(0, best_idx - 3)
+                end = min(len(lines), best_idx + 5)
+                excerpt = "\n".join(lines[start:end]).strip()[:max_chars]
+                result = {
+                    "page": page_idx,
+                    "source_line": best_idx + 1,
+                    "excerpt": excerpt,
+                }
+                if cache_key:
+                    _LANGUAGE_TABLE_CITATION_CACHE[cache_key] = dict(result)
+                return result
+    except Exception as exc:
+        logger.info("[citations] handbook table parse failed source=%s err=%s", source_name, exc)
+        return None
+
+    return None
+
+
 def _collect_language_handbook_resources(
     session_id: str,
     user_id: Optional[str] = None,
@@ -1567,18 +1701,25 @@ def _extract_language_requirement_resource_citations(
     candidates.sort(key=lambda entry: (-int(entry.get("score") or 0), str(entry.get("source_name") or "")))
     seen: Set[str] = set()
     citations: List[Dict[str, Any]] = []
-    excerpt = "Đối chiếu chuẩn ngoại ngữ Bậc 4 (tương đương IELTS 5.5) theo tài liệu học vụ/chương trình đào tạo."
+    default_excerpt = "Đối chiếu chuẩn ngoại ngữ Bậc 4 (tương đương IELTS 5.5) theo tài liệu học vụ/chương trình đào tạo."
     for item in candidates:
         source_name = str(item.get("source_name") or "").strip()
         if source_name in seen:
             continue
         seen.add(source_name)
+        table_citation = _extract_language_table_citation_from_handbook(
+            source_name,
+            session_id=session_id,
+            user_id=user_id,
+            max_chars=1600,
+        )
+        excerpt = str((table_citation or {}).get("excerpt") or "").strip() or default_excerpt
         citations.append(
             {
                 "source_file": source_name,
                 "chunk_index": None,
-                "page": None,
-                "source_line": None,
+                "page": table_citation.get("page") if isinstance(table_citation, dict) else None,
+                "source_line": table_citation.get("source_line") if isinstance(table_citation, dict) else None,
                 "excerpt": excerpt,
             }
         )

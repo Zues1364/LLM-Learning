@@ -2960,6 +2960,44 @@ def test_ask_ielts_requirement_uses_resource_citation_when_retrieve_unavailable(
     assert body["citations"][0]["source_file"] == "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf"
 
 
+def test_extract_language_requirement_resource_citations_prefers_handbook_table_excerpt(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    (app_mod.SESSION_CACHE_DIR).mkdir(parents=True, exist_ok=True)
+
+    handbook_name = "SO_TAY_HOC_VU_KY_I_NAM_2023-2024.pdf"
+    monkeypatch.setattr(
+        app_mod.resource_loader,
+        "get_resources",
+        lambda session_id=None, user_id=None: [
+            {"type": "pdf", "name": handbook_name, "scope": "global"},
+            {"type": "html", "name": "Chuan_dau_ra_CNTT.html", "scope": "global"},
+        ],
+    )
+    monkeypatch.setattr(
+        app_mod,
+        "_extract_language_table_citation_from_handbook",
+        lambda source_name, session_id, user_id=None, max_chars=1600: {
+            "page": 26,
+            "source_line": 5,
+            "excerpt": "BẢNG THAM CHIẾU KẾT QUẢ CÁC BÀI THI TIẾNG ANH | KNLNVN | IELTS | TOEIC |",
+        },
+    )
+
+    citations = app_mod._extract_language_requirement_resource_citations(
+        session_id="s_extract_language_cite_table",
+        user_id=None,
+        max_items=3,
+    )
+
+    assert len(citations) >= 1
+    assert citations[0]["source_file"] == handbook_name
+    assert citations[0]["page"] == 26
+    assert citations[0]["source_line"] == 5
+    assert "BẢNG THAM CHIẾU" in str(citations[0]["excerpt"])
+    assert "IELTS" in str(citations[0]["excerpt"])
+
+
 def test_ask_ielts_requirement_resource_fallback_prefers_handbook_with_underscored_name(monkeypatch, tmp_path):
     app_mod = importlib.reload(importlib.import_module("app"))
     monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
