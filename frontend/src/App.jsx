@@ -2646,8 +2646,18 @@ export default function App() {
                           if (shouldSkipCitationLine(normalizedLine)) return [];
                           return matchLineCitations(normalizedLine, citations, maxMatches);
                         };
+                        const baseMarkdownComponents = {
+                          table: ({ children, ...props }) => (
+                            <div className="md-table-wrap">
+                              <table {...props} className="md-table">
+                                {children}
+                              </table>
+                            </div>
+                          ),
+                        };
                         const markdownComponents = citations.length
                           ? {
+                              ...baseMarkdownComponents,
                               li: ({ children, ...props }) => {
                                 const lineText = extractNodePlainText(children);
                                 const matchedCitations = resolveLineCitations(lineText, 2);
@@ -2699,7 +2709,7 @@ export default function App() {
                                 );
                               },
                             }
-                          : undefined;
+                          : baseMarkdownComponents;
 
                         return (
                           <>
