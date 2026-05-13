@@ -1,0 +1,31 @@
+{
+  "program_id": "ai_2025",
+  "program_name": "Tri tue nhan tao QH-2025 mock",
+  "required_credits": 136,
+  "groups": [
+    {
+      "id": "I",
+      "name": "Nen tang toan va lap trinh",
+      "required_credits": 34,
+      "required_subjects": ["MAT1093", "MAT1094", "MAT1101", "INT1003", "INT1007"]
+    },
+    {
+      "id": "AI",
+      "name": "Loi tri tue nhan tao",
+      "required_credits": 36,
+      "required_subjects": ["AIT1001", "AIT2001", "AIT3001", "AIT3002", "AIT3003"]
+    },
+    {
+      "id": "AI.E",
+      "name": "Tu chon AI",
+      "required_credits": 18,
+      "elective_subjects": ["AIT3101", "AIT3102", "AIT3103", "INT3405E", "INT3412E"]
+    },
+    {
+      "id": "VI",
+      "name": "Khoa luan",
+      "required_credits": 7,
+      "required_subjects": ["INT4050"]
+    }
+  ]
+}

@@ -1,0 +1,198 @@
+{
+  "resources": [
+    {
+      "id": "handbook_pdf",
+      "kind": "pdf_cache",
+      "path": "data/cache/SO_TAY_HOC_VU_KY_I_NAM_2023-2024.pdf.pkl",
+      "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+      "label": "UET handbook"
+    },
+    {
+      "id": "time_slots_pdf",
+      "kind": "pdf_cache",
+      "path": "data/cache/Signed.Signed.CV_TKB_chinh_thuc_HKII_25-26_gui_SV.pdf.pkl",
+      "file_id": "Signed.Signed.CV TKB chính thức HKII 25-26 gửi SV.pdf",
+      "label": "Official time-slot schedule"
+    },
+    {
+      "id": "schedule_appendix_pdf",
+      "kind": "pdf_cache",
+      "path": "data/cache/PHU_LUC_THOI_KHOA_BIEU_HKII_2025-2026_DU_LIEU_CAP_NHAT_DEN_22012026_.xlsx_-_Sheet1.pdf.pkl",
+      "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+      "label": "Detailed schedule appendix",
+      "filters": {
+        "page_in": [1, 3, 4]
+      }
+    },
+    {
+      "id": "cs2022_curriculum_html",
+      "kind": "html_local",
+      "path": "data/resources/html/Chuong_trinh_dao_tao_nganh_Khoa_hoc_may_tinh_-_QH2022-2024_-_Truong_Dai_hoc_Cong_nghe_DHQGHN.html",
+      "file_id": "Chuong_trinh_dao_tao_nganh_Khoa_hoc_may_tinh_-_QH2022-2024_-_Truong_Dai_hoc_Cong_nghe_DHQGHN.html",
+      "label": "CS QH2022-2024 curriculum"
+    },
+    {
+      "id": "it_outcomes_html",
+      "kind": "html_local",
+      "path": "data/resources/html/Chuan_dau_ra_chuong_trinh_dao_tao_nganh_Cong_nghe_thong_tin_-_Truong_Dai_hoc_Cong_nghe_DHQGHN_-_Univeristy_of_Engineering_and_Technology.html",
+      "file_id": "Chuan_dau_ra_chuong_trinh_dao_tao_nganh_Cong_nghe_thong_tin_-_Truong_Dai_hoc_Cong_nghe_DHQGHN_-_Univeristy_of_Engineering_and_Technology.html",
+      "label": "IT outcomes standard"
+    }
+  ],
+  "cases": [
+    {
+      "id": "ielts_requirement_accented",
+      "category": "handbook_language",
+      "query": "với 6.5 ielts liệu tôi có đủ điều kiện tiếng anh ra trường theo chương trình đào tạo không",
+      "expected_resource_ids": ["handbook_pdf"],
+      "evidence_groups": [["ielts"], ["bac 4"], ["5.5"]]
+    },
+    {
+      "id": "ielts_requirement_ascii",
+      "category": "handbook_language",
+      "query": "6.5 ielts co du dieu kien tieng anh ra truong khong",
+      "expected_resource_ids": ["handbook_pdf"],
+      "evidence_groups": [["ielts"], ["bac 4"], ["5.5"]]
+    },
+    {
+      "id": "ielts_equivalence_query",
+      "category": "handbook_language",
+      "query": "chuẩn đầu ra ngoại ngữ bậc 4 tương đương ielts bao nhiêu",
+      "expected_resource_ids": ["handbook_pdf"],
+      "evidence_groups": [["bac 4"], ["ielts"], ["5.5"]]
+    },
+    {
+      "id": "toefl_equivalence_query",
+      "category": "handbook_language",
+      "query": "72 toefl ibt co tuong duong bac 4 khong",
+      "expected_resource_ids": ["handbook_pdf"],
+      "evidence_groups": [["bac 4"], ["72 ibt"], ["toefl"]]
+    },
+    {
+      "id": "vstep_equivalence_query",
+      "category": "handbook_language",
+      "query": "vstep 6.0 tương đương bậc mấy",
+      "expected_resource_ids": ["handbook_pdf"],
+      "evidence_groups": [["vstep.3-5 (6.0)"], ["bac 4"]]
+    },
+    {
+      "id": "time_slot_ca1_accented",
+      "category": "time_slots",
+      "query": "ca 1 bắt đầu học từ mấy giờ đến mấy giờ vậy",
+      "expected_resource_ids": ["time_slots_pdf", "schedule_appendix_pdf"],
+      "evidence_groups": [["ca 1"], ["07:00"], ["09:40"]]
+    },
+    {
+      "id": "time_slot_ca1_ascii",
+      "category": "time_slots",
+      "query": "ca 1 bat dau hoc tu may gio den may gio",
+      "expected_resource_ids": ["time_slots_pdf", "schedule_appendix_pdf"],
+      "evidence_groups": [["ca 1"], ["07:00"], ["09:40"]]
+    },
+    {
+      "id": "time_slot_ca2_query",
+      "category": "time_slots",
+      "query": "ca 2 học từ mấy giờ đến mấy giờ",
+      "expected_resource_ids": ["time_slots_pdf", "schedule_appendix_pdf"],
+      "evidence_groups": [["ca 2"], ["09:50"], ["12:30"]]
+    },
+    {
+      "id": "time_slot_ca4_query",
+      "category": "time_slots",
+      "query": "ca 4 học từ mấy giờ đến mấy giờ",
+      "expected_resource_ids": ["time_slots_pdf", "schedule_appendix_pdf"],
+      "evidence_groups": [["ca 4"], ["16:20"], ["19:00"]]
+    },
+    {
+      "id": "ai_teacher_list_accented",
+      "category": "schedule_teachers",
+      "query": "môn trí tuệ nhân tạo kì này có những ai dạy",
+      "expected_resource_ids": ["schedule_appendix_pdf"],
+      "evidence_groups": [["nguyen thi nhat thanh"], ["nguyen van vinh"], ["nguyen thanh thuy"]]
+    },
+    {
+      "id": "ai_teacher_list_ascii",
+      "category": "schedule_teachers",
+      "query": "mon tri tue nhan tao ky nay co nhung ai day",
+      "expected_resource_ids": ["schedule_appendix_pdf"],
+      "evidence_groups": [["nguyen thi nhat thanh"], ["nguyen van vinh"], ["nguyen thanh thuy"]]
+    },
+    {
+      "id": "ai_schedule_by_name",
+      "category": "schedule_subject",
+      "query": "môn trí tuệ nhân tạo kì này lịch học như nào",
+      "expected_resource_ids": ["schedule_appendix_pdf"],
+      "evidence_groups": [["int3401e 1"], ["int3401e 2"], ["int3401e 3"], ["int3401e 4"], ["int3401e 5"]]
+    },
+    {
+      "id": "ai_schedule_by_code",
+      "category": "schedule_subject",
+      "query": "int3401e kỳ này lịch học như nào",
+      "expected_resource_ids": ["schedule_appendix_pdf"],
+      "evidence_groups": [["int3401e 1"], ["int3401e 2"], ["int3401e 3"], ["int3401e 4"], ["int3401e 5"]]
+    },
+    {
+      "id": "teacher_nhat_thanh_classes",
+      "category": "schedule_teacher_classes",
+      "query": "nguyễn thị nhật thanh kỳ này dạy những lớp nào",
+      "expected_resource_ids": ["schedule_appendix_pdf"],
+      "evidence_groups": [["int3401e 1"], ["int3401e 2"], ["int3011e 4"]]
+    },
+    {
+      "id": "teacher_van_vinh_classes",
+      "category": "schedule_teacher_classes",
+      "query": "nguyễn văn vinh kỳ này dạy những lớp nào",
+      "expected_resource_ids": ["schedule_appendix_pdf"],
+      "evidence_groups": [["int3401e 3"], ["int3401e 4"]]
+    },
+    {
+      "id": "hmi_opening_query",
+      "category": "schedule_subject",
+      "query": "môn tương tác người máy kì này có mở lớp không",
+      "expected_resource_ids": ["schedule_appendix_pdf"],
+      "evidence_groups": [["int2041 2"], ["3-g3"], ["ngo thi duyen"]]
+    },
+    {
+      "id": "hmi_opening_by_code",
+      "category": "schedule_subject",
+      "query": "int2041 kỳ này có mở lớp không",
+      "expected_resource_ids": ["schedule_appendix_pdf"],
+      "evidence_groups": [["int2041 2"], ["3-g3"], ["ngo thi duyen"]]
+    },
+    {
+      "id": "computer_vision_schedule",
+      "category": "schedule_subject",
+      "query": "thế còn thị giác máy tính kỳ này mở lớp không",
+      "expected_resource_ids": ["schedule_appendix_pdf"],
+      "evidence_groups": [["int3412e 1"], ["209-t"], ["le thanh ha"]]
+    },
+    {
+      "id": "computer_vision_by_code",
+      "category": "schedule_subject",
+      "query": "int3412e lịch học kỳ này thế nào",
+      "expected_resource_ids": ["schedule_appendix_pdf"],
+      "evidence_groups": [["int3412e 1"], ["209-t"], ["le thanh ha"]]
+    },
+    {
+      "id": "curriculum_hmi_group",
+      "category": "curriculum_subject_group",
+      "query": "int2041 có nằm trong chương trình đào tạo khoa học máy tính qh2022-2024 không",
+      "expected_resource_ids": ["cs2022_curriculum_html"],
+      "evidence_groups": [["int2041"], ["tuong tac nguoi may"], ["nhom cac hoc phan ve tuong tac nguoi may"]]
+    },
+    {
+      "id": "curriculum_cv_group",
+      "category": "curriculum_subject_group",
+      "query": "int3412e thuộc nhóm nào trong ctdt khoa học máy tính qh2022-2024",
+      "expected_resource_ids": ["cs2022_curriculum_html"],
+      "evidence_groups": [["int3412e"], ["thi giac may"], ["nhom cac hoc phan ve tuong tac nguoi may"]]
+    },
+    {
+      "id": "curriculum_image_processing_group",
+      "category": "curriculum_subject_group",
+      "query": "xử lý ảnh thuộc nhóm nào trong ctdt khoa học máy tính qh2022-2024",
+      "expected_resource_ids": ["cs2022_curriculum_html"],
+      "evidence_groups": [["int3404e"], ["xu ly anh"], ["nhom cac hoc phan ve tuong tac nguoi may"]]
+    }
+  ]
+}

@@ -1,0 +1,1484 @@
+{
+  "generated_at": "2026-05-12T14:18:39",
+  "cases_path": "D:\\LLM\\LLM Learning\\benchmarks\\embedding_model_cases.json",
+  "resources": [
+    {
+      "id": "handbook_pdf",
+      "kind": "pdf_cache",
+      "path": "data/cache/SO_TAY_HOC_VU_KY_I_NAM_2023-2024.pdf.pkl",
+      "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+      "label": "UET handbook"
+    },
+    {
+      "id": "time_slots_pdf",
+      "kind": "pdf_cache",
+      "path": "data/cache/Signed.Signed.CV_TKB_chinh_thuc_HKII_25-26_gui_SV.pdf.pkl",
+      "file_id": "Signed.Signed.CV TKB chính thức HKII 25-26 gửi SV.pdf",
+      "label": "Official time-slot schedule"
+    },
+    {
+      "id": "schedule_appendix_pdf",
+      "kind": "pdf_cache",
+      "path": "data/cache/PHU_LUC_THOI_KHOA_BIEU_HKII_2025-2026_DU_LIEU_CAP_NHAT_DEN_22012026_.xlsx_-_Sheet1.pdf.pkl",
+      "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+      "label": "Detailed schedule appendix"
+    },
+    {
+      "id": "cs2022_curriculum_html",
+      "kind": "html_local",
+      "path": "data/resources/html/Chuong_trinh_dao_tao_nganh_Khoa_hoc_may_tinh_-_QH2022-2024_-_Truong_Dai_hoc_Cong_nghe_DHQGHN.html",
+      "file_id": "Chuong_trinh_dao_tao_nganh_Khoa_hoc_may_tinh_-_QH2022-2024_-_Truong_Dai_hoc_Cong_nghe_DHQGHN.html",
+      "label": "CS QH2022-2024 curriculum"
+    },
+    {
+      "id": "it_outcomes_html",
+      "kind": "html_local",
+      "path": "data/resources/html/Chuan_dau_ra_chuong_trinh_dao_tao_nganh_Cong_nghe_thong_tin_-_Truong_Dai_hoc_Cong_nghe_DHQGHN_-_Univeristy_of_Engineering_and_Technology.html",
+      "file_id": "Chuan_dau_ra_chuong_trinh_dao_tao_nganh_Cong_nghe_thong_tin_-_Truong_Dai_hoc_Cong_nghe_DHQGHN_-_Univeristy_of_Engineering_and_Technology.html",
+      "label": "IT outcomes standard"
+    }
+  ],
+  "cases": [
+    {
+      "id": "ielts_requirement_accented",
+      "category": "handbook_language",
+      "query": "với 6.5 ielts liệu tôi có đủ điều kiện tiếng anh ra trường theo chương trình đào tạo không",
+      "expected_resource_ids": [
+        "handbook_pdf"
+      ],
+      "evidence_groups": [
+        [
+          "ielts"
+        ],
+        [
+          "bac 4"
+        ],
+        [
+          "5.5"
+        ]
+      ]
+    },
+    {
+      "id": "ielts_requirement_ascii",
+      "category": "handbook_language",
+      "query": "6.5 ielts co du dieu kien tieng anh ra truong khong",
+      "expected_resource_ids": [
+        "handbook_pdf"
+      ],
+      "evidence_groups": [
+        [
+          "ielts"
+        ],
+        [
+          "bac 4"
+        ],
+        [
+          "5.5"
+        ]
+      ]
+    },
+    {
+      "id": "ielts_equivalence_query",
+      "category": "handbook_language",
+      "query": "chuẩn đầu ra ngoại ngữ bậc 4 tương đương ielts bao nhiêu",
+      "expected_resource_ids": [
+        "handbook_pdf"
+      ],
+      "evidence_groups": [
+        [
+          "bac 4"
+        ],
+        [
+          "ielts"
+        ],
+        [
+          "5.5"
+        ]
+      ]
+    },
+    {
+      "id": "toefl_equivalence_query",
+      "category": "handbook_language",
+      "query": "72 toefl ibt co tuong duong bac 4 khong",
+      "expected_resource_ids": [
+        "handbook_pdf"
+      ],
+      "evidence_groups": [
+        [
+          "bac 4"
+        ],
+        [
+          "72 ibt"
+        ],
+        [
+          "toefl"
+        ]
+      ]
+    },
+    {
+      "id": "vstep_equivalence_query",
+      "category": "handbook_language",
+      "query": "vstep 6.0 tương đương bậc mấy",
+      "expected_resource_ids": [
+        "handbook_pdf"
+      ],
+      "evidence_groups": [
+        [
+          "vstep.3-5 (6.0)"
+        ],
+        [
+          "bac 4"
+        ]
+      ]
+    },
+    {
+      "id": "time_slot_ca1_accented",
+      "category": "time_slots",
+      "query": "ca 1 bắt đầu học từ mấy giờ đến mấy giờ vậy",
+      "expected_resource_ids": [
+        "time_slots_pdf"
+      ],
+      "evidence_groups": [
+        [
+          "ca 1"
+        ],
+        [
+          "07:00"
+        ],
+        [
+          "09:40"
+        ]
+      ]
+    },
+    {
+      "id": "time_slot_ca1_ascii",
+      "category": "time_slots",
+      "query": "ca 1 bat dau hoc tu may gio den may gio",
+      "expected_resource_ids": [
+        "time_slots_pdf"
+      ],
+      "evidence_groups": [
+        [
+          "ca 1"
+        ],
+        [
+          "07:00"
+        ],
+        [
+          "09:40"
+        ]
+      ]
+    },
+    {
+      "id": "time_slot_ca2_query",
+      "category": "time_slots",
+      "query": "ca 2 học từ mấy giờ đến mấy giờ",
+      "expected_resource_ids": [
+        "time_slots_pdf"
+      ],
+      "evidence_groups": [
+        [
+          "ca 2"
+        ],
+        [
+          "09:50"
+        ],
+        [
+          "12:30"
+        ]
+      ]
+    },
+    {
+      "id": "time_slot_ca4_query",
+      "category": "time_slots",
+      "query": "ca 4 học từ mấy giờ đến mấy giờ",
+      "expected_resource_ids": [
+        "time_slots_pdf"
+      ],
+      "evidence_groups": [
+        [
+          "ca 4"
+        ],
+        [
+          "16:20"
+        ],
+        [
+          "19:00"
+        ]
+      ]
+    },
+    {
+      "id": "ai_teacher_list_accented",
+      "category": "schedule_teachers",
+      "query": "môn trí tuệ nhân tạo kì này có những ai dạy",
+      "expected_resource_ids": [
+        "schedule_appendix_pdf"
+      ],
+      "evidence_groups": [
+        [
+          "nguyen thi nhat thanh"
+        ],
+        [
+          "nguyen van vinh"
+        ],
+        [
+          "nguyen thanh thuy"
+        ]
+      ]
+    },
+    {
+      "id": "ai_teacher_list_ascii",
+      "category": "schedule_teachers",
+      "query": "mon tri tue nhan tao ky nay co nhung ai day",
+      "expected_resource_ids": [
+        "schedule_appendix_pdf"
+      ],
+      "evidence_groups": [
+        [
+          "nguyen thi nhat thanh"
+        ],
+        [
+          "nguyen van vinh"
+        ],
+        [
+          "nguyen thanh thuy"
+        ]
+      ]
+    },
+    {
+      "id": "ai_schedule_by_name",
+      "category": "schedule_subject",
+      "query": "môn trí tuệ nhân tạo kì này lịch học như nào",
+      "expected_resource_ids": [
+        "schedule_appendix_pdf"
+      ],
+      "evidence_groups": [
+        [
+          "int3401e 1"
+        ],
+        [
+          "int3401e 2"
+        ],
+        [
+          "int3401e 3"
+        ],
+        [
+          "int3401e 4"
+        ],
+        [
+          "int3401e 5"
+        ]
+      ]
+    },
+    {
+      "id": "ai_schedule_by_code",
+      "category": "schedule_subject",
+      "query": "int3401e kỳ này lịch học như nào",
+      "expected_resource_ids": [
+        "schedule_appendix_pdf"
+      ],
+      "evidence_groups": [
+        [
+          "int3401e 1"
+        ],
+        [
+          "int3401e 2"
+        ],
+        [
+          "int3401e 3"
+        ],
+        [
+          "int3401e 4"
+        ],
+        [
+          "int3401e 5"
+        ]
+      ]
+    },
+    {
+      "id": "teacher_nhat_thanh_classes",
+      "category": "schedule_teacher_classes",
+      "query": "nguyễn thị nhật thanh kỳ này dạy những lớp nào",
+      "expected_resource_ids": [
+        "schedule_appendix_pdf"
+      ],
+      "evidence_groups": [
+        [
+          "int3401e 1"
+        ],
+        [
+          "int3401e 2"
+        ],
+        [
+          "int3011e 4"
+        ]
+      ]
+    },
+    {
+      "id": "teacher_van_vinh_classes",
+      "category": "schedule_teacher_classes",
+      "query": "nguyễn văn vinh kỳ này dạy những lớp nào",
+      "expected_resource_ids": [
+        "schedule_appendix_pdf"
+      ],
+      "evidence_groups": [
+        [
+          "int3401e 3"
+        ],
+        [
+          "int3401e 4"
+        ]
+      ]
+    },
+    {
+      "id": "hmi_opening_query",
+      "category": "schedule_subject",
+      "query": "môn tương tác người máy kì này có mở lớp không",
+      "expected_resource_ids": [
+        "schedule_appendix_pdf"
+      ],
+      "evidence_groups": [
+        [
+          "int2041 2"
+        ],
+        [
+          "3-g3"
+        ],
+        [
+          "ngo thi duyen"
+        ]
+      ]
+    },
+    {
+      "id": "hmi_opening_by_code",
+      "category": "schedule_subject",
+      "query": "int2041 kỳ này có mở lớp không",
+      "expected_resource_ids": [
+        "schedule_appendix_pdf"
+      ],
+      "evidence_groups": [
+        [
+          "int2041 2"
+        ],
+        [
+          "3-g3"
+        ],
+        [
+          "ngo thi duyen"
+        ]
+      ]
+    },
+    {
+      "id": "computer_vision_schedule",
+      "category": "schedule_subject",
+      "query": "thế còn thị giác máy tính kỳ này mở lớp không",
+      "expected_resource_ids": [
+        "schedule_appendix_pdf"
+      ],
+      "evidence_groups": [
+        [
+          "int3412e 1"
+        ],
+        [
+          "209-t"
+        ],
+        [
+          "le thanh ha"
+        ]
+      ]
+    },
+    {
+      "id": "computer_vision_by_code",
+      "category": "schedule_subject",
+      "query": "int3412e lịch học kỳ này thế nào",
+      "expected_resource_ids": [
+        "schedule_appendix_pdf"
+      ],
+      "evidence_groups": [
+        [
+          "int3412e 1"
+        ],
+        [
+          "209-t"
+        ],
+        [
+          "le thanh ha"
+        ]
+      ]
+    },
+    {
+      "id": "curriculum_hmi_group",
+      "category": "curriculum_subject_group",
+      "query": "int2041 có nằm trong chương trình đào tạo khoa học máy tính qh2022-2024 không",
+      "expected_resource_ids": [
+        "cs2022_curriculum_html"
+      ],
+      "evidence_groups": [
+        [
+          "int2041"
+        ],
+        [
+          "tuong tac nguoi may"
+        ],
+        [
+          "nhom cac hoc phan ve tuong tac nguoi may"
+        ]
+      ]
+    },
+    {
+      "id": "curriculum_cv_group",
+      "category": "curriculum_subject_group",
+      "query": "int3412e thuộc nhóm nào trong ctdt khoa học máy tính qh2022-2024",
+      "expected_resource_ids": [
+        "cs2022_curriculum_html"
+      ],
+      "evidence_groups": [
+        [
+          "int3412e"
+        ],
+        [
+          "thi giac may"
+        ],
+        [
+          "nhom cac hoc phan ve tuong tac nguoi may"
+        ]
+      ]
+    },
+    {
+      "id": "curriculum_image_processing_group",
+      "category": "curriculum_subject_group",
+      "query": "xử lý ảnh thuộc nhóm nào trong ctdt khoa học máy tính qh2022-2024",
+      "expected_resource_ids": [
+        "cs2022_curriculum_html"
+      ],
+      "evidence_groups": [
+        [
+          "int3404e"
+        ],
+        [
+          "xu ly anh"
+        ],
+        [
+          "nhom cac hoc phan ve tuong tac nguoi may"
+        ]
+      ]
+    }
+  ],
+  "models": [
+    {
+      "summary": {
+        "model_key": "multilingual-e5-small",
+        "model_name": "intfloat/multilingual-e5-small",
+        "embedding_dim": 384,
+        "model_artifact_gb": null,
+        "peak_process_rss_gb": 1.149,
+        "load_seconds": 17.414,
+        "doc_embed_seconds": 177.983,
+        "query_seconds_total": 1.513,
+        "elapsed_seconds": 197.886,
+        "source_mrr": 0.7879,
+        "evidence_mrr": 0.5417,
+        "coverage_top_k": 0.6818,
+        "source_hit_rate_at_1": 0.7727,
+        "source_hit_rate_at_3": 0.8182,
+        "source_hit_rate_at_5": 0.8182,
+        "evidence_hit_rate_at_1": 0.4545,
+        "evidence_hit_rate_at_3": 0.6364,
+        "evidence_hit_rate_at_5": 0.6818,
+        "composite_score": 0.6716
+      },
+      "cases": [
+        {
+          "id": "ielts_requirement_accented",
+          "category": "handbook_language",
+          "query": "với 6.5 ielts liệu tôi có đủ điều kiện tiếng anh ra trường theo chương trình đào tạo không",
+          "source_rank": 1,
+          "evidence_rank": 2,
+          "coverage_top_k": 1.0,
+          "top_results": [
+            {
+              "rank": 1,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 26,
+              "preview": "Page 26: ĐIỀU KIỆN ĐỂ ĐƯỢC MIỄN HỌC HỌC PHẦN TIẾNG ANH Sinh viên được miễn học các học phần ngoại ngữ nếu thuộc một trong các đối tượng sau: a) Đã tham gia kỳ thi đánh giá năng lực"
+            },
+            {
+              "rank": 2,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 28,
+              "preview": "Page 28: BẢNG THAM CHIẾU QUY ĐỔI MỘT SỐ CHỨNG CHỈ NGOẠI NGỮ (TIẾNG NHẬT) QUỐC TẾ TƯƠNG ƯNG VỚI YÊU CẦU CHUẨN ĐẦU RA VỀ TRÌNH ĐỘ NGOẠI NGỮ - Sinh viên có trình độ ngoại ngữ đạt yêu "
+            },
+            {
+              "rank": 3,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 26,
+              "preview": "### BẢNG THAM CHIẾU KẾT QUẢ CÁC BÀI THI TIẾNG ANH VỚI CÁC CHUẨN CẦN ĐẠT CỦA ĐHQGHN | KNLNNVN | IELTS | TOEFL | Aptis ESOL | Cambridge Exam | Vietnamese Standardized Test of English"
+            },
+            {
+              "rank": 4,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 2,
+              "preview": "3. Kiểm tra thông tin cá nhân ..................................................................................... 21 4. Đăng ký học phần.........................................."
+            },
+            {
+              "rank": 5,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 31,
+              "preview": "tốt nghiệp cho sinh viên đã hoàn thành chương trình đào tạo và có đủ các điều kiện sau: - Trong thời gian học tập tối đa của khóa học; - Cho đến thời điểm xét tốt nghiệp, sinh viên"
+            }
+          ]
+        },
+        {
+          "id": "ielts_requirement_ascii",
+          "category": "handbook_language",
+          "query": "6.5 ielts co du dieu kien tieng anh ra truong khong",
+          "source_rank": 1,
+          "evidence_rank": 3,
+          "coverage_top_k": 1.0,
+          "top_results": [
+            {
+              "rank": 1,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 26,
+              "preview": "Page 26: ĐIỀU KIỆN ĐỂ ĐƯỢC MIỄN HỌC HỌC PHẦN TIẾNG ANH Sinh viên được miễn học các học phần ngoại ngữ nếu thuộc một trong các đối tượng sau: a) Đã tham gia kỳ thi đánh giá năng lực"
+            },
+            {
+              "rank": 2,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 2,
+              "preview": "3. Kiểm tra thông tin cá nhân ..................................................................................... 21 4. Đăng ký học phần.........................................."
+            },
+            {
+              "rank": 3,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 26,
+              "preview": "### BẢNG THAM CHIẾU KẾT QUẢ CÁC BÀI THI TIẾNG ANH VỚI CÁC CHUẨN CẦN ĐẠT CỦA ĐHQGHN | KNLNNVN | IELTS | TOEFL | Aptis ESOL | Cambridge Exam | Vietnamese Standardized Test of English"
+            },
+            {
+              "rank": 4,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 32,
+              "preview": "Page 32: - Đối với học phần nâng cao, điểm học phần được giữ nguyên, số tín chỉ được quy đổi theo chương trình đào tạo chuẩn; - Đối với học phần bổ sung, Nhà trường xem xét cụ thể "
+            },
+            {
+              "rank": 5,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 31,
+              "preview": "tốt nghiệp cho sinh viên đã hoàn thành chương trình đào tạo và có đủ các điều kiện sau: - Trong thời gian học tập tối đa của khóa học; - Cho đến thời điểm xét tốt nghiệp, sinh viên"
+            }
+          ]
+        },
+        {
+          "id": "ielts_equivalence_query",
+          "category": "handbook_language",
+          "query": "chuẩn đầu ra ngoại ngữ bậc 4 tương đương ielts bao nhiêu",
+          "source_rank": 1,
+          "evidence_rank": 1,
+          "coverage_top_k": 1.0,
+          "top_results": [
+            {
+              "rank": 1,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 28,
+              "preview": "Page 28: BẢNG THAM CHIẾU QUY ĐỔI MỘT SỐ CHỨNG CHỈ NGOẠI NGỮ (TIẾNG NHẬT) QUỐC TẾ TƯƠNG ƯNG VỚI YÊU CẦU CHUẨN ĐẦU RA VỀ TRÌNH ĐỘ NGOẠI NGỮ - Sinh viên có trình độ ngoại ngữ đạt yêu "
+            },
+            {
+              "rank": 2,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 2,
+              "preview": "3. Kiểm tra thông tin cá nhân ..................................................................................... 21 4. Đăng ký học phần.........................................."
+            },
+            {
+              "rank": 3,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 26,
+              "preview": "Page 26: ĐIỀU KIỆN ĐỂ ĐƯỢC MIỄN HỌC HỌC PHẦN TIẾNG ANH Sinh viên được miễn học các học phần ngoại ngữ nếu thuộc một trong các đối tượng sau: a) Đã tham gia kỳ thi đánh giá năng lực"
+            },
+            {
+              "rank": 4,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 31,
+              "preview": "tốt nghiệp cho sinh viên đã hoàn thành chương trình đào tạo và có đủ các điều kiện sau: - Trong thời gian học tập tối đa của khóa học; - Cho đến thời điểm xét tốt nghiệp, sinh viên"
+            },
+            {
+              "rank": 5,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 26,
+              "preview": "### BẢNG THAM CHIẾU KẾT QUẢ CÁC BÀI THI TIẾNG ANH VỚI CÁC CHUẨN CẦN ĐẠT CỦA ĐHQGHN | KNLNNVN | IELTS | TOEFL | Aptis ESOL | Cambridge Exam | Vietnamese Standardized Test of English"
+            }
+          ]
+        },
+        {
+          "id": "toefl_equivalence_query",
+          "category": "handbook_language",
+          "query": "72 toefl ibt co tuong duong bac 4 khong",
+          "source_rank": 1,
+          "evidence_rank": 1,
+          "coverage_top_k": 1.0,
+          "top_results": [
+            {
+              "rank": 1,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 28,
+              "preview": "Page 28: BẢNG THAM CHIẾU QUY ĐỔI MỘT SỐ CHỨNG CHỈ NGOẠI NGỮ (TIẾNG NHẬT) QUỐC TẾ TƯƠNG ƯNG VỚI YÊU CẦU CHUẨN ĐẦU RA VỀ TRÌNH ĐỘ NGOẠI NGỮ - Sinh viên có trình độ ngoại ngữ đạt yêu "
+            },
+            {
+              "rank": 2,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 26,
+              "preview": "### BẢNG THAM CHIẾU KẾT QUẢ CÁC BÀI THI TIẾNG ANH VỚI CÁC CHUẨN CẦN ĐẠT CỦA ĐHQGHN | KNLNNVN | IELTS | TOEFL | Aptis ESOL | Cambridge Exam | Vietnamese Standardized Test of English"
+            },
+            {
+              "rank": 3,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 2,
+              "preview": "3. Kiểm tra thông tin cá nhân ..................................................................................... 21 4. Đăng ký học phần.........................................."
+            },
+            {
+              "rank": 4,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 26,
+              "preview": "Page 26: ĐIỀU KIỆN ĐỂ ĐƯỢC MIỄN HỌC HỌC PHẦN TIẾNG ANH Sinh viên được miễn học các học phần ngoại ngữ nếu thuộc một trong các đối tượng sau: a) Đã tham gia kỳ thi đánh giá năng lực"
+            },
+            {
+              "rank": 5,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 31,
+              "preview": "tốt nghiệp cho sinh viên đã hoàn thành chương trình đào tạo và có đủ các điều kiện sau: - Trong thời gian học tập tối đa của khóa học; - Cho đến thời điểm xét tốt nghiệp, sinh viên"
+            }
+          ]
+        },
+        {
+          "id": "vstep_equivalence_query",
+          "category": "handbook_language",
+          "query": "vstep 6.0 tương đương bậc mấy",
+          "source_rank": 1,
+          "evidence_rank": 1,
+          "coverage_top_k": 1.0,
+          "top_results": [
+            {
+              "rank": 1,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 28,
+              "preview": "Page 28: BẢNG THAM CHIẾU QUY ĐỔI MỘT SỐ CHỨNG CHỈ NGOẠI NGỮ (TIẾNG NHẬT) QUỐC TẾ TƯƠNG ƯNG VỚI YÊU CẦU CHUẨN ĐẦU RA VỀ TRÌNH ĐỘ NGOẠI NGỮ - Sinh viên có trình độ ngoại ngữ đạt yêu "
+            },
+            {
+              "rank": 2,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 26,
+              "preview": "### BẢNG THAM CHIẾU KẾT QUẢ CÁC BÀI THI TIẾNG ANH VỚI CÁC CHUẨN CẦN ĐẠT CỦA ĐHQGHN | KNLNNVN | IELTS | TOEFL | Aptis ESOL | Cambridge Exam | Vietnamese Standardized Test of English"
+            },
+            {
+              "rank": 3,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 2,
+              "preview": "3. Kiểm tra thông tin cá nhân ..................................................................................... 21 4. Đăng ký học phần.........................................."
+            },
+            {
+              "rank": 4,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 26,
+              "preview": "Page 26: ĐIỀU KIỆN ĐỂ ĐƯỢC MIỄN HỌC HỌC PHẦN TIẾNG ANH Sinh viên được miễn học các học phần ngoại ngữ nếu thuộc một trong các đối tượng sau: a) Đã tham gia kỳ thi đánh giá năng lực"
+            },
+            {
+              "rank": 5,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 31,
+              "preview": "tốt nghiệp cho sinh viên đã hoàn thành chương trình đào tạo và có đủ các điều kiện sau: - Trong thời gian học tập tối đa của khóa học; - Cho đến thời điểm xét tốt nghiệp, sinh viên"
+            }
+          ]
+        },
+        {
+          "id": "time_slot_ca1_accented",
+          "category": "time_slots",
+          "query": "ca 1 bắt đầu học từ mấy giờ đến mấy giờ vậy",
+          "source_rank": null,
+          "evidence_rank": null,
+          "coverage_top_k": 0.3333,
+          "top_results": [
+            {
+              "rank": 1,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 20,
+              "preview": "### TABLE (Page 20) | K70E-CE7 | UET. MAT1051 | UET. MAT1051 | Giải tích 2 | Giải tích 2 | Giải tích 2 | Giải tích 2 | 5 | | 60 | 145 | 9 | 61 | UET.MAT1051 36 | CL | TH | 5 | 1 | "
+            },
+            {
+              "rank": 2,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 20,
+              "preview": "### TABLE (Page 20) | K70E-CE7 | UET. MAT1051 | UET. MAT1051 | Giải tích 2 | Giải tích 2 | Giải tích 2 | Giải tích 2 | 5 | | 60 | 145 | 9 | 61 | UET.MAT1051 36 | CL | TH | 5 | 1 | "
+            },
+            {
+              "rank": 3,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 20,
+              "preview": "### TABLE (Page 20) | K70E-CE7 | UET. MAT1051 | UET. MAT1051 | Giải tích 2 | Giải tích 2 | Giải tích 2 | Giải tích 2 | 5 | | 60 | 145 | 9 | 61 | UET.MAT1051 36 | CL | TH | 5 | 1 | "
+            },
+            {
+              "rank": 4,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 21,
+              "preview": "### 3. Kiểm tra thông tin cá nhân a. Nhấn chuột vào mục \"Cập nhật hồ sơ\" b. Màn hình thông tin sinh viên xuất hiện ![PORTAL SINH VIÊN Interface](image_student_portal.png) *(Image s"
+            },
+            {
+              "rank": 5,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 5,
+              "preview": "### TABLE (Page 5) | K67I-IT3 | INT3509 | INT3509 | Dự án (bắt buộc) | Dự án (bắt buộc) | Dự án (bắt buộc) | Dự án (bắt buộc) | Dự án (bắt buộc) | Dự án (bắt buộc) | 4 | 21 | | 1 |"
+            }
+          ]
+        },
+        {
+          "id": "time_slot_ca1_ascii",
+          "category": "time_slots",
+          "query": "ca 1 bat dau hoc tu may gio den may gio",
+          "source_rank": null,
+          "evidence_rank": null,
+          "coverage_top_k": 0.3333,
+          "top_results": [
+            {
+              "rank": 1,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 21,
+              "preview": "### 3. Kiểm tra thông tin cá nhân a. Nhấn chuột vào mục \"Cập nhật hồ sơ\" b. Màn hình thông tin sinh viên xuất hiện ![PORTAL SINH VIÊN Interface](image_student_portal.png) *(Image s"
+            },
+            {
+              "rank": 2,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 5,
+              "preview": "### TABLE (Page 5) | K67I-IT3 | INT3509 | INT3509 | Dự án (bắt buộc) | Dự án (bắt buộc) | Dự án (bắt buộc) | Dự án (bắt buộc) | Dự án (bắt buộc) | Dự án (bắt buộc) | 4 | 21 | | 1 |"
+            },
+            {
+              "rank": 3,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 5,
+              "preview": "### TABLE (Page 5) | K67I-IT3 | INT3509 | INT3509 | Dự án (bắt buộc) | Dự án (bắt buộc) | Dự án (bắt buộc) | Dự án (bắt buộc) | Dự án (bắt buộc) | Dự án (bắt buộc) | 4 | 21 | | 1 |"
+            },
+            {
+              "rank": 4,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 8,
+              "preview": "### TABLE (Page 8) | K69E-EC1 K69E-EC1 | ELT3212 ELT3212 | ELT3212 ELT3212 | Mạng truyền thông máy Mạng truyền thông máy | Mạng truyền thông máy Mạng truyền thông máy | Mạng truyền"
+            },
+            {
+              "rank": 5,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 8,
+              "preview": "### TABLE (Page 8) | K69E-EC1 K69E-EC1 | ELT3212 ELT3212 | ELT3212 ELT3212 | Mạng truyền thông máy Mạng truyền thông máy | Mạng truyền thông máy Mạng truyền thông máy | Mạng truyền"
+            }
+          ]
+        },
+        {
+          "id": "time_slot_ca2_query",
+          "category": "time_slots",
+          "query": "ca 2 học từ mấy giờ đến mấy giờ",
+          "source_rank": null,
+          "evidence_rank": null,
+          "coverage_top_k": 0.3333,
+          "top_results": [
+            {
+              "rank": 1,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 20,
+              "preview": "### TABLE (Page 20) | K70E-CE7 | UET. MAT1051 | UET. MAT1051 | Giải tích 2 | Giải tích 2 | Giải tích 2 | Giải tích 2 | 5 | | 60 | 145 | 9 | 61 | UET.MAT1051 36 | CL | TH | 5 | 1 | "
+            },
+            {
+              "rank": 2,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 31,
+              "preview": "công nhận tốt nghiệp và cấp bằng cử nhân chương trình đào tạo chuẩn tương ứng theo hình thức đào tạo chính quy. c. Sinh viên không đủ điều kiện tốt nghiệp được cấp giấy chứng nhận "
+            },
+            {
+              "rank": 3,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 3,
+              "preview": "TC3+K69A-AI- 15 TC4 K69A-AI- TC1+K69A-AI- Lớp tiến trình TC2+K69A-AI- INT3229 Kỹ thuật và công nghệ dữ liệu lớn 3 30 1 30 INT3229 1 CL TH 5 1 306-A Ngô Minh Hương nhanh, học tuần 6"
+            },
+            {
+              "rank": 4,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 5,
+              "preview": "### TABLE (Page 5) | K67I-IT3 | INT3509 | INT3509 | Dự án (bắt buộc) | Dự án (bắt buộc) | Dự án (bắt buộc) | Dự án (bắt buộc) | Dự án (bắt buộc) | Dự án (bắt buộc) | 4 | 21 | | 1 |"
+            },
+            {
+              "rank": 5,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 5,
+              "preview": "### TABLE (Page 5) | K67I-IT3 | INT3509 | INT3509 | Dự án (bắt buộc) | Dự án (bắt buộc) | Dự án (bắt buộc) | Dự án (bắt buộc) | Dự án (bắt buộc) | Dự án (bắt buộc) | 4 | 21 | | 1 |"
+            }
+          ]
+        },
+        {
+          "id": "time_slot_ca4_query",
+          "category": "time_slots",
+          "query": "ca 4 học từ mấy giờ đến mấy giờ",
+          "source_rank": null,
+          "evidence_rank": null,
+          "coverage_top_k": 0.0,
+          "top_results": [
+            {
+              "rank": 1,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 4,
+              "preview": "### TABLE (Page 4) | K68I-CS2 | INT3230E | INT3230E | Mật mã và an toàn thông tin | Mật mã và an toàn thông tin | Mật mã và an toàn thông tin | Mật mã và an toàn thông tin | 4 | 60"
+            },
+            {
+              "rank": 2,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 31,
+              "preview": "công nhận tốt nghiệp và cấp bằng cử nhân chương trình đào tạo chuẩn tương ứng theo hình thức đào tạo chính quy. c. Sinh viên không đủ điều kiện tốt nghiệp được cấp giấy chứng nhận "
+            },
+            {
+              "rank": 3,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 3,
+              "preview": "TC3+K69A-AI- 15 TC4 K69A-AI- TC1+K69A-AI- Lớp tiến trình TC2+K69A-AI- INT3229 Kỹ thuật và công nghệ dữ liệu lớn 3 30 1 30 INT3229 1 CL TH 5 1 306-A Ngô Minh Hương nhanh, học tuần 6"
+            },
+            {
+              "rank": 4,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 5,
+              "preview": "### TABLE (Page 5) | K67I-IT3 | INT3509 | INT3509 | Dự án (bắt buộc) | Dự án (bắt buộc) | Dự án (bắt buộc) | Dự án (bắt buộc) | Dự án (bắt buộc) | Dự án (bắt buộc) | 4 | 21 | | 1 |"
+            },
+            {
+              "rank": 5,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 5,
+              "preview": "### TABLE (Page 5) | K67I-IT3 | INT3509 | INT3509 | Dự án (bắt buộc) | Dự án (bắt buộc) | Dự án (bắt buộc) | Dự án (bắt buộc) | Dự án (bắt buộc) | Dự án (bắt buộc) | 4 | 21 | | 1 |"
+            }
+          ]
+        },
+        {
+          "id": "ai_teacher_list_accented",
+          "category": "schedule_teachers",
+          "query": "môn trí tuệ nhân tạo kì này có những ai dạy",
+          "source_rank": 1,
+          "evidence_rank": null,
+          "coverage_top_k": 0.0,
+          "top_results": [
+            {
+              "rank": 1,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 22,
+              "preview": "### TABLE (Page 22) | K70C- CE1+K70C- CE2+K70C- CE3+K70C-ID4. | VNU1001 | Nhập môn công nghệ số và ứng dụng trí tuệ nhân tạo | 3 | 45 | 202 | VNU1001 10 | CL | ONL | ONL | Viện Khả"
+            },
+            {
+              "rank": 2,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 22,
+              "preview": "### TABLE (Page 22) | K70C- CE1+K70C- CE2+K70C- CE3+K70C-ID4. | VNU1001 | Nhập môn công nghệ số và ứng dụng trí tuệ nhân tạo | 3 | 45 | 202 | VNU1001 10 | CL | ONL | ONL | Viện Khả"
+            },
+            {
+              "rank": 3,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 22,
+              "preview": "### TABLE (Page 22) | K70C- CE1+K70C- CE2+K70C- CE3+K70C-ID4. | VNU1001 | Nhập môn công nghệ số và ứng dụng trí tuệ nhân tạo | 3 | 45 | 202 | VNU1001 10 | CL | ONL | ONL | Viện Khả"
+            },
+            {
+              "rank": 4,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 22,
+              "preview": "### TABLE (Page 22) | K70C- CE1+K70C- CE2+K70C- CE3+K70C-ID4. | VNU1001 | Nhập môn công nghệ số và ứng dụng trí tuệ nhân tạo | 3 | 45 | 202 | VNU1001 10 | CL | ONL | ONL | Viện Khả"
+            },
+            {
+              "rank": 5,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 4,
+              "preview": "### TABLE (Page 4) | K68I-CS2 | INT3230E | INT3230E | Mật mã và an toàn thông tin | Mật mã và an toàn thông tin | Mật mã và an toàn thông tin | Mật mã và an toàn thông tin | 4 | 60"
+            }
+          ]
+        },
+        {
+          "id": "ai_teacher_list_ascii",
+          "category": "schedule_teachers",
+          "query": "mon tri tue nhan tao ky nay co nhung ai day",
+          "source_rank": 1,
+          "evidence_rank": 3,
+          "coverage_top_k": 0.6667,
+          "top_results": [
+            {
+              "rank": 1,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 21,
+              "preview": "### TABLE (Page 21) | K70M-MT3 | UET. MAT1051 | Giải tích 2 | Giải tích 2 | 5 | 45 | | 145 | 9 | 70 | UET.MAT1051 42 | CL | LT | 6 | 4 | 206-T | Nguyễn Đình Kiên | Nguyễn Đình Kiên"
+            },
+            {
+              "rank": 2,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 21,
+              "preview": "### TABLE (Page 21) | K70M-MT3 | UET. MAT1051 | Giải tích 2 | Giải tích 2 | 5 | 45 | | 145 | 9 | 70 | UET.MAT1051 42 | CL | LT | 6 | 4 | 206-T | Nguyễn Đình Kiên | Nguyễn Đình Kiên"
+            },
+            {
+              "rank": 3,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 1,
+              "preview": "### TABLE (Page 1) | Lớp | Mã HP | Mã HP | Mã HP | Môn | Môn | Môn | TC | LT | TH | Tự học | PCGD | SS lớp | Mã LHP | Mã LHP | Nhóm | LT/TH | Thứ | Ca | GĐ | GĐ | GV | GV | GV | Gh"
+            },
+            {
+              "rank": 4,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 1,
+              "preview": "### TABLE (Page 1) | Lớp | Mã HP | Mã HP | Mã HP | Môn | Môn | Môn | TC | LT | TH | Tự học | PCGD | SS lớp | Mã LHP | Mã LHP | Nhóm | LT/TH | Thứ | Ca | GĐ | GĐ | GV | GV | GV | Gh"
+            },
+            {
+              "rank": 5,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 1,
+              "preview": "### TABLE (Page 1) | Lớp | Mã HP | Mã HP | Mã HP | Môn | Môn | Môn | TC | LT | TH | Tự học | PCGD | SS lớp | Mã LHP | Mã LHP | Nhóm | LT/TH | Thứ | Ca | GĐ | GĐ | GV | GV | GV | Gh"
+            }
+          ]
+        },
+        {
+          "id": "ai_schedule_by_name",
+          "category": "schedule_subject",
+          "query": "môn trí tuệ nhân tạo kì này lịch học như nào",
+          "source_rank": 1,
+          "evidence_rank": null,
+          "coverage_top_k": 0.0,
+          "top_results": [
+            {
+              "rank": 1,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 22,
+              "preview": "### TABLE (Page 22) | K70C- CE1+K70C- CE2+K70C- CE3+K70C-ID4. | VNU1001 | Nhập môn công nghệ số và ứng dụng trí tuệ nhân tạo | 3 | 45 | 202 | VNU1001 10 | CL | ONL | ONL | Viện Khả"
+            },
+            {
+              "rank": 2,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 22,
+              "preview": "### TABLE (Page 22) | K70C- CE1+K70C- CE2+K70C- CE3+K70C-ID4. | VNU1001 | Nhập môn công nghệ số và ứng dụng trí tuệ nhân tạo | 3 | 45 | 202 | VNU1001 10 | CL | ONL | ONL | Viện Khả"
+            },
+            {
+              "rank": 3,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 22,
+              "preview": "### TABLE (Page 22) | K70C- CE1+K70C- CE2+K70C- CE3+K70C-ID4. | VNU1001 | Nhập môn công nghệ số và ứng dụng trí tuệ nhân tạo | 3 | 45 | 202 | VNU1001 10 | CL | ONL | ONL | Viện Khả"
+            },
+            {
+              "rank": 4,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 22,
+              "preview": "### TABLE (Page 22) | K70C- CE1+K70C- CE2+K70C- CE3+K70C-ID4. | VNU1001 | Nhập môn công nghệ số và ứng dụng trí tuệ nhân tạo | 3 | 45 | 202 | VNU1001 10 | CL | ONL | ONL | Viện Khả"
+            },
+            {
+              "rank": 5,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 22,
+              "preview": "### TABLE (Page 22) | K70C- CE1+K70C- CE2+K70C- CE3+K70C-ID4. | VNU1001 | Nhập môn công nghệ số và ứng dụng trí tuệ nhân tạo | 3 | 45 | 202 | VNU1001 10 | CL | ONL | ONL | Viện Khả"
+            }
+          ]
+        },
+        {
+          "id": "ai_schedule_by_code",
+          "category": "schedule_subject",
+          "query": "int3401e kỳ này lịch học như nào",
+          "source_rank": 1,
+          "evidence_rank": 1,
+          "coverage_top_k": 1.0,
+          "top_results": [
+            {
+              "rank": 1,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 1,
+              "preview": "### TABLE (Page 1) | Lớp | Mã HP | Mã HP | Mã HP | Môn | Môn | Môn | TC | LT | TH | Tự học | PCGD | SS lớp | Mã LHP | Mã LHP | Nhóm | LT/TH | Thứ | Ca | GĐ | GĐ | GV | GV | GV | Gh"
+            },
+            {
+              "rank": 2,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 1,
+              "preview": "### TABLE (Page 1) | Lớp | Mã HP | Mã HP | Mã HP | Môn | Môn | Môn | TC | LT | TH | Tự học | PCGD | SS lớp | Mã LHP | Mã LHP | Nhóm | LT/TH | Thứ | Ca | GĐ | GĐ | GV | GV | GV | Gh"
+            },
+            {
+              "rank": 3,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 1,
+              "preview": "### TABLE (Page 1) | Lớp | Mã HP | Mã HP | Mã HP | Môn | Môn | Môn | TC | LT | TH | Tự học | PCGD | SS lớp | Mã LHP | Mã LHP | Nhóm | LT/TH | Thứ | Ca | GĐ | GĐ | GV | GV | GV | Gh"
+            },
+            {
+              "rank": 4,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 1,
+              "preview": "### TABLE (Page 1) | Lớp | Mã HP | Mã HP | Mã HP | Môn | Môn | Môn | TC | LT | TH | Tự học | PCGD | SS lớp | Mã LHP | Mã LHP | Nhóm | LT/TH | Thứ | Ca | GĐ | GĐ | GV | GV | GV | Gh"
+            },
+            {
+              "rank": 5,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 1,
+              "preview": "### TABLE (Page 1) | Lớp | Mã HP | Mã HP | Mã HP | Môn | Môn | Môn | TC | LT | TH | Tự học | PCGD | SS lớp | Mã LHP | Mã LHP | Nhóm | LT/TH | Thứ | Ca | GĐ | GĐ | GV | GV | GV | Gh"
+            }
+          ]
+        },
+        {
+          "id": "teacher_nhat_thanh_classes",
+          "category": "schedule_teacher_classes",
+          "query": "nguyễn thị nhật thanh kỳ này dạy những lớp nào",
+          "source_rank": 1,
+          "evidence_rank": 2,
+          "coverage_top_k": 1.0,
+          "top_results": [
+            {
+              "rank": 1,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 1,
+              "preview": "K69I-IT6 FLF1108 Tiếng Anh B2 5 20 35 9 45 FLF1108 6 CL LT 4 3 502-B Nguyễn Kiều Oanh Học 2 ca/10 tuần, thi đợt 1 K69I-IT6 FLF1108 Tiếng Anh B2 5 20 35 9 45 FLF1108 6 CL LT 5 3 308"
+            },
+            {
+              "rank": 2,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 1,
+              "preview": "### TABLE (Page 1) | Lớp | Mã HP | Mã HP | Mã HP | Môn | Môn | Môn | TC | LT | TH | Tự học | PCGD | SS lớp | Mã LHP | Mã LHP | Nhóm | LT/TH | Thứ | Ca | GĐ | GĐ | GV | GV | GV | Gh"
+            },
+            {
+              "rank": 3,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 1,
+              "preview": "### TABLE (Page 1) | Lớp | Mã HP | Mã HP | Mã HP | Môn | Môn | Môn | TC | LT | TH | Tự học | PCGD | SS lớp | Mã LHP | Mã LHP | Nhóm | LT/TH | Thứ | Ca | GĐ | GĐ | GV | GV | GV | Gh"
+            },
+            {
+              "rank": 4,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 1,
+              "preview": "K69I-CS2 INT3425 Khoa học dữ liệu 3 45 1 65 INT3425 2 CL LT 5 4 102-B Phan Xuân Hiếu Học 1 ca/15 tuần, thi đợt 2 K69I-CS3 INT3425 Khoa học dữ liệu 3 45 1 65 INT3425 3 CL LT 4 1 107"
+            },
+            {
+              "rank": 5,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 3,
+              "preview": "### TABLE (Page 3) | K69A-AI- | K69A-AI- | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | -"
+            }
+          ]
+        },
+        {
+          "id": "teacher_van_vinh_classes",
+          "category": "schedule_teacher_classes",
+          "query": "nguyễn văn vinh kỳ này dạy những lớp nào",
+          "source_rank": 1,
+          "evidence_rank": 4,
+          "coverage_top_k": 1.0,
+          "top_results": [
+            {
+              "rank": 1,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 14,
+              "preview": "### TABLE (Page 14) | K70I-IT2 K70I-IT2 | UET.CS2043 UET. MAT1051 | Lập trình nâng cao Giải tích 2 | 3 5 | 45 | 30 | 1 9 | 63 63 | UET.CS2043 2 UET.MAT1051 2 | CL CL | TH LT | 5 2 "
+            },
+            {
+              "rank": 2,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 14,
+              "preview": "### TABLE (Page 14) | K70I-IT2 K70I-IT2 | UET.CS2043 UET. MAT1051 | Lập trình nâng cao Giải tích 2 | 3 5 | 45 | 30 | 1 9 | 63 63 | UET.CS2043 2 UET.MAT1051 2 | CL CL | TH LT | 5 2 "
+            },
+            {
+              "rank": 3,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 14,
+              "preview": "### TABLE (Page 14) | K70I-IT2 K70I-IT2 | UET.CS2043 UET. MAT1051 | Lập trình nâng cao Giải tích 2 | 3 5 | 45 | 30 | 1 9 | 63 63 | UET.CS2043 2 UET.MAT1051 2 | CL CL | TH LT | 5 2 "
+            },
+            {
+              "rank": 4,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 1,
+              "preview": "### TABLE (Page 1) | Lớp | Mã HP | Mã HP | Mã HP | Môn | Môn | Môn | TC | LT | TH | Tự học | PCGD | SS lớp | Mã LHP | Mã LHP | Nhóm | LT/TH | Thứ | Ca | GĐ | GĐ | GV | GV | GV | Gh"
+            },
+            {
+              "rank": 5,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 1,
+              "preview": "### TABLE (Page 1) | Lớp | Mã HP | Mã HP | Mã HP | Môn | Môn | Môn | TC | LT | TH | Tự học | PCGD | SS lớp | Mã LHP | Mã LHP | Nhóm | LT/TH | Thứ | Ca | GĐ | GĐ | GV | GV | GV | Gh"
+            }
+          ]
+        },
+        {
+          "id": "hmi_opening_query",
+          "category": "schedule_subject",
+          "query": "môn tương tác người máy kì này có mở lớp không",
+          "source_rank": 1,
+          "evidence_rank": 1,
+          "coverage_top_k": 1.0,
+          "top_results": [
+            {
+              "rank": 1,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 4,
+              "preview": "### TABLE (Page 4) | K68I-CS2 | INT3230E | INT3230E | Mật mã và an toàn thông tin | Mật mã và an toàn thông tin | Mật mã và an toàn thông tin | Mật mã và an toàn thông tin | 4 | 60"
+            },
+            {
+              "rank": 2,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 4,
+              "preview": "K68I-CS3 INT3123 Các thuật toán đồ thị và ứng dụng 3 45 1 74 INT3123 1 CL LT 2 4 205-T Tạ Việt Cường Học 1 ca/15 tuần, thi đợt 2 K68I-CS3 INT3420E Học sâu và Ứng dụng 3 45 1 74 INT"
+            },
+            {
+              "rank": 3,
+              "resource_id": "cs2022_curriculum_html",
+              "file_id": "Chuong_trinh_dao_tao_nganh_Khoa_hoc_may_tinh_-_QH2022-2024_-_Truong_Dai_hoc_Cong_nghe_DHQGHN.html",
+              "page": null,
+              "preview": "| 60 | INT3420E | Học sâu và Ứng dụngDeep learning and Applications | 3 | 45 | | | INT3405E | | 61 | INT3137 | Phân tích dữ liệu trực quanVisual Data Analytics | 3 | 45 | | | INT34"
+            },
+            {
+              "rank": 4,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 5,
+              "preview": "cho sinh viên theo tiến trình đào tạo. - Sinh viên được phép đăng ký những học phần muốn học thêm hoặc đăng ký đổi sang lớp học phần khác trong 2 tuần đầu của học kỳ qua cổng thông"
+            },
+            {
+              "rank": 5,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 6,
+              "preview": "Page 6: lớp học phần không đủ sĩ số sinh viên để mở lớp, Phòng đào tạo sẽ ra thông báo hủy học phần của những sinh viên đã đăng ký. Sinh viên có trách nhiệm liên hệ với Phòng Đào t"
+            }
+          ]
+        },
+        {
+          "id": "hmi_opening_by_code",
+          "category": "schedule_subject",
+          "query": "int2041 kỳ này có mở lớp không",
+          "source_rank": 1,
+          "evidence_rank": 1,
+          "coverage_top_k": 1.0,
+          "top_results": [
+            {
+              "rank": 1,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 4,
+              "preview": "### TABLE (Page 4) | K68I-CS2 | INT3230E | INT3230E | Mật mã và an toàn thông tin | Mật mã và an toàn thông tin | Mật mã và an toàn thông tin | Mật mã và an toàn thông tin | 4 | 60"
+            },
+            {
+              "rank": 2,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 4,
+              "preview": "K68I-CS3 INT3123 Các thuật toán đồ thị và ứng dụng 3 45 1 74 INT3123 1 CL LT 2 4 205-T Tạ Việt Cường Học 1 ca/15 tuần, thi đợt 2 K68I-CS3 INT3420E Học sâu và Ứng dụng 3 45 1 74 INT"
+            },
+            {
+              "rank": 3,
+              "resource_id": "cs2022_curriculum_html",
+              "file_id": "Chuong_trinh_dao_tao_nganh_Khoa_hoc_may_tinh_-_QH2022-2024_-_Truong_Dai_hoc_Cong_nghe_DHQGHN.html",
+              "page": null,
+              "preview": "| 60 | INT3420E | Học sâu và Ứng dụngDeep learning and Applications | 3 | 45 | | | INT3405E | | 61 | INT3137 | Phân tích dữ liệu trực quanVisual Data Analytics | 3 | 45 | | | INT34"
+            },
+            {
+              "rank": 4,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 5,
+              "preview": "cho sinh viên theo tiến trình đào tạo. - Sinh viên được phép đăng ký những học phần muốn học thêm hoặc đăng ký đổi sang lớp học phần khác trong 2 tuần đầu của học kỳ qua cổng thông"
+            },
+            {
+              "rank": 5,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 6,
+              "preview": "Page 6: lớp học phần không đủ sĩ số sinh viên để mở lớp, Phòng đào tạo sẽ ra thông báo hủy học phần của những sinh viên đã đăng ký. Sinh viên có trách nhiệm liên hệ với Phòng Đào t"
+            }
+          ]
+        },
+        {
+          "id": "computer_vision_schedule",
+          "category": "schedule_subject",
+          "query": "thế còn thị giác máy tính kỳ này mở lớp không",
+          "source_rank": 1,
+          "evidence_rank": 1,
+          "coverage_top_k": 1.0,
+          "top_results": [
+            {
+              "rank": 1,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 4,
+              "preview": "### TABLE (Page 4) | K68I-CS2 | INT3230E | INT3230E | Mật mã và an toàn thông tin | Mật mã và an toàn thông tin | Mật mã và an toàn thông tin | Mật mã và an toàn thông tin | 4 | 60"
+            },
+            {
+              "rank": 2,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 17,
+              "preview": "### TABLE (Page 17) | K70A-DS2 | UET. MAT1051 | UET. MAT1051 | Giải tích 2 | Giải tích 2 | Giải tích 2 | 5 | 45 | | | 9 | 59 | UET.MAT1051 51 | CL | LT | 4 | 1 | 210-B | Nguyễn Min"
+            },
+            {
+              "rank": 3,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 17,
+              "preview": "### TABLE (Page 17) | K70A-DS2 | UET. MAT1051 | UET. MAT1051 | Giải tích 2 | Giải tích 2 | Giải tích 2 | 5 | 45 | | | 9 | 59 | UET.MAT1051 51 | CL | LT | 4 | 1 | 210-B | Nguyễn Min"
+            },
+            {
+              "rank": 4,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 17,
+              "preview": "### TABLE (Page 17) | K70A-DS2 | UET. MAT1051 | UET. MAT1051 | Giải tích 2 | Giải tích 2 | Giải tích 2 | 5 | 45 | | | 9 | 59 | UET.MAT1051 51 | CL | LT | 4 | 1 | 210-B | Nguyễn Min"
+            },
+            {
+              "rank": 5,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 17,
+              "preview": "### TABLE (Page 17) | K70A-DS2 | UET. MAT1051 | UET. MAT1051 | Giải tích 2 | Giải tích 2 | Giải tích 2 | 5 | 45 | | | 9 | 59 | UET.MAT1051 51 | CL | LT | 4 | 1 | 210-B | Nguyễn Min"
+            }
+          ]
+        },
+        {
+          "id": "computer_vision_by_code",
+          "category": "schedule_subject",
+          "query": "int3412e lịch học kỳ này thế nào",
+          "source_rank": 1,
+          "evidence_rank": 1,
+          "coverage_top_k": 1.0,
+          "top_results": [
+            {
+              "rank": 1,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 4,
+              "preview": "### TABLE (Page 4) | K68I-CS2 | INT3230E | INT3230E | Mật mã và an toàn thông tin | Mật mã và an toàn thông tin | Mật mã và an toàn thông tin | Mật mã và an toàn thông tin | 4 | 60"
+            },
+            {
+              "rank": 2,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 4,
+              "preview": "K68I-CS3 INT3123 Các thuật toán đồ thị và ứng dụng 3 45 1 74 INT3123 1 CL LT 2 4 205-T Tạ Việt Cường Học 1 ca/15 tuần, thi đợt 2 K68I-CS3 INT3420E Học sâu và Ứng dụng 3 45 1 74 INT"
+            },
+            {
+              "rank": 3,
+              "resource_id": "cs2022_curriculum_html",
+              "file_id": "Chuong_trinh_dao_tao_nganh_Khoa_hoc_may_tinh_-_QH2022-2024_-_Truong_Dai_hoc_Cong_nghe_DHQGHN.html",
+              "page": null,
+              "preview": "| 60 | INT3420E | Học sâu và Ứng dụngDeep learning and Applications | 3 | 45 | | | INT3405E | | 61 | INT3137 | Phân tích dữ liệu trực quanVisual Data Analytics | 3 | 45 | | | INT34"
+            },
+            {
+              "rank": 4,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 24,
+              "preview": "#### Bảng: Danh sách môn học đã đăng ký hoặc đã chọn | STT | Môn học | TC | Lớp MH | Giáo viên | Lịch học | Có lấy điểm cho ngành 1 | Có lấy điểm cho ngành 2 | Kiểu ĐK | Hủy | | :-"
+            },
+            {
+              "rank": 5,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 16,
+              "preview": "Page 16: Mã học Lớp học Th Tư vấn Tên học phần TC LT TH phần tiên phần H quyết EMA2012 EMA2022 Cơ sở công nghệ chế tạo máy 3 30 15 EMA2032 EMA2033 EMA2024 Kỹ thuật đo lường và cảm "
+            }
+          ]
+        },
+        {
+          "id": "curriculum_hmi_group",
+          "category": "curriculum_subject_group",
+          "query": "int2041 có nằm trong chương trình đào tạo khoa học máy tính qh2022-2024 không",
+          "source_rank": 1,
+          "evidence_rank": 1,
+          "coverage_top_k": 0.6667,
+          "top_results": [
+            {
+              "rank": 1,
+              "resource_id": "cs2022_curriculum_html",
+              "file_id": "Chuong_trinh_dao_tao_nganh_Khoa_hoc_may_tinh_-_QH2022-2024_-_Truong_Dai_hoc_Cong_nghe_DHQGHN.html",
+              "page": null,
+              "preview": "| 60 | INT3420E | Học sâu và Ứng dụngDeep learning and Applications | 3 | 45 | | | INT3405E | | 61 | INT3137 | Phân tích dữ liệu trực quanVisual Data Analytics | 3 | 45 | | | INT34"
+            },
+            {
+              "rank": 2,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 4,
+              "preview": "K68I-CS3 INT3123 Các thuật toán đồ thị và ứng dụng 3 45 1 74 INT3123 1 CL LT 2 4 205-T Tạ Việt Cường Học 1 ca/15 tuần, thi đợt 2 K68I-CS3 INT3420E Học sâu và Ứng dụng 3 45 1 74 INT"
+            },
+            {
+              "rank": 3,
+              "resource_id": "cs2022_curriculum_html",
+              "file_id": "Chuong_trinh_dao_tao_nganh_Khoa_hoc_may_tinh_-_QH2022-2024_-_Truong_Dai_hoc_Cong_nghe_DHQGHN.html",
+              "page": null,
+              "preview": "| 39 | INT3131INT3132 | | 75 | | 3 tín chỉ từ danh sách các học phần tự chọn theo các định hướng mà sinh viên chưa học | 3 | | | | | | | Tổng cộng | 136 | | | | | Ghi chú: Học phần"
+            },
+            {
+              "rank": 4,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 10,
+              "preview": "EPN1095 Vật lý đại cương 1 2 30 MAT1041 Giải tích 1 4 30 30 QH-2023-I/CQ-M- Giới thiệu về Công nghệ thông INT1007 3 15 30 CLC tin FLF1107 Tiếng Anh B1 5 20 35 MAT1093 Đại số 4 30 3"
+            },
+            {
+              "rank": 5,
+              "resource_id": "cs2022_curriculum_html",
+              "file_id": "Chuong_trinh_dao_tao_nganh_Khoa_hoc_may_tinh_-_QH2022-2024_-_Truong_Dai_hoc_Cong_nghe_DHQGHN.html",
+              "page": null,
+              "preview": "| INT2215 | | INT3132 | Dự án công nghệTechnology Project | 3 | 21 | 24 | | INT2215 | | 31 | INT3401E | Trí tuệ nhân tạoArtificial Intelligence | 3 | 45 | | | INT2210 | | 32 | INT3"
+            }
+          ]
+        },
+        {
+          "id": "curriculum_cv_group",
+          "category": "curriculum_subject_group",
+          "query": "int3412e thuộc nhóm nào trong ctdt khoa học máy tính qh2022-2024",
+          "source_rank": 1,
+          "evidence_rank": 1,
+          "coverage_top_k": 0.6667,
+          "top_results": [
+            {
+              "rank": 1,
+              "resource_id": "cs2022_curriculum_html",
+              "file_id": "Chuong_trinh_dao_tao_nganh_Khoa_hoc_may_tinh_-_QH2022-2024_-_Truong_Dai_hoc_Cong_nghe_DHQGHN.html",
+              "page": null,
+              "preview": "| 60 | INT3420E | Học sâu và Ứng dụngDeep learning and Applications | 3 | 45 | | | INT3405E | | 61 | INT3137 | Phân tích dữ liệu trực quanVisual Data Analytics | 3 | 45 | | | INT34"
+            },
+            {
+              "rank": 2,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 4,
+              "preview": "K68I-CS3 INT3123 Các thuật toán đồ thị và ứng dụng 3 45 1 74 INT3123 1 CL LT 2 4 205-T Tạ Việt Cường Học 1 ca/15 tuần, thi đợt 2 K68I-CS3 INT3420E Học sâu và Ứng dụng 3 45 1 74 INT"
+            },
+            {
+              "rank": 3,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 17,
+              "preview": "Page 17: Mã học Lớp học Th Tư vấn Tên học phần TC LT TH phần tiên phần H quyết EMA2012 EMA2019E EMA2022E Cơ sở công nghệ chế tạo máy 3 30 15 EMA2032 EMA2033 EMA2024E Kỹ thuật đo lư"
+            },
+            {
+              "rank": 4,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 9,
+              "preview": "MAT1041 Giải tích 1 4 30 30 QH-2023-I/CQ-AE Giới thiệu về Công nghệ thông INT1007 3 15 30 tin Giới thiệu về Hàng không Vũ AER1001 3 45 trụ MAT1093 Đại số 4 30 30 EPN1095 Vật lý đại"
+            },
+            {
+              "rank": 5,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 4,
+              "preview": "### TABLE (Page 4) | K68I-CS2 | INT3230E | INT3230E | Mật mã và an toàn thông tin | Mật mã và an toàn thông tin | Mật mã và an toàn thông tin | Mật mã và an toàn thông tin | 4 | 60"
+            }
+          ]
+        },
+        {
+          "id": "curriculum_image_processing_group",
+          "category": "curriculum_subject_group",
+          "query": "xử lý ảnh thuộc nhóm nào trong ctdt khoa học máy tính qh2022-2024",
+          "source_rank": 3,
+          "evidence_rank": null,
+          "coverage_top_k": 0.0,
+          "top_results": [
+            {
+              "rank": 1,
+              "resource_id": "schedule_appendix_pdf",
+              "file_id": "PHỤ LỤC THỜI KHÓA BIỂU HKII 2025-2026 (DỮ LIỆU CẬP NHẬT ĐẾN 22012026).xlsx - Sheet1.pdf",
+              "page": 7,
+              "preview": "K69C-ID2 CTE3102 Đồ họa II: After Effects and Premiere 3 15 5 80 CTE3102 2 CL LT 4 2 209-T Hoàng Minh Hưng Học tuần 1-5 23/2 - 29/3 K69C-ID2 CTE3102 Đồ họa II: After Effects and Pr"
+            },
+            {
+              "rank": 2,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 13,
+              "preview": "Page 13: Mã học Lớp học Th Tư vấn Tên học phần TC LT TH phần tiên phần H quyết 3 tín chỉ tự chọn thuộc khối 3 kiến thức theo khối ngành AIT2002 Cơ sở hệ thống máy tính 3 30 15 INT2"
+            },
+            {
+              "rank": 3,
+              "resource_id": "cs2022_curriculum_html",
+              "file_id": "Chuong_trinh_dao_tao_nganh_Khoa_hoc_may_tinh_-_QH2022-2024_-_Truong_Dai_hoc_Cong_nghe_DHQGHN.html",
+              "page": null,
+              "preview": "| 39 | INT3131INT3132 | | 75 | | 3 tín chỉ từ danh sách các học phần tự chọn theo các định hướng mà sinh viên chưa học | 3 | | | | | | | Tổng cộng | 136 | | | | | Ghi chú: Học phần"
+            },
+            {
+              "rank": 4,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 4,
+              "preview": "khi học học phần đó; e) Khóa luận, đồ án tốt nghiệp là học phần bắt buộc đối với chương trình đào tạo chất lượng cao và là học phần tự chọn có điều kiện đối với chương trình đào tạ"
+            },
+            {
+              "rank": 5,
+              "resource_id": "handbook_pdf",
+              "file_id": "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf",
+              "page": 12,
+              "preview": "Page 12: Mã học Lớp học Th Tư vấn Tên học phần TC LT TH phần tiên phần H quyết INT1008 EMA2006 Matlab và ứng dụng 3 30 15 MAT1093 MAT1042 MAT1093 EMA2032 Hình hoạ kỹ thuật và CAD 2"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "profile_id": "mock_it2022_mid_program",
+  "student": {
+    "student_id": "MOCK220002",
+    "name": "Tran Thi Mock",
+    "program_id": "it_2022",
+    "program_name": "Cong nghe thong tin QH-2022"
+  },
+  "summary": {
+    "completed_credits": 62,
+    "recognized_credits": 62,
+    "expected_missing_credits": 74,
+    "expected_required_missing_codes": ["INT3110", "INT3117", "INT3131", "INT3132", "INT4050"],
+    "expected_open_group_missing_credits": {
+      "general_knowledge": 8,
+      "specialized_electives": 18
+    }
+  },
+  "semesters": [
+    {
+      "semester": "2022-2023-1",
+      "subjects": [
+        {"code": "PHI1006", "name": "Triet hoc Mac - Lenin", "credits": 3, "grade_4": 2.8},
+        {"code": "MAT1093", "name": "Dai so", "credits": 4, "grade_4": 3.0},
+        {"code": "INT1003", "name": "Tin hoc co so 1", "credits": 4, "grade_4": 3.1}
+      ]
+    },
+    {
+      "semester": "2022-2023-2",
+      "subjects": [
+        {"code": "MAT1094", "name": "Giai tich 1", "credits": 4, "grade_4": 2.9},
+        {"code": "INT1007", "name": "Tin hoc co so 2", "credits": 4, "grade_4": 3.2},
+        {"code": "INT2210", "name": "Cau truc du lieu va giai thuat", "credits": 4, "grade_4": 3.0}
+      ]
+    },
+    {
+      "semester": "2023-2024-1",
+      "subjects": [
+        {"code": "INT2215", "name": "Co so du lieu", "credits": 3, "grade_4": 3.1},
+        {"code": "INT2204", "name": "Lap trinh huong doi tuong", "credits": 3, "grade_4": 3.4},
+        {"code": "INT2208", "name": "Mang may tinh", "credits": 3, "grade_4": 2.7}
+      ]
+    }
+  ]
+}

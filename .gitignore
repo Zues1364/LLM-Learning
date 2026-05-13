@@ -84,6 +84,9 @@ reports/e2e_user_flow_clean_*.json
 reports/full_regression_report_*.md
 reports/premerge_full_gate_*.md
 reports/premerge_full_gate_*.json
+reports/eval_academic_advisor_*.md
+reports/eval_academic_advisor_*.json
+reports/eval_academic_advisor_latest.md
 reports/v2_group_audit_*.json
 .gitnexus
 
