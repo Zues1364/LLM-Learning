@@ -158,6 +158,7 @@ CURRICULUM_HTML_DIR = RESOURCE_DIR / "html"
 CURRICULUM_PDF_DIR = RESOURCE_DIR / "pdfs"
 VECTOR_SNAPSHOT_DIR = DATA_DIR / "cache" / "vector_snapshots"
 GLOBAL_VECTOR_SNAPSHOT_FILE = VECTOR_SNAPSHOT_DIR / "global_resources_snapshot.pkl"
+TRANSCRIPT_ANALYSIS_CACHE_VERSION = "v2_text_only"
 
 _embedder: Optional[VietnameseEmbedder] = None
 _store: Optional[FAISSVectorStore] = None  
@@ -1025,6 +1026,12 @@ def _build_schedule_table_rows(
     recommended_subjects: List[Dict[str, Any]],
     default_time_slot_map: Dict[str, Dict[str, str]],
 ) -> List[Dict[str, Any]]:
+    def _humanize_period_label(value: Any) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        return re.sub(r"\bTiet\b", "Tiết", text, flags=re.IGNORECASE)
+
     recommended_by_norm: Dict[str, Dict[str, Any]] = {}
     for subj in recommended_subjects or []:
         code = str(subj.get("code") or "").strip()
@@ -1053,7 +1060,7 @@ def _build_schedule_table_rows(
             slot_map = default_time_slot_map or {}
         slot_info = (slot_map.get(slot) or {}) if slot else {}
 
-        period = str(slot_info.get("period") or "").strip()
+        period = _humanize_period_label(slot_info.get("period"))
         time_range = str(item.get("resolved_time_range") or slot_info.get("time_range") or "").strip()
         if period and time_range:
             period_time = f"{period} ({time_range})"
@@ -1102,6 +1109,43 @@ def _build_schedule_table_rows(
 
     rows.sort(key=lambda row: (_day_order(str(row.get("day") or "")), _slot_order(str(row.get("ca_hoc") or ""))))
     return rows
+
+
+def _format_schedule_row_summary_lines(row: Dict[str, Any]) -> List[str]:
+    def _humanize_period_label(value: Any) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        return re.sub(r"\bTiet\b", "Tiết", text, flags=re.IGNORECASE)
+
+    day = str(row.get("day") or "").strip()
+    ca_hoc = str(row.get("ca_hoc") or "").strip()
+    period_time = _humanize_period_label(row.get("period_time"))
+    subject_code = str(row.get("subject_code") or "").strip()
+    subject_name = _format_subject_name_vi_en(row.get("subject_name"))
+    credits = _coerce_int(row.get("credits"))
+    class_note = str(row.get("class_note") or "").strip()
+
+    first_line_parts = [part for part in (day, ca_hoc, period_time) if part]
+    second_line_parts: List[str] = []
+    if subject_code and subject_name:
+        second_line_parts.append(f"{subject_code} - {subject_name}")
+    elif subject_code:
+        second_line_parts.append(subject_code)
+    elif subject_name:
+        second_line_parts.append(subject_name)
+    if credits:
+        second_line_parts.append(f"{credits} tín chỉ")
+    if class_note:
+        second_line_parts.append(class_note)
+
+    lines: List[str] = []
+    if first_line_parts:
+        lines.append(f"- {' | '.join(first_line_parts)}")
+    if second_line_parts:
+        prefix = "  " if first_line_parts else "- "
+        lines.append(f"{prefix}{' | '.join(second_line_parts)}")
+    return lines
 
 # On Startup (using FastAPI event)
 @app.on_event("startup")
@@ -1352,10 +1396,13 @@ def analyze_transcript(file_ids: str | List[str], session_id: Optional[str] = No
     try:
         cache_dir = DATA_DIR / "cache" / "transcripts"
         cache_dir.mkdir(parents=True, exist_ok=True)
-        signature_payload = []
+        signature_payload = {
+            "version": TRANSCRIPT_ANALYSIS_CACHE_VERSION,
+            "files": [],
+        }
         for resolved_id, pdf_path in resolved_files:
             stat = pdf_path.stat()
-            signature_payload.append(
+            signature_payload["files"].append(
                 {
                     "file_id": resolved_id,
                     "name": pdf_path.name,
@@ -1387,8 +1434,17 @@ def analyze_transcript(file_ids: str | List[str], session_id: Optional[str] = No
         try:
             logger.info("Processing transcript file_id=%s", resolved_id)
             logger.info("Resolved path for %s: %s", resolved_id, pdf_path)
-            docs = process_pdf(str(pdf_path))
-            logger.info("Extracted %s chunks from %s", len(docs), pdf_path.name)
+            docs = process_pdf_text_only(str(pdf_path))
+            extractor_name = "process_pdf_text_only"
+            if not docs:
+                docs = process_pdf(str(pdf_path))
+                extractor_name = "process_pdf"
+            logger.info(
+                "Extracted %s transcript doc(s) from %s via %s",
+                len(docs),
+                pdf_path.name,
+                extractor_name,
+            )
             file_text = "\n".join(doc.page_content for doc in docs)
             texts.append({"file_id": resolved_id, "text": file_text})
             # Try to capture class/program code directly from raw text as a fallback
@@ -3645,13 +3701,6 @@ def check_course_schedule(
     if structured_results is not None:
         return structured_results
 
-    try:
-        resource_loader._scope_dirs()
-        if safe_user or safe_session:
-            resource_loader._scope_dirs(session_id=safe_session, user_id=safe_user)
-    except Exception as e:
-        logger.warning("[schedule] Failed to sync schedule resources from blob: %s", e)
-
     tkb_full_text, selected_file_name = _invoke_with_optional_session(
         _load_best_schedule_text,
         session_id=safe_session,
@@ -4352,6 +4401,7 @@ def _render_gpa_feasibility_text(query: str, advisor_context: Dict[str, Any]) ->
     if schedule_rows:
         lines.append("")
         lines.append("Gợi ý lịch:")
+        lines.append("")
         lines.append("| Ngày học | Ca học | Tiết + Thời gian | Mã môn học | Tên môn học | Tín chỉ | Ghi chú về lớp |")
         lines.append("|---|---|---|---|---|---:|---|")
         for row in schedule_rows[:12]:
@@ -4363,7 +4413,7 @@ def _render_gpa_feasibility_text(query: str, advisor_context: Dict[str, Any]) ->
                     [
                         str(row.get("day") or ""),
                         str(row.get("ca_hoc") or ""),
-                        str(row.get("period_time") or ""),
+                        re.sub(r"\bTiet\b", "Tiết", str(row.get("period_time") or ""), flags=re.IGNORECASE),
                         str(row.get("subject_code") or ""),
                         _format_subject_name_vi_en(row.get("subject_name")),
                         str(_coerce_int(row.get("credits")) or ""),
@@ -4435,6 +4485,7 @@ def _render_missing_schedule_plan_text(advisor_context: Dict[str, Any]) -> str:
     lines.append("")
     lines.append("4) Gợi ý lịch")
     if schedule_rows:
+        lines.append("")
         lines.append("| Ngày học | Ca học | Tiết + Thời gian | Mã môn học | Tên môn học | Tín chỉ | Ghi chú về lớp |")
         lines.append("|---|---|---|---|---|---:|---|")
         for row in schedule_rows[:16]:
@@ -4446,7 +4497,7 @@ def _render_missing_schedule_plan_text(advisor_context: Dict[str, Any]) -> str:
                     [
                         str(row.get("day") or ""),
                         str(row.get("ca_hoc") or ""),
-                        str(row.get("period_time") or ""),
+                        re.sub(r"\bTiet\b", "Tiết", str(row.get("period_time") or ""), flags=re.IGNORECASE),
                         str(row.get("subject_code") or ""),
                         _format_subject_name_vi_en(row.get("subject_name")),
                         str(_coerce_int(row.get("credits")) or ""),

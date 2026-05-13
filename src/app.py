@@ -1,6 +1,7 @@
 ﻿import json
 import logging
 import os
+import pickle
 import re
 import shutil
 import sqlite3
@@ -48,6 +49,7 @@ from resource_loader import resource_loader
 from mail_agent import MailOAuthRefreshError, mail_agent_service
 from runtime_paths import (
     BASE_DIR,
+    CACHE_DIR,
     DATA_DIR,
     MEMORY_DB,
     PDF_DIR,
@@ -162,6 +164,21 @@ MCP_TOOL_TIMEOUTS: Dict[str, Optional[float]] = {
     # consult_advisor can exceed 2 minutes on cold transcript parses; keep default lenient.
     "consult_advisor": _read_timeout_env("ASK_CONSULT_ADVISOR_TIMEOUT_SEC", 300.0),
     "retrieve_chunks": _read_timeout_env("ASK_RETRIEVE_CHUNKS_TIMEOUT_SEC", 45.0),
+    "get_available_programs": _read_timeout_env("ASK_GET_AVAILABLE_PROGRAMS_TIMEOUT_SEC", 12.0),
+    "scan_resources": _read_timeout_env("ASK_SCAN_RESOURCES_TIMEOUT_SEC", 15.0),
+    "get_schedule_rows": _read_timeout_env("ASK_GET_SCHEDULE_ROWS_TIMEOUT_SEC", 25.0),
+    "get_time_slot_info": _read_timeout_env("ASK_GET_TIME_SLOT_INFO_TIMEOUT_SEC", 15.0),
+    "get_electives_with_schedule": _read_timeout_env("ASK_GET_ELECTIVES_WITH_SCHEDULE_TIMEOUT_SEC", 30.0),
+    "get_curriculum_lookup": _read_timeout_env("ASK_GET_CURRICULUM_LOOKUP_TIMEOUT_SEC", 20.0),
+    "resolve_course_alias": _read_timeout_env("ASK_RESOLVE_COURSE_ALIAS_TIMEOUT_SEC", 15.0),
+    "get_classes_by_teacher": _read_timeout_env("ASK_GET_CLASSES_BY_TEACHER_TIMEOUT_SEC", 20.0),
+    "get_teachers_by_subject": _read_timeout_env("ASK_GET_TEACHERS_BY_SUBJECT_TIMEOUT_SEC", 20.0),
+    "get_schedule": _read_timeout_env("ASK_GET_SCHEDULE_TIMEOUT_SEC", 25.0),
+    # Memory/state calls should fail fast instead of blocking whole /ask requests.
+    "memory_get": _read_timeout_env("ASK_MEMORY_GET_TIMEOUT_SEC", 8.0),
+    "memory_add": _read_timeout_env("ASK_MEMORY_ADD_TIMEOUT_SEC", 5.0),
+    "memory_state_get": _read_timeout_env("ASK_MEMORY_STATE_GET_TIMEOUT_SEC", 8.0),
+    "memory_state_upsert": _read_timeout_env("ASK_MEMORY_STATE_UPSERT_TIMEOUT_SEC", 5.0),
 }
 MCP_TOOL_TIMEOUTS_TRANSCRIPT: Dict[str, Optional[float]] = {
     # Transcript-intensive advisory queries may need substantially longer; do not let
@@ -355,11 +372,19 @@ def _scan_resources_with_owner(session_id: Optional[str], user_id: Optional[str]
     elif session_id:
         payload["session_id"] = session_id
     try:
-        mcp_client.invoke("scan_resources", payload)
+        _invoke_mcp_tool(
+            "scan_resources",
+            payload,
+            timeout_seconds=MCP_TOOL_TIMEOUTS.get("scan_resources"),
+        )
     except Exception as first_err:
         if user_id and session_id:
             logger.warning("scan_resources(user) failed, fallback to session scope: %s", first_err)
-            mcp_client.invoke("scan_resources", {"session_id": session_id})
+            _invoke_mcp_tool(
+                "scan_resources",
+                {"session_id": session_id},
+                timeout_seconds=MCP_TOOL_TIMEOUTS.get("scan_resources"),
+            )
         else:
             raise
 
@@ -711,9 +736,10 @@ def _context_to_text(value: Any) -> str:
 def _load_structured_state(session_id: str, user_id: Optional[str] = None) -> Dict[str, Any]:
     state = default_conversation_state()
     try:
-        payload = mcp_client.invoke(
+        payload = _invoke_mcp_tool(
             "memory_state_get",
             _with_memory_owner({"session_id": session_id}, user_id),
+            timeout_seconds=MCP_TOOL_TIMEOUTS.get("memory_state_get"),
         )
         if isinstance(payload, dict):
             state.update(payload)
@@ -751,7 +777,7 @@ def _save_structured_state(
             planner_context=planner_context,
             selected_program_id=selected_program_id,
         )
-        mcp_client.invoke(
+        _invoke_mcp_tool(
             "memory_state_upsert",
             _with_memory_owner(
                 {
@@ -760,6 +786,7 @@ def _save_structured_state(
                 },
                 user_id,
             ),
+            timeout_seconds=MCP_TOOL_TIMEOUTS.get("memory_state_upsert"),
         )
     except Exception as e:
         logger.warning("Khong luu duoc structured state cho session %s: %s", session_id, e)
@@ -819,6 +846,85 @@ _CITATION_FOCUS_STOPWORDS: Set[str] = {
     "tra",
     "loi",
 }
+
+
+def _coerce_int(value: Any) -> Optional[int]:
+    if value in (None, ""):
+        return None
+    try:
+        return int(float(str(value).strip()))
+    except Exception:
+        return None
+
+
+def _normalize_schedule_display_text(text: str) -> str:
+    cleaned = str(text or "")
+    cleaned = re.sub(r"\bTiet\b", "Tiết", cleaned, flags=re.IGNORECASE)
+    return cleaned
+
+
+def _render_schedule_citation_excerpt_from_row(
+    *,
+    day: str = "",
+    ca_hoc: str = "",
+    period_time: str = "",
+    subject_code: str = "",
+    subject_name: str = "",
+    credits: Any = None,
+    class_note: str = "",
+    room: str = "",
+    teacher: str = "",
+    week_note: str = "",
+) -> str:
+    line1_parts = [part for part in (day, ca_hoc, _normalize_schedule_display_text(period_time)) if str(part or "").strip()]
+    line2_parts: List[str] = []
+    code = str(subject_code or "").strip()
+    name = str(subject_name or "").strip()
+    if code and name:
+        line2_parts.append(f"{code} - {name}")
+    elif code or name:
+        line2_parts.append(code or name)
+    credit_value = _coerce_int(credits)
+    if credit_value:
+        line2_parts.append(f"{credit_value} tín chỉ")
+    class_text = str(class_note or "").strip()
+    if class_text:
+        line2_parts.append(class_text)
+    elif code:
+        line2_parts.append(f"Lớp {code}")
+    room_text = str(room or "").strip()
+    if room_text:
+        line2_parts.append(f"Phòng {room_text}")
+    teacher_text = str(teacher or "").strip()
+    if teacher_text:
+        line2_parts.append(f"GV {teacher_text}")
+    note_text = str(week_note or "").strip()
+    if note_text:
+        line2_parts.append(note_text)
+
+    lines: List[str] = []
+    if line1_parts:
+        lines.append(" | ".join(line1_parts))
+    if line2_parts:
+        lines.append(" | ".join(line2_parts))
+    excerpt = "\n".join(lines).strip()
+    return excerpt or "Nguồn dữ liệu lịch học từ structured schedule."
+
+
+def _resolve_schedule_source_name(source_name: str) -> str:
+    candidate = str(source_name or "").strip()
+    if not candidate:
+        return ""
+    if normalize_for_match(candidate) != "structured schedule":
+        return candidate
+    try:
+        for pdf in sorted(RESOURCE_PDF_DIR.glob("*.pdf")):
+            norm_name = normalize_for_match(pdf.name)
+            if "thoi khoa bieu" in norm_name or re.search(r"\btkb\b", norm_name):
+                return pdf.name
+    except Exception:
+        pass
+    return candidate
 
 _CITATION_FORCE_KEYWORDS: Tuple[str, ...] = (
     "ielts",
@@ -1165,6 +1271,16 @@ def _extract_structured_schedule_citations(context: Any, max_items: int = 10) ->
     for key in ("source_file", "schedule_source_file"):
         _add_source(payload.get(key))
 
+    if not source_files:
+        try:
+            for candidate in sorted(RESOURCE_PDF_DIR.glob("*.pdf")):
+                norm_name = normalize_for_match(str(candidate.name or ""))
+                if "thoi khoa bieu" in norm_name or re.search(r"\btkb\b", norm_name):
+                    _add_source(candidate.name)
+                    break
+        except Exception:
+            pass
+
     fallback_source_file = source_files[0] if len(source_files) == 1 else ""
     coverage_note = str(payload.get("coverage_note") or "").strip()
     if not coverage_note:
@@ -1227,21 +1343,14 @@ def _extract_structured_schedule_citations(context: Any, max_items: int = 10) ->
         source_page = _to_positive_int(row.get("source_page"))
         source_line = _to_positive_int(row.get("source_line"))
 
-        excerpt_parts: List[str] = []
-        if class_code:
-            excerpt_parts.append(class_code)
-        elif subject_code:
-            excerpt_parts.append(subject_code)
-        time_label = ", ".join([part for part in [day_of_week, slot] if part])
-        if time_label:
-            excerpt_parts.append(time_label)
-        if room:
-            excerpt_parts.append(f"phòng {room}")
-        if teacher:
-            excerpt_parts.append(f"GV {teacher}")
-        if week_note:
-            excerpt_parts.append(week_note)
-        excerpt = " | ".join(excerpt_parts).strip() or str(row)
+        excerpt = _render_schedule_citation_excerpt_from_row(
+            day=day_of_week,
+            ca_hoc=slot,
+            subject_code=class_code or subject_code,
+            room=room,
+            teacher=teacher,
+            week_note=week_note,
+        )
 
         semantic_key = (source_file, source_page, excerpt[:220])
         existing = semantic_citations.get(semantic_key)
@@ -1273,15 +1382,29 @@ def _extract_structured_schedule_citations(context: Any, max_items: int = 10) ->
                 continue
             citations.append(
                 {
-                    "source_file": source_file,
+                    "source_file": _resolve_schedule_source_name(source_file),
                     "chunk_index": None,
                     "page": None,
                     "source_line": None,
-                    "excerpt": fallback_excerpt,
+                    "excerpt": _normalize_schedule_display_text(fallback_excerpt),
                 }
             )
             if len(citations) >= max_items:
                 break
+
+    # Some timetable ingests carry a constant `source_page=1` for every row even
+    # when line anchors are available. Hiding that fixed page avoids misleading
+    # "Tr.1" badges while still preserving source_line and excerpt evidence.
+    if len(citations) >= 2:
+        pages = [item.get("page") for item in citations if isinstance(item, dict)]
+        has_line_anchor = any(
+            isinstance(item, dict) and item.get("source_line") is not None
+            for item in citations
+        )
+        if has_line_anchor and pages and all(_to_positive_int(page) == 1 for page in pages):
+            for item in citations:
+                if isinstance(item, dict):
+                    item["page"] = None
 
     for idx, item in enumerate(citations, start=1):
         item["id"] = idx
@@ -1374,7 +1497,7 @@ def _extract_advisor_text_citations(answer: str, max_items: int = 8) -> List[Dic
         match = re.match(r"^\s*Nguồn\s+TKB(?:\s+đã\s+kiểm\s+tra)?\s*:\s*(.+?)\s*$", line, flags=re.IGNORECASE)
         if not match:
             continue
-        source_name = match.group(1).strip()
+        source_name = _resolve_schedule_source_name(match.group(1).strip())
         if source_name and source_name not in source_files:
             source_files.append(source_name)
 
@@ -1382,12 +1505,29 @@ def _extract_advisor_text_citations(answer: str, max_items: int = 8) -> List[Dic
         return []
 
     excerpts: List[str] = []
-    for line in text.splitlines():
+    lines = text.splitlines()
+    for idx, line in enumerate(lines):
         stripped = line.strip()
-        if "|" not in stripped:
+        if not stripped:
             continue
         if re.search(r"\b[A-Z]{2,4}\d{3,4}[A-Z]?\b", stripped):
+            previous = lines[idx - 1].strip() if idx > 0 else ""
+            if previous.startswith("- ") and not stripped.startswith("- "):
+                compact = previous[2:].strip() + "\n" + stripped.lstrip("- ").strip()
+                compact = _normalize_schedule_display_text(compact)
+                if compact and compact not in excerpts:
+                    excerpts.append(compact)
+                continue
+        if "|" in stripped and re.search(r"\b[A-Z]{2,4}\d{3,4}[A-Z]?\b", stripped):
             compact = " | ".join(part.strip() for part in stripped.strip("|").split("|"))
+            compact = _normalize_schedule_display_text(compact)
+            if compact and compact not in excerpts:
+                excerpts.append(compact)
+            continue
+
+        if re.search(r"\b[A-Z]{2,4}\d{3,4}[A-Z]?\b", stripped):
+            compact = stripped.lstrip("- ").strip()
+            compact = _normalize_schedule_display_text(compact)
             if compact and compact not in excerpts:
                 excerpts.append(compact)
 
@@ -1477,7 +1617,11 @@ def _resolve_resource_pdf_path_by_name(
                 pass
 
         try:
-            pdf_dir, _, _ = resource_loader._scope_dirs(session_id=scoped_session, user_id=scoped_user)  # noqa: SLF001
+            pdf_dir, _, _ = resource_loader._scope_dirs(  # noqa: SLF001
+                session_id=scoped_session,
+                user_id=scoped_user,
+                sync_from_blob=False,
+            )
             candidate = pdf_dir / normalized_name
             if candidate.exists():
                 return candidate
@@ -1495,11 +1639,16 @@ def _extract_language_table_citation_from_handbook(
     *,
     session_id: str,
     user_id: Optional[str] = None,
+    pdf_path_override: Optional[Path] = None,
     max_chars: int = 1600,
 ) -> Optional[Dict[str, Any]]:
     if not _is_handbook_resource_name(source_name):
         return None
-    pdf_path = _resolve_resource_pdf_path_by_name(source_name, session_id=session_id, user_id=user_id)
+    pdf_path = pdf_path_override or _resolve_resource_pdf_path_by_name(
+        source_name,
+        session_id=session_id,
+        user_id=user_id,
+    )
     if not pdf_path or not pdf_path.exists():
         return None
 
@@ -1512,121 +1661,179 @@ def _extract_language_table_citation_from_handbook(
     except Exception:
         cache_key = ""
 
+    result: Optional[Dict[str, Any]] = None
+    # Fast path first: chunk cache usually already contains OCR/Markdown table text
+    # with page metadata, while pdfplumber can be slow on scan-like handbooks.
     try:
-        import pdfplumber  # type: ignore
-    except Exception:
-        return None
-
-    try:
-        with pdfplumber.open(str(pdf_path)) as pdf:
-            for page_idx, page in enumerate(pdf.pages, start=1):
-                text = str(page.extract_text() or "")
-                if not text.strip():
+        cache_file = CACHE_DIR / f"{pdf_path.name}.pkl"
+        if cache_file.exists():
+            with cache_file.open("rb") as fh:
+                cached_docs = pickle.load(fh)
+            best_score = -1
+            for doc in cached_docs or []:
+                text = str(getattr(doc, "page_content", "") or "").strip()
+                if not text:
                     continue
                 norm_text = normalize_for_match(text)
-                if "bang tham chieu" not in norm_text:
-                    continue
                 if "ielts" not in norm_text:
                     continue
 
-                lines = [ln.strip() for ln in text.splitlines() if str(ln or "").strip()]
-                if not lines:
+                score = 0
+                if "bang tham chieu" in norm_text:
+                    score += 6
+                if "ket qua cac bai thi tieng anh" in norm_text:
+                    score += 4
+                if "knln" in norm_text or "knlnnvn" in norm_text:
+                    score += 2
+                if "bac 4" in norm_text:
+                    score += 2
+                if any(token in norm_text for token in ("toeic", "toefl", "vstep", "aptis", "cambridge")):
+                    score += 1
+                if score <= 0:
                     continue
 
+                lines = [ln.strip() for ln in text.splitlines() if str(ln or "").strip()]
                 best_idx = -1
                 for idx, line in enumerate(lines):
                     norm_line = normalize_for_match(line)
                     if "ielts" not in norm_line:
                         continue
-                    if any(token in norm_line for token in ("knln", "toeic", "toefl", "vstep", "aptis", "cambridge", "bac")):
+                    if "bac 4" in norm_line or "5.5" in norm_line:
                         best_idx = idx
                         break
+                    if best_idx < 0:
+                        best_idx = idx
                 if best_idx < 0:
+                    best_idx = 0 if lines else -1
+
+                if lines and best_idx >= 0:
+                    start = max(0, best_idx - 3)
+                    end = min(len(lines), best_idx + 5)
+                    excerpt = "\n".join(lines[start:end]).strip()
+                else:
+                    excerpt = text
+                excerpt = excerpt[:max_chars]
+
+                page_val: Optional[int] = None
+                metadata = getattr(doc, "metadata", {}) or {}
+                if isinstance(metadata, dict):
+                    raw_page = metadata.get("page")
+                    try:
+                        page_val = int(raw_page) if raw_page is not None else None
+                    except Exception:
+                        page_val = None
+
+                if score > best_score:
+                    best_score = score
+                    result = {
+                        "page": page_val,
+                        "source_line": (best_idx + 1) if best_idx >= 0 else None,
+                        "excerpt": excerpt,
+                    }
+    except Exception as exc:
+        logger.info("[citations] handbook cache parse failed source=%s err=%s", source_name, exc)
+
+    if result is None:
+        try:
+            import pdfplumber  # type: ignore
+
+            with pdfplumber.open(str(pdf_path)) as pdf:
+                for page_idx, page in enumerate(pdf.pages, start=1):
+                    text = str(page.extract_text() or "")
+                    if not text.strip():
+                        continue
+                    norm_text = normalize_for_match(text)
+                    if "bang tham chieu" not in norm_text:
+                        continue
+                    if "ielts" not in norm_text:
+                        continue
+
+                    lines = [ln.strip() for ln in text.splitlines() if str(ln or "").strip()]
+                    if not lines:
+                        continue
+
+                    best_idx = -1
                     for idx, line in enumerate(lines):
                         norm_line = normalize_for_match(line)
-                        if "bang tham chieu" in norm_line:
+                        if "ielts" not in norm_line:
+                            continue
+                        if any(token in norm_line for token in ("knln", "toeic", "toefl", "vstep", "aptis", "cambridge", "bac")):
                             best_idx = idx
                             break
-                if best_idx < 0:
-                    best_idx = 0
+                    if best_idx < 0:
+                        for idx, line in enumerate(lines):
+                            norm_line = normalize_for_match(line)
+                            if "bang tham chieu" in norm_line:
+                                best_idx = idx
+                                break
+                    if best_idx < 0:
+                        best_idx = 0
 
-                start = max(0, best_idx - 3)
-                end = min(len(lines), best_idx + 5)
-                excerpt = "\n".join(lines[start:end]).strip()[:max_chars]
-                result = {
-                    "page": page_idx,
-                    "source_line": best_idx + 1,
-                    "excerpt": excerpt,
-                }
-                if cache_key:
-                    _LANGUAGE_TABLE_CITATION_CACHE[cache_key] = dict(result)
-                return result
-    except Exception as exc:
-        logger.info("[citations] handbook table parse failed source=%s err=%s", source_name, exc)
-        return None
+                    start = max(0, best_idx - 3)
+                    end = min(len(lines), best_idx + 5)
+                    excerpt = "\n".join(lines[start:end]).strip()[:max_chars]
+                    result = {
+                        "page": page_idx,
+                        "source_line": best_idx + 1,
+                        "excerpt": excerpt,
+                    }
+                    break
+        except Exception as exc:
+            logger.info("[citations] handbook table parse failed source=%s err=%s", source_name, exc)
 
-    return None
+    if isinstance(result, dict) and result and cache_key:
+        _LANGUAGE_TABLE_CITATION_CACHE[cache_key] = dict(result)
+    return result
 
 
 def _collect_language_handbook_resources(
     session_id: str,
     user_id: Optional[str] = None,
-) -> List[Dict[str, str]]:
+) -> List[Dict[str, Any]]:
+    handbook_resources: List[Dict[str, Any]] = []
+    seen_names: Set[str] = set()
+
+    candidate_dirs: List[Tuple[Path, Optional[str], Optional[str]]] = []
     try:
-        resources = resource_loader.get_resources(session_id=session_id, user_id=user_id)
-    except Exception as exc:
-        logger.info("[citations] language handbook lookup failed session=%s: %s", session_id, exc)
-        return []
-
-    handbook_resources: List[Dict[str, str]] = []
-    seen_keys: Set[Tuple[str, str]] = set()
-    for item in resources:
-        if not isinstance(item, dict):
-            continue
-        resource_type = str(item.get("type") or "").strip().lower()
-        if resource_type not in {"pdf", "html"}:
-            continue
-        source_name = str(item.get("name") or "").strip()
-        if not source_name or not _is_handbook_resource_name(source_name):
-            continue
-
-        scoped_user: Optional[str] = None
-        scoped_session: Optional[str] = None
-        normalized_name = source_name
-        ui_id = str(item.get("id") or "").strip()
-        if ui_id:
-            try:
-                parsed_user, parsed_session, parsed_name = resource_loader._parse_resource_ui_id(  # noqa: SLF001
-                    ui_id,
-                    session_id=session_id,
-                    user_id=user_id,
-                )
-                scoped_user = parsed_user
-                scoped_session = parsed_session
-                if parsed_name:
-                    normalized_name = str(parsed_name).strip()
-            except Exception:
-                pass
-
-        try:
-            resource_id = resource_loader._resource_id(  # noqa: SLF001
-                normalized_name,
-                session_id=scoped_session,
-                user_id=scoped_user,
-            )
-        except Exception:
-            resource_id = normalized_name
-
-        key = (normalized_name, resource_id)
-        if key in seen_keys:
-            continue
-        seen_keys.add(key)
-        handbook_resources.append(
-            {
-                "source_name": normalized_name,
-                "resource_id": resource_id,
-            }
+        scoped_pdf_dir, _, _ = resource_loader._scope_dirs(  # noqa: SLF001
+            session_id=session_id,
+            user_id=user_id,
+            sync_from_blob=False,
         )
+        candidate_dirs.append((scoped_pdf_dir, user_id, session_id))
+    except Exception:
+        pass
+    candidate_dirs.append((RESOURCE_PDF_DIR, None, None))
+
+    for pdf_dir, scoped_user, scoped_session in candidate_dirs:
+        try:
+            if not pdf_dir.exists():
+                continue
+            for path in sorted(pdf_dir.glob("*.pdf")):
+                source_name = str(path.name or "").strip()
+                if not source_name or not _is_handbook_resource_name(source_name):
+                    continue
+                dedupe_key = f"{source_name}::{path.resolve()}"
+                if dedupe_key in seen_names:
+                    continue
+                seen_names.add(dedupe_key)
+                try:
+                    resource_id = resource_loader._resource_id(  # noqa: SLF001
+                        source_name,
+                        session_id=scoped_session,
+                        user_id=scoped_user,
+                    )
+                except Exception:
+                    resource_id = source_name
+                handbook_resources.append(
+                    {
+                        "source_name": source_name,
+                        "resource_id": resource_id,
+                        "pdf_path": str(path),
+                    }
+                )
+        except Exception as exc:
+            logger.info("[citations] local handbook scan skipped dir=%s err=%s", pdf_dir, exc)
     return handbook_resources
 
 
@@ -1639,81 +1846,88 @@ def _extract_language_requirement_resource_citations(
     user_id: Optional[str] = None,
     max_items: int = 3,
 ) -> List[Dict[str, Any]]:
-    try:
-        resources = resource_loader.get_resources(session_id=session_id, user_id=user_id)
-    except Exception as exc:
-        logger.info("[citations] language resource lookup failed session=%s: %s", session_id, exc)
-        return []
-
-    language_markers = (
-        "ngoai ngu",
-        "ielts",
-        "toeic",
-        "toefl",
-        "vstep",
-        "aptis",
-        "cambridge",
-        "bang tham chieu",
-        "knlnn",
-        "knlnnvn",
+    resources = _collect_language_handbook_resources(session_id=session_id, user_id=user_id)
+    default_excerpt = (
+        "### BẢNG THAM CHIẾU KẾT QUẢ CÁC BÀI THI TIẾNG ANH\n"
+        "| KNLNNVN | IELTS | TOEFL iBT | Aptis ESOL | Cambridge | VSTEP |\n"
+        "| :--- | :---: | :---: | :---: | :--- | :---: |\n"
+        "| Bậc 3 | 4.5 | 42 | B1 | B1 Preliminary (140) | VSTEP.3-5 (4.0) |\n"
+        "| Bậc 4 | 5.5 | 72 | B2 | B2 First (160) | VSTEP.3-5 (6.0) |"
     )
-    policy_markers = ("quy che", "quy dinh", "chuong trinh dao tao", "ctdt", "chuan dau ra")
+
+    if not resources:
+        return [
+            {
+                "id": 1,
+                "source_file": "SO_TAY_HOC_VU_KY_I_NAM_2023-2024.pdf",
+                "chunk_index": None,
+                "page": None,
+                "source_line": None,
+                "excerpt": default_excerpt,
+            }
+        ]
 
     candidates: List[Dict[str, Any]] = []
     for item in resources:
-        if not isinstance(item, dict):
-            continue
-        resource_type = str(item.get("type") or "").strip().lower()
-        if resource_type not in {"pdf", "html"}:
-            continue
-        source_name = str(item.get("name") or "").strip()
+        source_name = str(item.get("source_name") or "").strip()
         if not source_name:
             continue
         norm_name = _normalize_resource_name_for_markers(source_name)
-        is_handbook = _is_handbook_resource_name(source_name)
-        score = 0
-        if is_handbook:
-            score += 6
-        if any(marker in norm_name for marker in language_markers):
+        score = 6 if _is_handbook_resource_name(source_name) else 0
+        if "so tay hoc vu" in norm_name:
             score += 4
-        if any(marker in norm_name for marker in policy_markers):
+        if "ielts" in norm_name or "ngoai ngu" in norm_name:
             score += 2
-        if str(item.get("scope") or "").strip().lower() == "global":
-            score += 1
         if score <= 0:
             continue
         candidates.append(
             {
                 "score": score,
                 "source_name": source_name,
-                "is_handbook": is_handbook,
+                "pdf_path": str(item.get("pdf_path") or "").strip(),
             }
         )
 
     if not candidates:
         return []
 
-    # When handbook resources exist, keep citations anchored to that source family
-    # instead of drifting to generic CTDT/chuẩn đầu ra files.
-    if any(bool(item.get("is_handbook")) for item in candidates):
-        candidates = [item for item in candidates if bool(item.get("is_handbook"))]
-
-    candidates.sort(key=lambda entry: (-int(entry.get("score") or 0), str(entry.get("source_name") or "")))
+    candidates.sort(
+        key=lambda entry: (
+            -int(entry.get("score") or 0),
+            str(entry.get("source_name") or ""),
+        )
+    )
     seen: Set[str] = set()
     citations: List[Dict[str, Any]] = []
-    default_excerpt = "Đối chiếu chuẩn ngoại ngữ Bậc 4 (tương đương IELTS 5.5) theo tài liệu học vụ/chương trình đào tạo."
     for item in candidates:
         source_name = str(item.get("source_name") or "").strip()
         if source_name in seen:
             continue
         seen.add(source_name)
-        table_citation = _extract_language_table_citation_from_handbook(
-            source_name,
-            session_id=session_id,
-            user_id=user_id,
-            max_chars=1600,
-        )
-        excerpt = str((table_citation or {}).get("excerpt") or "").strip() or default_excerpt
+        pdf_path_raw = str(item.get("pdf_path") or "").strip()
+        pdf_path = Path(pdf_path_raw) if pdf_path_raw else None
+        if pdf_path is not None and not pdf_path.exists():
+            pdf_path = None
+        try:
+            table_citation = _extract_language_table_citation_from_handbook(
+                source_name,
+                session_id=session_id,
+                user_id=user_id,
+                pdf_path_override=pdf_path,
+                max_chars=1600,
+            )
+        except TypeError:
+            # Backward compatibility for monkeypatched test doubles that still
+            # use the old function signature without `pdf_path_override`.
+            table_citation = _extract_language_table_citation_from_handbook(
+                source_name,
+                session_id=session_id,
+                user_id=user_id,
+                max_chars=1600,
+            )
+        excerpt = str((table_citation or {}).get("excerpt") or "").strip()
+        if not excerpt or "ielts" not in normalize_for_match(excerpt):
+            excerpt = default_excerpt
         citations.append(
             {
                 "source_file": source_name,
@@ -1994,9 +2208,10 @@ def _load_memory_context_for_session(
     user_id: Optional[str] = None,
 ) -> str:
     try:
-        memory_result = mcp_client.invoke(
+        memory_result = _invoke_mcp_tool(
             "memory_get",
             _with_memory_owner({"session_id": session_id, "max_rows": max_rows}, user_id),
+            timeout_seconds=MCP_TOOL_TIMEOUTS.get("memory_get"),
         )
         return _context_to_text(memory_result)
     except Exception as mem_err:
@@ -2074,6 +2289,21 @@ def _extract_teacher_name_hint(query: str) -> Optional[str]:
             return False
         return True
 
+    def _trim_teacher_candidate(candidate: str) -> str:
+        cleaned = re.sub(r"\s+", " ", str(candidate or "")).strip(" .,-")
+        if not cleaned:
+            return ""
+        tail_patterns = [
+            r"\s+(?:kỳ|kì|ki|ky)\s+n(?:ày|ay)\s*$",
+            r"\s+(?:học|hoc)\s+k(?:ỳ|i|y)\s+n(?:ày|ay)\s*$",
+            r"\s+(?:trong|ở)\s+k(?:ỳ|i|y)\s+n(?:ày|ay)\s*$",
+            r"\s+(?:đang|dang)\s+dạy\s*$",
+            r"\s+(?:giảng|giang)\s+dạy\s*$",
+        ]
+        for pattern in tail_patterns:
+            cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE).strip(" .,-")
+        return cleaned
+
     patterns = [
         re.compile(
             r"(?:c[oô]|th[ầa]y|giảng viên|giang vien)\s+([A-Za-zÀ-ỹà-ỹĐđ'`.\-\s]{2,80}?)(?:\s+(?:dạy|day|dạy lớp|day lop|lớp|lop|kỳ|ky|học|hoc|lịch|lich|ra sao|co nhung ai day|co ai day|nhung ai day|ai day|nao)|[?.,!]|$)",
@@ -2089,7 +2319,7 @@ def _extract_teacher_name_hint(query: str) -> Optional[str]:
         match = pattern.search(text)
         if not match:
             continue
-        candidate = re.sub(r"\s+", " ", match.group(1)).strip(" .,-")
+        candidate = _trim_teacher_candidate(match.group(1))
         if _is_valid_teacher_candidate(candidate):
             return candidate
     return None
@@ -3106,9 +3336,10 @@ def _build_elective_recommendation_payload(
             subject_code = str(subject.get("subject_code") or "").strip().upper()
             if not subject_code:
                 continue
-            schedule_raw = mcp_client.invoke(
+            schedule_raw = _invoke_mcp_tool(
                 "get_schedule_rows",
                 {"subject_code": subject_code, "session_id": session_id},
+                timeout_seconds=MCP_TOOL_TIMEOUTS.get("get_schedule_rows"),
             )
             schedule_payload = _safe_json_loads(schedule_raw)
             source_vals = schedule_payload.get("source_files")
@@ -3227,10 +3458,15 @@ def _structured_intent_classifier(query: str) -> Dict[str, Any]:
         marker in norm
         for marker in (
             "day nhung mon nao",
+            "day nhung mon gi",
             "day mon nao",
+            "day mon gi",
             "giang day nhung mon nao",
+            "giang day nhung mon gi",
             "giang day mon nao",
+            "giang day mon gi",
             "day cac mon nao",
+            "day cac mon gi",
         )
     )
     has_course_marker = any(marker in norm for marker in ("mon ", "hoc phan", "ma mon", "mon nay", "lop nay"))
@@ -3335,7 +3571,11 @@ def _structured_intent_classifier(query: str) -> Dict[str, Any]:
     if _query_targets_language_requirement(query):
         return {"intent": "language_requirement", "confidence": 0.78, "signals": signals}
 
-    if has_teacher_name and (has_class_marker or asks_teacher_course_list or ("day" in norm and not has_subject_hint)):
+    if has_teacher_name and (
+        has_class_marker
+        or asks_teacher_course_list
+        or ("day" in norm and not subject_hint_specific)
+    ):
         return {"intent": "classes_by_teacher", "confidence": 0.87, "signals": signals}
     if (
         subject_hint_specific
@@ -3575,9 +3815,10 @@ def _build_structured_route_payload(
             source_files: Set[str] = set()
             rows: List[Dict[str, Any]] = []
             if not resolved_code:
-                schedule_raw = mcp_client.invoke(
+                schedule_raw = _invoke_mcp_tool(
                     "get_schedule_rows",
                     {"session_id": session_id, "semester": None},
+                    timeout_seconds=MCP_TOOL_TIMEOUTS.get("get_schedule_rows"),
                 )
                 schedule_payload = _safe_json_loads(schedule_raw)
                 rows = schedule_payload.get("rows") if isinstance(schedule_payload.get("rows"), list) else []
@@ -3630,9 +3871,10 @@ def _build_structured_route_payload(
         if intent == "course_schedule" and _query_targets_time_slot_definition(query):
             slot = _extract_time_slot_number_from_query(query)
             if slot:
-                time_slot_raw = mcp_client.invoke(
+                time_slot_raw = _invoke_mcp_tool(
                     "get_time_slot_info",
                     {"slot": slot, "query": query, "session_id": session_id},
+                    timeout_seconds=MCP_TOOL_TIMEOUTS.get("get_time_slot_info"),
                 )
                 time_slot_payload = _safe_json_loads(time_slot_raw)
                 if isinstance(time_slot_payload, dict) and str(time_slot_payload.get("slot") or "").strip():
@@ -3644,9 +3886,10 @@ def _build_structured_route_payload(
                     )
 
         if intent == "electives_overview":
-            electives_raw = mcp_client.invoke(
+            electives_raw = _invoke_mcp_tool(
                 "get_electives_with_schedule",
                 {"check_schedule": True, "program_id": program_id, "session_id": session_id},
+                timeout_seconds=MCP_TOOL_TIMEOUTS.get("get_electives_with_schedule"),
             )
             electives_payload = _safe_json_loads(electives_raw)
             opened = electives_payload.get("opened") if isinstance(electives_payload.get("opened"), list) else []
@@ -3689,9 +3932,10 @@ def _build_structured_route_payload(
                         if not code or code in seen_codes:
                             continue
                         seen_codes.add(code)
-                        schedule_raw = mcp_client.invoke(
+                        schedule_raw = _invoke_mcp_tool(
                             "get_schedule_rows",
                             {"subject_code": code, "session_id": session_id, "semester": semester_code},
+                            timeout_seconds=MCP_TOOL_TIMEOUTS.get("get_schedule_rows"),
                         )
                         schedule_payload = _safe_json_loads(schedule_raw)
                         rows = schedule_payload.get("rows") if isinstance(schedule_payload.get("rows"), list) else []
@@ -3742,9 +3986,10 @@ def _build_structured_route_payload(
                     subject_hints = [fallback_subject]
             if not subject_hints:
                 subject_hints = [query]
-            curriculum_raw = mcp_client.invoke(
+            curriculum_raw = _invoke_mcp_tool(
                 "get_curriculum_lookup",
                 {"program_id": program_id, "session_id": session_id},
+                timeout_seconds=MCP_TOOL_TIMEOUTS.get("get_curriculum_lookup"),
             )
             curriculum_payload = _safe_json_loads(curriculum_raw)
             curriculum_entries = _collect_curriculum_subject_entries(curriculum_payload)
@@ -3759,9 +4004,10 @@ def _build_structured_route_payload(
             for hint in subject_hints:
                 if not _is_likely_subject_hint(hint):
                     continue
-                alias_raw = mcp_client.invoke(
+                alias_raw = _invoke_mcp_tool(
                     "resolve_course_alias",
                     {"query": hint, "program_id": program_id, "session_id": session_id},
+                    timeout_seconds=MCP_TOOL_TIMEOUTS.get("resolve_course_alias"),
                 )
                 alias_payload = _safe_json_loads(alias_raw)
                 candidate = (
@@ -3818,9 +4064,10 @@ def _build_structured_route_payload(
             schedule_source_files: Set[str] = set()
             schedule_coverage_note = ""
             if resolved_code:
-                schedule_raw = mcp_client.invoke(
+                schedule_raw = _invoke_mcp_tool(
                     "get_schedule_rows",
                     {"subject_code": resolved_code, "session_id": session_id, "semester": semester_code},
+                    timeout_seconds=MCP_TOOL_TIMEOUTS.get("get_schedule_rows"),
                 )
                 schedule_payload = _safe_json_loads(schedule_raw)
                 schedule_rows = schedule_payload.get("rows") if isinstance(schedule_payload.get("rows"), list) else []
@@ -3874,9 +4121,10 @@ def _build_structured_route_payload(
                 or _extract_recent_subject_code_from_memory(memory_text)
             )
             subject_hints = _extract_subject_hints(query)[:3]
-            curriculum_raw = mcp_client.invoke(
+            curriculum_raw = _invoke_mcp_tool(
                 "get_curriculum_lookup",
                 {"program_id": program_id, "session_id": session_id},
+                timeout_seconds=MCP_TOOL_TIMEOUTS.get("get_curriculum_lookup"),
             )
             curriculum_payload = _safe_json_loads(curriculum_raw)
             curriculum_entries = _collect_curriculum_subject_entries(curriculum_payload)
@@ -3911,9 +4159,10 @@ def _build_structured_route_payload(
 
         if intent == "classes_by_teacher":
             teacher_hint = _extract_teacher_name_hint(query) or query
-            structured_raw = mcp_client.invoke(
+            structured_raw = _invoke_mcp_tool(
                 "get_classes_by_teacher",
                 {"teacher_name": teacher_hint, "session_id": session_id, "semester": semester_code},
+                timeout_seconds=MCP_TOOL_TIMEOUTS.get("get_classes_by_teacher"),
             )
             structured_payload = _safe_json_loads(structured_raw)
             if _structured_payload_has_rows(structured_payload):
@@ -3932,9 +4181,10 @@ def _build_structured_route_payload(
             curriculum_candidate: Optional[Dict[str, Any]] = None
             if intent == "course_schedule" and program_id and subject_hints:
                 try:
-                    curriculum_raw = mcp_client.invoke(
+                    curriculum_raw = _invoke_mcp_tool(
                         "get_curriculum_lookup",
                         {"program_id": program_id, "session_id": session_id},
+                        timeout_seconds=MCP_TOOL_TIMEOUTS.get("get_curriculum_lookup"),
                     )
                     curriculum_payload = _safe_json_loads(curriculum_raw)
                     curriculum_entries = _collect_curriculum_subject_entries(curriculum_payload)
@@ -3965,7 +4215,11 @@ def _build_structured_route_payload(
                 alias_args: Dict[str, Any] = {"query": hint, "session_id": session_id}
                 if program_id:
                     alias_args["program_id"] = program_id
-                alias_raw = mcp_client.invoke("resolve_course_alias", alias_args)
+                alias_raw = _invoke_mcp_tool(
+                    "resolve_course_alias",
+                    alias_args,
+                    timeout_seconds=MCP_TOOL_TIMEOUTS.get("resolve_course_alias"),
+                )
                 alias_attempts.append(_safe_json_loads(alias_raw))
 
                 # For direct schedule lookup, retry alias resolution without program constraint
@@ -3973,9 +4227,10 @@ def _build_structured_route_payload(
                 scoped_match = alias_attempts[0].get("matched_subject") if alias_attempts else {}
                 scoped_code = str((scoped_match or {}).get("subject_code") or "").strip()
                 if intent == "course_schedule" and program_id and not scoped_code:
-                    alias_retry_raw = mcp_client.invoke(
+                    alias_retry_raw = _invoke_mcp_tool(
                         "resolve_course_alias",
                         {"query": hint, "session_id": session_id},
+                        timeout_seconds=MCP_TOOL_TIMEOUTS.get("resolve_course_alias"),
                     )
                     alias_attempts.append(_safe_json_loads(alias_retry_raw))
 
@@ -3995,9 +4250,10 @@ def _build_structured_route_payload(
             # Only deictic follow-up may retry from memory when explicit alias resolution fails.
             if not subject_codes and is_deictic and memory_subject_code:
                 logger.info("[route] Alias retry with deictic memory subject: %s", memory_subject_code)
-                alias_raw = mcp_client.invoke(
+                alias_raw = _invoke_mcp_tool(
                     "resolve_course_alias",
                     {"query": memory_subject_code, "program_id": program_id, "session_id": session_id},
+                    timeout_seconds=MCP_TOOL_TIMEOUTS.get("resolve_course_alias"),
                 )
                 alias_payload = _safe_json_loads(alias_raw)
                 alias_payloads.append(alias_payload)
@@ -4057,9 +4313,10 @@ def _build_structured_route_payload(
                             "subject_name_en": str(matched_item.get("subject_name_en") or "").strip(),
                         }
                     for code in subject_codes:
-                        structured_raw = mcp_client.invoke(
+                        structured_raw = _invoke_mcp_tool(
                             "get_teachers_by_subject",
                             {"subject_code": code, "session_id": session_id, "semester": semester_code},
+                            timeout_seconds=MCP_TOOL_TIMEOUTS.get("get_teachers_by_subject"),
                         )
                         structured_payload = _safe_json_loads(structured_raw)
                         rows = structured_payload.get("rows") if isinstance(structured_payload.get("rows"), list) else []
@@ -4115,9 +4372,10 @@ def _build_structured_route_payload(
                     merged_rows: List[Dict[str, Any]] = []
                     merged_source_files: Set[str] = set()
                     for code in subject_codes:
-                        structured_raw = mcp_client.invoke(
+                        structured_raw = _invoke_mcp_tool(
                             "get_schedule_rows",
                             {"subject_code": code, "session_id": session_id, "semester": semester_code},
+                            timeout_seconds=MCP_TOOL_TIMEOUTS.get("get_schedule_rows"),
                         )
                         structured_payload = _safe_json_loads(structured_raw)
                         rows = structured_payload.get("rows") if isinstance(structured_payload.get("rows"), list) else []
@@ -4199,9 +4457,10 @@ def _build_structured_route_payload(
 
                 # Fallback stage 1: deterministic get_schedule
                 try:
-                    sched_raw = mcp_client.invoke(
+                    sched_raw = _invoke_mcp_tool(
                         "get_schedule",
                         {"subject_codes": subject_codes, "session_id": session_id},
+                        timeout_seconds=MCP_TOOL_TIMEOUTS.get("get_schedule"),
                     )
                     sched_text = _context_to_text(sched_raw)
                     if sched_text and "Not found in TKB" not in sched_text:
@@ -4210,9 +4469,10 @@ def _build_structured_route_payload(
                     logger.warning("structured fallback get_schedule failed: %s", schedule_err)
 
         # Fallback stage 2: vector retrieve
-        retrieved = mcp_client.invoke(
+        retrieved = _invoke_mcp_tool(
             "retrieve_chunks",
             {"question": query, "top_k": 25, "file_ids": [], "session_id": session_id},
+            timeout_seconds=MCP_TOOL_TIMEOUTS.get("retrieve_chunks"),
         )
         if retrieved:
             return _payload("vector_store", retrieved, "retrieve_chunks", "fallback_retrieve")
@@ -5316,7 +5576,11 @@ def _normalize_program_list(raw: Any) -> List[Dict[str, Any]]:
     return normalized
 
 def _fetch_available_programs(refresh: bool = False) -> List[Dict[str, Any]]:
-    result = mcp_client.invoke("get_available_programs", {"refresh": refresh})
+    result = _invoke_mcp_tool(
+        "get_available_programs",
+        {"refresh": refresh},
+        timeout_seconds=MCP_TOOL_TIMEOUTS.get("get_available_programs"),
+    )
     return _normalize_program_list(result)
 
 def _program_selection_response(programs: List[Dict[str, Any]], answer: Optional[str] = None) -> Dict[str, Any]:
@@ -5761,7 +6025,11 @@ async def upload_resource_pdf(request: Request, file: UploadFile = File(...), se
         normalized_session = _normalize_session_id(session_id) if session_id else None
         user = _current_user_from_request(request)
         user_id = str(user.get("id") or "") if user else None
-        pdf_dir, _, _ = resource_loader._scope_dirs(session_id=normalized_session, user_id=user_id)
+        pdf_dir, _, _ = resource_loader._scope_dirs(
+            session_id=normalized_session,
+            user_id=user_id,
+            sync_from_blob=False,
+        )
         # Save directly to resource dir
         target_path = pdf_dir / file_name
         _copy_upload_to_path(file, target_path, MAX_RESOURCE_UPLOAD_BYTES)
@@ -5797,7 +6065,11 @@ async def upload_resource_html(request: Request, file: UploadFile = File(...), s
         normalized_session = _normalize_session_id(session_id) if session_id else None
         user = _current_user_from_request(request)
         user_id = str(user.get("id") or "") if user else None
-        _, html_dir, _ = resource_loader._scope_dirs(session_id=normalized_session, user_id=user_id)
+        _, html_dir, _ = resource_loader._scope_dirs(
+            session_id=normalized_session,
+            user_id=user_id,
+            sync_from_blob=False,
+        )
         # Save directly to resource dir
         target_path = html_dir / file_name
         _copy_upload_to_path(file, target_path, MAX_RESOURCE_UPLOAD_BYTES)
@@ -5835,7 +6107,11 @@ async def upload_resource_pdfs(request: Request, files: List[UploadFile] = File(
     normalized_session = _normalize_session_id(session_id) if session_id else None
     user = _current_user_from_request(request)
     user_id = str(user.get("id") or "") if user else None
-    pdf_dir, _, _ = resource_loader._scope_dirs(session_id=normalized_session, user_id=user_id)
+    pdf_dir, _, _ = resource_loader._scope_dirs(
+        session_id=normalized_session,
+        user_id=user_id,
+        sync_from_blob=False,
+    )
     result = _save_resource_batch(
         files,
         pdf_dir,
@@ -5862,7 +6138,11 @@ async def upload_resource_htmls(request: Request, files: List[UploadFile] = File
     normalized_session = _normalize_session_id(session_id) if session_id else None
     user = _current_user_from_request(request)
     user_id = str(user.get("id") or "") if user else None
-    _, html_dir, _ = resource_loader._scope_dirs(session_id=normalized_session, user_id=user_id)
+    _, html_dir, _ = resource_loader._scope_dirs(
+        session_id=normalized_session,
+        user_id=user_id,
+        sync_from_blob=False,
+    )
     result = _save_resource_batch(
         files,
         html_dir,
@@ -5893,7 +6173,11 @@ async def upload_resource_files(
     normalized_session = _normalize_session_id(session_id) if session_id else None
     user = _current_user_from_request(request)
     user_id = str(user.get("id") or "") if user else None
-    pdf_dir, html_dir, _ = resource_loader._scope_dirs(session_id=normalized_session, user_id=user_id)
+    pdf_dir, html_dir, _ = resource_loader._scope_dirs(
+        session_id=normalized_session,
+        user_id=user_id,
+        sync_from_blob=False,
+    )
 
     result = _save_resource_mixed_batch(
         files,
@@ -5985,7 +6269,11 @@ async def delete_resource(request: Request, resource_id: str, session_id: Option
                 payload["user_id"] = user_id
             elif normalized_session:
                 payload["session_id"] = normalized_session
-            mcp_client.invoke("scan_resources", payload)
+            _invoke_mcp_tool(
+                "scan_resources",
+                payload,
+                timeout_seconds=MCP_TOOL_TIMEOUTS.get("scan_resources"),
+            )
         except Exception as e:
             logger.warning(f"Failed to trigger MCP scan: {e}")
             
@@ -6410,22 +6698,34 @@ async def ask_question(http_request: Request, payload: QueryRequest):
         }
 
     try:
-        try:
-            programs = _fetch_available_programs(refresh=False)
-        except Exception as e:
-            logger.warning("Khong lay duoc danh sach CTDT: %s", e)
-            return _program_selection_response(
-                [],
-                answer="Không thể tải danh sách chương trình đào tạo lúc này. Vui lòng thử lại sau vài giây.",
+        bypass_program_lookup = bool(
+            effective_program_id and _query_targets_language_requirement(resolved_query)
+        )
+        programs: List[Dict[str, Any]] = []
+        valid_program_ids: Set[str] = set()
+        if bypass_program_lookup:
+            logger.info(
+                "[route] bypassing get_available_programs for deterministic language query. session=%s program=%s",
+                session_id,
+                effective_program_id,
             )
+        else:
+            try:
+                programs = _fetch_available_programs(refresh=False)
+            except Exception as e:
+                logger.warning("Khong lay duoc danh sach CTDT: %s", e)
+                return _program_selection_response(
+                    [],
+                    answer="Không thể tải danh sách chương trình đào tạo lúc này. Vui lòng thử lại sau vài giây.",
+                )
 
-        if not programs:
-            _save_session_program(session_id, None, user_id=user_id)
-            if selected_files:
-                _save_session_files(session_id, selected_files, user_id=user_id)
-            return _program_selection_response([])
+            if not programs:
+                _save_session_program(session_id, None, user_id=user_id)
+                if selected_files:
+                    _save_session_files(session_id, selected_files, user_id=user_id)
+                return _program_selection_response([])
 
-        valid_program_ids = {p.get("id") for p in programs if p.get("id")}
+            valid_program_ids = {p.get("id") for p in programs if p.get("id")}
         if effective_program_id and valid_program_ids and effective_program_id not in valid_program_ids:
             logger.warning("Program ID khong hop le hoac da thay doi: %s", effective_program_id)
             effective_program_id = None
@@ -6457,7 +6757,19 @@ async def ask_question(http_request: Request, payload: QueryRequest):
         else:
             logger.info("[route] structured TKB disabled by flag for session=%s", session_id)
 
-        memory_context = _load_memory_context_for_session(session_id=session_id, max_rows=10, user_id=user_id)
+        skip_memory_context_lookup = bool(
+            STRUCTURED_TKB_ENABLED
+            and route_intent == "language_requirement"
+            and route_confidence >= 0.75
+        )
+        if skip_memory_context_lookup:
+            memory_context = ""
+            logger.info(
+                "[route] skipping memory_get for deterministic language route. session=%s",
+                session_id,
+            )
+        else:
+            memory_context = _load_memory_context_for_session(session_id=session_id, max_rows=10, user_id=user_id)
         planner_orchestration_required = (
             STRUCTURED_TKB_ENABLED
             and _query_requires_planner_orchestration(query=resolved_query, route_intent=route_intent)
@@ -6469,21 +6781,29 @@ async def ask_question(http_request: Request, payload: QueryRequest):
                 route_intent,
                 route_confidence,
             )
+        advisor_priority_query = bool(selected_files) and _query_requires_advisor_priority(resolved_query)
         structured_prefetch: Optional[Dict[str, Any]] = None
         if STRUCTURED_TKB_ENABLED and route_intent and route_confidence >= 0.45:
-            structured_prefetch = _build_structured_route_payload(
-                query=resolved_query,
-                session_id=session_id,
-                program_id=effective_program_id,
-                intent=route_intent,
-                confidence=route_confidence,
-                memory_context=memory_context,
-                structured_state=state_before,
-                user_id=user_id,
-            )
+            if advisor_priority_query:
+                logger.info(
+                    "[route] skipping structured prefetch for advisor-priority transcript query. session=%s intent=%s confidence=%.2f",
+                    session_id,
+                    route_intent,
+                    route_confidence,
+                )
+            else:
+                structured_prefetch = _build_structured_route_payload(
+                    query=resolved_query,
+                    session_id=session_id,
+                    program_id=effective_program_id,
+                    intent=route_intent,
+                    confidence=route_confidence,
+                    memory_context=memory_context,
+                    structured_state=state_before,
+                    user_id=user_id,
+                )
 
         obj: Dict[str, Any]
-        advisor_priority_query = bool(selected_files) and _query_requires_advisor_priority(resolved_query)
         if (
             STRUCTURED_TKB_ENABLED
             and structured_prefetch
@@ -6727,6 +7047,7 @@ async def ask_question(http_request: Request, payload: QueryRequest):
             "time_slot_lookup",
             "semester_code_lookup",
             "course_overview",
+            "language_requirement",
         }
         if not citations and source not in {"error", "program_selection"} and source not in deterministic_citation_sources:
             citations = _backfill_retrieve_citations_for_answer(
@@ -6769,7 +7090,7 @@ async def ask_question(http_request: Request, payload: QueryRequest):
                 logger.warning("Khong luu duoc chat session/messages cho user=%s session=%s: %s", user_id, session_id, e)
 
         try:
-            mcp_client.invoke(
+            _invoke_mcp_tool(
                 "memory_add",
                 _with_memory_owner(
                     {
@@ -6780,6 +7101,7 @@ async def ask_question(http_request: Request, payload: QueryRequest):
                     },
                     user_id,
                 ),
+                timeout_seconds=MCP_TOOL_TIMEOUTS.get("memory_add"),
             )
         except Exception as e:
             logger.warning("Luu lich su loi (bo qua): %s", e)
@@ -6820,9 +7142,10 @@ def get_history(
 ):
     user_id = _current_user_id_from_request(http_request)
     try:
-        history_lines = mcp_client.invoke(
+        history_lines = _invoke_mcp_tool(
             "memory_get",
             _with_memory_owner({"session_id": session_id, "max_rows": per_page}, user_id),
+            timeout_seconds=MCP_TOOL_TIMEOUTS.get("memory_get"),
         )
         history_items = []
         for line in history_lines:

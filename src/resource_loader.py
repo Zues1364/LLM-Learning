@@ -70,10 +70,17 @@ class ResourceLoader:
         self.loaded_resources_by_session = {}
         self.loaded_resources_by_user = {}
 
-    def _scope_dirs(self, session_id: Optional[str] = None, user_id: Optional[str] = None) -> Tuple[Path, Path, Path]:
+    def _scope_dirs(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        *,
+        sync_from_blob: bool = False,
+    ) -> Tuple[Path, Path, Path]:
         scope, safe_user, safe_session = _resolve_scope(session_id=session_id, user_id=user_id)
         if scope == "global":
-            self._sync_scope_from_blob(scope=scope, safe_user=safe_user, safe_session=safe_session)
+            if sync_from_blob:
+                self._sync_scope_from_blob(scope=scope, safe_user=safe_user, safe_session=safe_session)
             return PDF_DIR, HTML_DIR, CONFIG_FILE
         root = USER_DIR / safe_user if scope == "user" and safe_user else SESSION_DIR / safe_session
         pdf_dir = root / "pdfs"
@@ -84,8 +91,13 @@ class ResourceLoader:
         if not config_file.exists():
             with open(config_file, "w", encoding="utf-8") as f:
                 json.dump({"urls": []}, f, ensure_ascii=False)
-        self._sync_scope_from_blob(scope=scope, safe_user=safe_user, safe_session=safe_session)
+        if sync_from_blob:
+            self._sync_scope_from_blob(scope=scope, safe_user=safe_user, safe_session=safe_session)
         return pdf_dir, html_dir, config_file
+
+    def sync_scope_from_blob(self, session_id: Optional[str] = None, user_id: Optional[str] = None) -> None:
+        scope, safe_user, safe_session = _resolve_scope(session_id=session_id, user_id=user_id)
+        self._sync_scope_from_blob(scope=scope, safe_user=safe_user, safe_session=safe_session)
 
     def _sync_scope_from_blob(
         self,
@@ -271,9 +283,19 @@ class ResourceLoader:
         raw = "\n".join(signature_parts)
         return hashlib.md5(raw.encode("utf-8")).hexdigest()
 
-    def _load_config(self, session_id: Optional[str] = None, user_id: Optional[str] = None) -> Dict:
-        _, _, config_file = self._scope_dirs(session_id=session_id, user_id=user_id)
-        if blob_mode_enabled():
+    def _load_config(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        *,
+        sync_from_blob: bool = False,
+    ) -> Dict:
+        _, _, config_file = self._scope_dirs(
+            session_id=session_id,
+            user_id=user_id,
+            sync_from_blob=sync_from_blob,
+        )
+        if sync_from_blob and blob_mode_enabled():
             try:
                 object_key = build_resource_config_key(session_id=session_id, user_id=user_id)
                 store = get_blob_store()
@@ -291,7 +313,7 @@ class ResourceLoader:
             return {"urls": []}
 
     def _save_config(self, config: Dict, session_id: Optional[str] = None, user_id: Optional[str] = None):
-        _, _, config_file = self._scope_dirs(session_id=session_id, user_id=user_id)
+        _, _, config_file = self._scope_dirs(session_id=session_id, user_id=user_id, sync_from_blob=False)
         with open(config_file, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
         if blob_mode_enabled():

@@ -44,6 +44,8 @@ Required env:
 - `GEMINI_API_KEY=<...>`
 - `MCP_STARTUP_VECTOR_INIT=lazy` (default; keeps Railway healthcheck from waiting on embedding model load)
 - `MCP_EAGER_LOAD_RESOURCES=false` unless intentionally warming the vector cache
+- `EMBEDDER_UNLOAD_AFTER_SECONDS=300` unloads the in-process sentence-transformer model after 5 idle minutes; set `0` to keep it resident
+- `PDF_PROCESSING_MODE=text_first` tries pdfplumber text/table extraction before the OCR/table-heavy path; OCR fallback remains enabled when text extraction is insufficient
 
 Health checks:
 - `GET /health` must return `{"status":"ok"}`

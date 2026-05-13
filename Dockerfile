@@ -10,6 +10,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
         curl \
+        libgl1 \
         poppler-utils \
         tesseract-ocr \
         tesseract-ocr-eng \

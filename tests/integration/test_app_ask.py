@@ -808,6 +808,29 @@ def test_extract_advisor_text_citations_from_gpa_schedule_table(monkeypatch, tmp
     assert "09:50" in citations[0]["excerpt"]
 
 
+def test_extract_advisor_text_citations_from_gpa_schedule_bullet_list(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    (app_mod.SESSION_CACHE_DIR).mkdir(parents=True, exist_ok=True)
+
+    answer = "\n".join(
+        [
+            "Gợi ý lịch:",
+            "- Thứ 5 | Ca 2 | Tiết 4-6 (09:50 – 12:30)",
+            "  INT4050 - Khóa luận tốt nghiệp | 7 tín chỉ | Lớp INT4050 1",
+            "",
+            "Nguồn TKB: PHU LUC TKB HKII 2025-2026.pdf",
+        ]
+    )
+
+    citations = app_mod._extract_advisor_text_citations(answer, max_items=10)
+
+    assert len(citations) == 1
+    assert citations[0]["source_file"] == "PHU LUC TKB HKII 2025-2026.pdf"
+    assert "INT4050" in citations[0]["excerpt"]
+    assert "09:50" in citations[0]["excerpt"]
+
+
 def test_ask_structured_schedule_response_includes_citations(monkeypatch, tmp_path):
     app_mod = importlib.reload(importlib.import_module("app"))
     monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
@@ -1843,6 +1866,16 @@ def test_structured_intent_classifier_keeps_classes_by_teacher_for_teacher_query
     assert route["intent"] == "classes_by_teacher"
 
 
+def test_structured_intent_classifier_keeps_classes_by_teacher_for_teacher_query_with_mon_gi():
+    app_mod = importlib.reload(importlib.import_module("app"))
+    query = "thay tran hoang viet ki nay day nhung mon gi vay"
+    teacher_name = app_mod._extract_teacher_name_hint(query)
+    assert app_mod.normalize_for_match(teacher_name or "") == "tran hoang viet"
+
+    route = app_mod._structured_intent_classifier(query)
+    assert route["intent"] == "classes_by_teacher"
+
+
 def test_render_electives_schedule_answer_formats_bilingual_names_with_parentheses():
     app_mod = importlib.reload(importlib.import_module("app"))
     payload = {
@@ -2036,6 +2069,61 @@ def test_ask_transcript_intensive_query_bypasses_planner_when_low_structured_con
     body = resp.json()
     assert body["selected_program_id"] == "cs_2022"
     assert "Thong tin hoc vu tu advisor" in body["answer"]
+    assert planner_calls["count"] == 0
+    assert advisor_calls["count"] == 1
+
+
+def test_ask_advisor_priority_query_skips_structured_prefetch_even_with_high_schedule_confidence(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    (app_mod.SESSION_CACHE_DIR).mkdir(parents=True, exist_ok=True)
+
+    planner_calls = {"count": 0}
+    advisor_calls = {"count": 0}
+    structured_prefetch_calls = {"count": 0}
+
+    class DummyPlanner:
+        def run(self, prompt):
+            planner_calls["count"] += 1
+            payload = {"source": "vector_store", "context": "planner-ctx", "memory": "mem", "chunk_index": None}
+            return type("Resp", (), {"content": json.dumps(payload)})()
+
+    monkeypatch.setattr(app_mod, "get_mcp_planner_agent", lambda allow_web_search=False: DummyPlanner())
+
+    def fake_structured_prefetch(**kwargs):
+        structured_prefetch_calls["count"] += 1
+        raise AssertionError("structured prefetch should be skipped for advisor-priority transcript query")
+
+    monkeypatch.setattr(app_mod, "_build_structured_route_payload", fake_structured_prefetch)
+
+    def fake_invoke(tool, args):
+        if tool == "get_available_programs":
+            return {"programs": [{"id": "cs_2022", "display_name": "CS"}]}
+        if tool == "memory_get":
+            return []
+        if tool == "consult_advisor":
+            advisor_calls["count"] += 1
+            return "Bang lich hoc tu advisor"
+        if tool == "memory_add":
+            return "ok"
+        return "ok"
+
+    monkeypatch.setattr(app_mod.mcp_client, "invoke", fake_invoke)
+
+    client = TestClient(app_mod.app)
+    resp = client.post(
+        "/ask",
+        json={
+            "query": "toi can ban lap giup toi lich hoc dua tren cac mon con thieu cua toi",
+            "session_id": "s_advisor_priority_schedule",
+            "program_id": "cs_2022",
+            "file_ids": ["1_a.pdf", "2_b.pdf"],
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "Bang lich hoc tu advisor" in body["answer"]
+    assert structured_prefetch_calls["count"] == 0
     assert planner_calls["count"] == 0
     assert advisor_calls["count"] == 1
 
@@ -2845,14 +2933,14 @@ def test_ask_ielts_requirement_uses_deterministic_language_route(monkeypatch, tm
     norm_answer = app_mod.normalize_for_match(body["answer"])
     assert "du dieu kien" in norm_answer
     assert "ielts 5.5" in norm_answer
-    assert len(retrieve_calls) >= 1
+    assert len(retrieve_calls) == 0
     assert all(
         "transcript" not in " ".join(str(fid) for fid in (call.get("file_ids") or [])).lower()
         for call in retrieve_calls
     )
     assert isinstance(body.get("citations"), list)
     assert len(body["citations"]) >= 1
-    assert body["citations"][0]["source_file"] == "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf"
+    assert app_mod._is_handbook_resource_name(str(body["citations"][0]["source_file"]))
 
 
 def test_ask_ielts_requirement_without_selected_files_uses_global_policy_citations(monkeypatch, tmp_path):
@@ -2900,14 +2988,14 @@ def test_ask_ielts_requirement_without_selected_files_uses_global_policy_citatio
     assert body["source"] == "language_requirement"
     norm_answer = app_mod.normalize_for_match(body["answer"])
     assert "du dieu kien" in norm_answer
-    assert len(retrieve_calls) >= 1
+    assert len(retrieve_calls) == 0
     assert all(
         "transcript" not in " ".join(str(fid) for fid in (call.get("file_ids") or [])).lower()
         for call in retrieve_calls
     )
     assert isinstance(body.get("citations"), list)
     assert len(body["citations"]) >= 1
-    assert body["citations"][0]["source_file"] == "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf"
+    assert app_mod._is_handbook_resource_name(str(body["citations"][0]["source_file"]))
 
 
 def test_ask_ielts_requirement_uses_resource_citation_when_retrieve_unavailable(monkeypatch, tmp_path):
@@ -2957,7 +3045,7 @@ def test_ask_ielts_requirement_uses_resource_citation_when_retrieve_unavailable(
     assert body["source"] == "language_requirement"
     assert isinstance(body.get("citations"), list)
     assert len(body["citations"]) >= 1
-    assert body["citations"][0]["source_file"] == "SỔ TAY HỌC VỤ KỲ I NĂM 2023-2024.pdf"
+    assert app_mod._is_handbook_resource_name(str(body["citations"][0]["source_file"]))
 
 
 def test_extract_language_requirement_resource_citations_prefers_handbook_table_excerpt(monkeypatch, tmp_path):
@@ -2996,6 +3084,97 @@ def test_extract_language_requirement_resource_citations_prefers_handbook_table_
     assert citations[0]["source_line"] == 5
     assert "BẢNG THAM CHIẾU" in str(citations[0]["excerpt"])
     assert "IELTS" in str(citations[0]["excerpt"])
+
+
+def test_extract_language_requirement_resource_citations_reads_cached_handbook_chunk_when_pdf_text_empty(monkeypatch, tmp_path):
+    import pickle
+    from types import SimpleNamespace
+
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    (app_mod.SESSION_CACHE_DIR).mkdir(parents=True, exist_ok=True)
+
+    handbook_name = "SO_TAY_HOC_VU_KY_I_NAM_2023-2024.pdf"
+    handbook_pdf = tmp_path / handbook_name
+    handbook_pdf.write_bytes(b"%PDF-1.4\n%EOF\n")
+
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(app_mod, "CACHE_DIR", cache_dir)
+    cache_file = cache_dir / f"{handbook_name}.pkl"
+    docs = [
+        SimpleNamespace(
+            page_content=(
+                "### BẢNG THAM CHIẾU KẾT QUẢ CÁC BÀI THI TIẾNG ANH\n"
+                "| KNLNVN | IELTS | TOEFL |\n"
+                "| Bậc 4 | 5.5 | 72 iBT |"
+            ),
+            metadata={"page": 26},
+        )
+    ]
+    with cache_file.open("wb") as fh:
+        pickle.dump(docs, fh)
+
+    monkeypatch.setattr(
+        app_mod.resource_loader,
+        "get_resources",
+        lambda session_id=None, user_id=None: [
+            {"type": "pdf", "name": handbook_name, "scope": "global"},
+        ],
+    )
+    monkeypatch.setattr(
+        app_mod,
+        "_resolve_resource_pdf_path_by_name",
+        lambda source_name, session_id, user_id=None: handbook_pdf,
+    )
+
+    citations = app_mod._extract_language_requirement_resource_citations(
+        session_id="s_extract_language_cite_cache",
+        user_id=None,
+        max_items=3,
+    )
+
+    assert len(citations) >= 1
+    first = citations[0]
+    assert first["source_file"] == handbook_name
+    assert first["page"] == 26
+    assert "BẢNG THAM CHIẾU" in str(first["excerpt"])
+    assert "IELTS" in str(first["excerpt"])
+    assert "5.5" in str(first["excerpt"])
+
+
+def test_extract_language_requirement_resource_citations_fallback_keeps_table_reference(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    (app_mod.SESSION_CACHE_DIR).mkdir(parents=True, exist_ok=True)
+
+    handbook_name = "SO_TAY_HOC_VU_KY_I_NAM_2023-2024.pdf"
+    monkeypatch.setattr(
+        app_mod,
+        "_collect_language_handbook_resources",
+        lambda session_id, user_id=None: [
+            {"source_name": handbook_name, "resource_id": handbook_name, "pdf_path": ""}
+        ],
+    )
+    monkeypatch.setattr(
+        app_mod,
+        "_extract_language_table_citation_from_handbook",
+        lambda source_name, session_id, user_id=None, max_chars=1600, pdf_path_override=None: None,
+    )
+
+    citations = app_mod._extract_language_requirement_resource_citations(
+        session_id="s_extract_language_cite_fallback_table",
+        user_id=None,
+        max_items=3,
+    )
+
+    assert len(citations) >= 1
+    first = citations[0]
+    excerpt = str(first.get("excerpt") or "")
+    assert "BẢNG THAM CHIẾU" in excerpt
+    assert "IELTS" in excerpt
+    assert "Bậc 4" in excerpt
+    assert "5.5" in excerpt
 
 
 def test_ask_ielts_requirement_resource_fallback_prefers_handbook_with_underscored_name(monkeypatch, tmp_path):
@@ -3126,7 +3305,6 @@ def test_ask_ielts_requirement_prefers_handbook_table_chunk_when_available(monke
     monkeypatch.setattr(app_mod, "get_mcp_planner_agent", lambda allow_web_search=False: DummyPlanner())
 
     handbook_name = "SO_TAY_HOC_VU_KY_I_NAM_2023-2024.pdf"
-    ctdt_source = "Chuan_dau_ra_chuong_trinh_dao_tao_nganh_Cong_nghe_thong_tin.html"
     retrieve_calls: list[dict] = []
 
     def fake_invoke(tool, args, timeout=None):
@@ -3138,23 +3316,24 @@ def test_ask_ielts_requirement_prefers_handbook_table_chunk_when_available(monke
             return "ok"
         if tool == "retrieve_chunks":
             retrieve_calls.append(dict(args))
-            question_norm = app_mod.normalize_for_match(str(args.get("question") or ""))
-            if "bang tham chieu" in question_norm:
-                return [
-                    f"[{handbook_name} - Chunk 73 - Page 26 - Line 5] ### BẢNG THAM CHIẾU KẾT QUẢ CÁC BÀI THI TIẾNG ANH\n"
-                    "| KNLNVN | IELTS | TOEFL | Aptis ESOL | Cambridge Exam | VSTEP |\n"
-                    "| Bậc 4 | 5.5 | 72 iBT | B2 | First/FCE | 3.0-3.5 |"
-                ]
-            return [f"[{ctdt_source} - Chunk 4 - Page 1 - Line 10] Chuẩn đầu ra ngoại ngữ bậc 4."]
+            raise AssertionError("language_requirement route should not call retrieve_chunks for citation backfill")
         return "ok"
 
     monkeypatch.setattr(app_mod.mcp_client, "invoke", fake_invoke)
+    monkeypatch.setattr(
+        app_mod,
+        "_extract_language_table_citation_from_handbook",
+        lambda source_name, session_id, user_id=None, max_chars=1600: {
+            "page": 26,
+            "source_line": 5,
+            "excerpt": "### BẢNG THAM CHIẾU KẾT QUẢ CÁC BÀI THI TIẾNG ANH | KNLNVN | IELTS | TOEFL |",
+        },
+    )
     monkeypatch.setattr(
         app_mod.resource_loader,
         "get_resources",
         lambda session_id=None, user_id=None: [
             {"type": "pdf", "name": handbook_name, "scope": "global"},
-            {"type": "html", "name": ctdt_source, "scope": "global"},
         ],
     )
 
@@ -3171,7 +3350,7 @@ def test_ask_ielts_requirement_prefers_handbook_table_chunk_when_available(monke
     assert resp.status_code == 200
     body = resp.json()
     assert body["source"] == "language_requirement"
-    assert len(retrieve_calls) >= 1
+    assert len(retrieve_calls) == 0
     assert isinstance(body.get("citations"), list)
     assert len(body["citations"]) >= 1
     assert body["citations"][0]["source_file"] == handbook_name

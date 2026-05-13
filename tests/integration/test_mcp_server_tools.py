@@ -1,6 +1,7 @@
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -63,6 +64,101 @@ def _make_docs(pdf_name: str) -> list[Document]:
         Document(page_content="alpha", metadata={"file_id": pdf_name, "file_name": pdf_name, "index": 1, "page": 3}),
         Document(page_content="beta", metadata={"file_id": pdf_name, "file_name": pdf_name, "index": 2, "page": 4}),
     ]
+
+
+def test_analyze_transcript_prefers_text_only_extractor_and_bumps_cache_version(tmp_path, monkeypatch):
+    pdf_path = tmp_path / "sample.pdf"
+    pdf_path.write_text("fake pdf", encoding="utf-8")
+
+    monkeypatch.setattr(server, "DATA_DIR", tmp_path)
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(
+        server,
+        "_ensure_transcript_file_available",
+        lambda file_id, session_id=None: (pdf_path.name, pdf_path),
+    )
+
+    calls = {"fast": 0, "slow": 0, "model": 0}
+
+    fast_docs = [
+        Document(
+            page_content=(
+                "HỌC KỲ 2 - 2024-2025. MÃ HỌC KỲ 242\n"
+                "1 | INT3401E | Trí tuệ nhân tạo | 3 | 9 | A+ | 4\n"
+                "Sinh viên: Nguyễn Tuấn Dương | Lớp quản lý: QH-2022-I/CQ-I-CS2"
+            ),
+            metadata={"page": 1},
+        )
+    ]
+
+    def fake_fast(path: str):
+        calls["fast"] += 1
+        return fast_docs
+
+    def fake_slow(path: str):
+        calls["slow"] += 1
+        return []
+
+    monkeypatch.setattr(server, "process_pdf_text_only", fake_fast)
+    monkeypatch.setattr(server, "process_pdf", fake_slow)
+    monkeypatch.setattr(server.genai, "configure", lambda api_key=None: None)
+
+    class FakeModel:
+        def __init__(self, model_name: str):
+            self.model_name = model_name
+
+        def generate_content(self, prompt: str, generation_config=None):
+            calls["model"] += 1
+            return SimpleNamespace(
+                text=json.dumps(
+                    {
+                        "student_info": {
+                            "name": "Nguyễn Tuấn Dương",
+                            "id": "22028230",
+                            "class": "QH-2022-I/CQ-I-CS2",
+                            "major": "Khoa học máy tính",
+                        },
+                        "semesters": [
+                            {
+                                "semester_code": "242",
+                                "semester_title": "HỌC KỲ 2 - 2024-2025",
+                                "subjects": [
+                                    {
+                                        "code": "INT3401E",
+                                        "name": "Trí tuệ nhân tạo",
+                                        "credits": 3,
+                                        "grade_10": 9.0,
+                                        "grade_letter": "A+",
+                                        "grade_4": 4.0,
+                                    }
+                                ],
+                            }
+                        ],
+                        "overview": {"raw_gpa_4": 4.0, "total_credits_accumulated": 3},
+                    },
+                    ensure_ascii=False,
+                )
+            )
+
+    monkeypatch.setattr(server.genai, "GenerativeModel", FakeModel)
+
+    result1 = json.loads(server.analyze_transcript([pdf_path.name]))
+    assert result1["overview"]["total_credits_accumulated"] == 3
+    assert result1["student_info"]["class"] == "QH-2022-I/CQ-I-CS2"
+    assert calls == {"fast": 1, "slow": 0, "model": 1}
+
+    cache_dir = tmp_path / "cache" / "transcripts"
+    cache_files_v1 = list(cache_dir.glob("*.json"))
+    assert len(cache_files_v1) == 1
+
+    monkeypatch.setattr(server, "TRANSCRIPT_ANALYSIS_CACHE_VERSION", "v3_test")
+
+    result2 = json.loads(server.analyze_transcript([pdf_path.name]))
+    assert result2["overview"]["total_credits_accumulated"] == 3
+    assert calls == {"fast": 2, "slow": 0, "model": 2}
+
+    cache_files_v2 = list(cache_dir.glob("*.json"))
+    assert len(cache_files_v2) == 2
 
 
 def test_ensure_file_loaded_uses_cached_embeddings(tmp_path, monkeypatch):
@@ -754,6 +850,116 @@ def test_render_gpa_feasibility_text_includes_schedule_rows():
     assert "Thứ 5" in answer
     assert "PHU LUC TKB HKII 2025-2026.pdf" in answer
 
+
+
+def test_render_gpa_feasibility_text_keeps_schedule_as_table_with_tiet_label():
+    advisor_context = {
+        "credit_summary": {
+            "transcript_total_credits": 129,
+            "curriculum_applicable_credits": 129,
+            "total_missing_credits": 7,
+        },
+        "missing_subjects": {
+            "mandatory_missing": [{"code": "INT4050", "name": "Khoa luan tot nghiep", "credits": 7}],
+        },
+        "gpa_projection": {
+            "target_gpa": 3.2,
+            "current_gpa": 2.897,
+            "max_gpa_no_retakes": 2.9521,
+            "max_possible_gpa": 3.4807,
+            "feasible_no_retakes": False,
+            "feasible_with_retakes": True,
+        },
+        "schedule_source_file": "PHU LUC TKB HKII 2025-2026.pdf",
+        "schedule_table_rows": [
+            {
+                "day": "Thứ 5",
+                "ca_hoc": "Ca 2",
+                "period_time": "Tiet 4-6 (09:50 – 12:30)",
+                "subject_code": "INT4050",
+                "subject_name": "Khóa luận tốt nghiệp",
+                "credits": 7,
+                "class_note": "Lớp INT4050 1",
+            }
+        ],
+    }
+
+    answer = server._render_gpa_feasibility_text(
+        "voi so tin chi con lai cua toi thi co len duoc bang gioi khong",
+        advisor_context,
+    )
+
+    assert "| Ngày học | Ca học | Tiết + Thời gian | Mã môn học | Tên môn học | Tín chỉ | Ghi chú về lớp |" in answer
+    assert "| Thứ 5 | Ca 2 | Tiết 4-6 (09:50 – 12:30) | INT4050 | Khóa luận tốt nghiệp | 7 | Lớp INT4050 1 |" in answer
+
+def test_render_gpa_feasibility_text_inserts_blank_line_before_schedule_table():
+    advisor_context = {
+        "credit_summary": {
+            "transcript_total_credits": 115,
+            "curriculum_applicable_credits": 115,
+            "total_missing_credits": 21,
+        },
+        "missing_subjects": {
+            "mandatory_missing": [{"code": "INT4050", "name": "Khoa luan tot nghiep", "credits": 7}],
+        },
+        "gpa_projection": {
+            "target_gpa": 3.2,
+            "current_gpa": 3.0661,
+            "max_gpa_no_retakes": 3.2103,
+            "max_possible_gpa": 3.4419,
+            "feasible_no_retakes": True,
+            "feasible_with_retakes": True,
+        },
+        "schedule_source_file": "Structured Schedule",
+        "schedule_table_rows": [
+            {
+                "day": "Thu 5",
+                "ca_hoc": "Ca 2",
+                "period_time": "Tiet 4-6 (09:50 - 12:30)",
+                "subject_code": "INT4050",
+                "subject_name": "Khoa luan tot nghiep",
+                "credits": 7,
+                "class_note": "Lop INT4050 1",
+            }
+        ],
+    }
+
+    answer = server._render_gpa_feasibility_text(
+        "voi so tin chi con lai cua toi thi co len duoc bang gioi khong",
+        advisor_context,
+    )
+
+    assert "Gợi ý lịch:\n\n| Ngày học | Ca học | Tiết + Thời gian |" in answer
+
+
+def test_render_missing_schedule_plan_text_inserts_blank_line_before_schedule_table():
+    advisor_context = {
+        "credit_summary": {
+            "transcript_total_credits": 115,
+            "curriculum_applicable_credits": 115,
+            "total_missing_credits": 21,
+        },
+        "missing_subjects": {
+            "mandatory_missing": [{"code": "INT4050", "name": "Khoa luan tot nghiep", "credits": 7}],
+            "elective_credit_plan": [],
+        },
+        "schedule_source_file": "Structured Schedule",
+        "schedule_table_rows": [
+            {
+                "day": "Thu 5",
+                "ca_hoc": "Ca 2",
+                "period_time": "Tiet 4-6 (09:50 - 12:30)",
+                "subject_code": "INT4050",
+                "subject_name": "Khoa luan tot nghiep",
+                "credits": 7,
+                "class_note": "Lop INT4050 1",
+            }
+        ],
+    }
+
+    answer = server._render_missing_schedule_plan_text(advisor_context)
+
+    assert "4) Gợi ý lịch\n\n| Ngày học | Ca học | Tiết + Thời gian |" in answer
 
 
 def test_gpa_feasibility_query_accepts_kha_nang_marker():

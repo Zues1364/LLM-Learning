@@ -1,5 +1,8 @@
 ﻿import json
 import os
+import gc
+import threading
+import time
 from bs4 import BeautifulSoup
 from pathlib import Path
 import numpy as np
@@ -14,7 +17,6 @@ import logging
 import urllib.parse
 import requests
 import google.generativeai as genai
-from sentence_transformers import SentenceTransformer
 import pickle
 import hashlib
 import unicodedata
@@ -27,6 +29,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 SIMILARITY_THRESHOLD = 0.2
+SentenceTransformer = None
 # Versioning to invalidate stale cached chunks/embeddings when parsing logic changes
 CHUNK_CACHE_VERSION = "v5"
 EMB_CACHE_VERSION = "v3"
@@ -48,6 +51,16 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 
 LOG_CHUNK_LOADING = _env_flag("LOG_CHUNK_LOADING", default=False)
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(str(raw).strip())
+    except Exception:
+        return default
 
 _CP1252_CHAR_TO_BYTE: Dict[str, int] = {}
 for _b in range(256):
@@ -324,12 +337,44 @@ def process_pdf_text_only(file_path: str) -> List[Document]:
     return docs
 
 
+def _text_first_docs_are_usable(docs: List[Document], min_chars: int = 500) -> bool:
+    total_chars = sum(len((doc.page_content or "").strip()) for doc in docs or [])
+    return bool(docs) and total_chars >= min_chars
+
+
+def _finalize_pdf_documents(docs: List[Document], file_path: str, parser: str) -> List[Document]:
+    pdf_name = os.path.basename(file_path)
+    for idx, chunk in enumerate(docs):
+        chunk.metadata["source"] = pdf_name
+        chunk.metadata.setdefault("file_path", file_path)
+        chunk.metadata.setdefault("type", "text")
+        chunk.metadata["parser"] = parser
+        chunk.metadata["chunk_index"] = idx
+        chunk.metadata["index"] = idx + 1
+        chunk.metadata["timestamp"] = datetime.now().isoformat()
+        chunk.metadata["file_name"] = pdf_name
+        chunk.metadata["file_id"] = pdf_name
+    return docs
+
+
 def process_pdf(file_path: str, chunk_size: int = 1000, chunk_overlap: int = 200) -> List[Document]:
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"File not found: {file_path}")
 
     pdf_name = os.path.basename(file_path)
     file_id = pdf_name  # use filename as source id
+
+    processing_mode = os.getenv("PDF_PROCESSING_MODE", "").strip().lower()
+    if processing_mode == "text_first":
+        text_docs = process_pdf_text_only(file_path)
+        if _text_first_docs_are_usable(text_docs):
+            logger.info("PDF text_first mode: using text-only extraction for %s", file_path)
+            return _finalize_pdf_documents(text_docs, file_path, parser="pdfplumber_text_first")
+        logger.info(
+            "PDF text_first mode: text-only extraction insufficient for %s; falling back to OCR/table path.",
+            file_path,
+        )
+
     cache_file = os.path.join(CACHE_DIR, f"{pdf_name}.pkl")
     cache_metadata_file = os.path.join(CACHE_DIR, f"{pdf_name}_metadata.pkl")
 
@@ -640,35 +685,113 @@ def generate_summary(text: str) -> str:
 
 # Embedding
 class VietnameseEmbedder(Embeddings):
-    def __init__(self, model_name="AITeamVN/Vietnamese_Embedding"):
-        logger.info(f"Loading Vietnamese Embedding model: {model_name}")
+    def __init__(self, model_name="AITeamVN/Vietnamese_Embedding", unload_after_seconds: Optional[int] = None):
         self.model_name = model_name
-        self.model = SentenceTransformer(model_name)
-        self.embedding_dim = self._infer_embedding_dim()
-        logger.info("Model loaded.")
+        self.embedding_dim = _env_int("PGVECTOR_EMBEDDING_DIM", 1024)
+        self.unload_after_seconds = (
+            _env_int("EMBEDDER_UNLOAD_AFTER_SECONDS", 300)
+            if unload_after_seconds is None
+            else int(unload_after_seconds)
+        )
+        self._model = None
+        self._model_lock = threading.RLock()
+        self._last_used_at = 0.0
+        self._unload_timer: Optional[threading.Timer] = None
+        logger.info(
+            "Vietnamese Embedding model configured for lazy loading: %s (idle unload=%ss)",
+            model_name,
+            self.unload_after_seconds,
+        )
 
-    def _infer_embedding_dim(self) -> int:
+    @property
+    def model(self):
+        return self._get_model()
+
+    @model.setter
+    def model(self, value):
+        with self._model_lock:
+            self._model = value
+            if value is not None:
+                self.embedding_dim = self._infer_embedding_dim(value)
+
+    def _sentence_transformer_cls(self):
+        global SentenceTransformer
+        if SentenceTransformer is None:
+            from sentence_transformers import SentenceTransformer as _SentenceTransformer
+
+            SentenceTransformer = _SentenceTransformer
+        return SentenceTransformer
+
+    def _get_model(self):
+        with self._model_lock:
+            return self._get_model_locked()
+
+    def _get_model_locked(self):
+        if self._model is None:
+            logger.info("Loading Vietnamese Embedding model: %s", self.model_name)
+            self._model = self._sentence_transformer_cls()(self.model_name)
+            self.embedding_dim = self._infer_embedding_dim(self._model)
+            logger.info("Model loaded.")
+        return self._model
+
+    def _infer_embedding_dim(self, model=None) -> int:
         """Resolve embedding width once so cache validation can detect stale/corrupt vectors."""
+        model = model if model is not None else self._get_model_locked()
         try:
-            dim = int(self.model.get_sentence_embedding_dimension())  # type: ignore[attr-defined]
+            dim = int(model.get_sentence_embedding_dimension())  # type: ignore[attr-defined]
             if dim > 0:
                 return dim
         except Exception:
             pass
 
         try:
-            vec = self.model.encode(["dim_probe"], show_progress_bar=False)[0]
+            vec = model.encode(["dim_probe"], show_progress_bar=False)[0]
             return int(len(vec))
         except Exception:
-            return 768
+            return int(self.embedding_dim or 1024)
+
+    def _schedule_idle_unload_locked(self) -> None:
+        if self.unload_after_seconds <= 0 or self._model is None:
+            return
+        if self._unload_timer is not None:
+            self._unload_timer.cancel()
+        timer = threading.Timer(self.unload_after_seconds, self._unload_if_idle)
+        timer.daemon = True
+        self._unload_timer = timer
+        timer.start()
+
+    def _mark_embedding_finished_locked(self) -> None:
+        self._last_used_at = time.monotonic()
+        self._schedule_idle_unload_locked()
+
+    def _unload_if_idle(self) -> None:
+        with self._model_lock:
+            if self._model is None or self.unload_after_seconds <= 0:
+                return
+            idle_for = time.monotonic() - self._last_used_at
+            if idle_for < self.unload_after_seconds:
+                self._schedule_idle_unload_locked()
+                return
+            self._model = None
+            self._unload_timer = None
+        gc.collect()
+        logger.info("Vietnamese Embedding model unloaded after %ss idle.", self.unload_after_seconds)
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         try:
+            if not texts:
+                return []
             # Enable progress bar for visibility on large batches
-            embeddings = self.model.encode(texts, show_progress_bar=True)
-            emb_np = np.asarray(embeddings, dtype="float32")
-            if emb_np.ndim == 1:
-                emb_np = np.expand_dims(emb_np, axis=0)
+            with self._model_lock:
+                try:
+                    embeddings = self._get_model_locked().encode(texts, show_progress_bar=True)
+                    emb_np = np.asarray(embeddings, dtype="float32")
+                    if emb_np.ndim == 1:
+                        emb_np = np.expand_dims(emb_np, axis=0)
+                    if emb_np.ndim == 2 and emb_np.shape[1] > 0:
+                        self.embedding_dim = int(emb_np.shape[1])
+                finally:
+                    self._mark_embedding_finished_locked()
             return emb_np.tolist()
         except Exception as e:
             logger.error(f"Loi khi tao embeddings cho documents: {e}")
@@ -676,10 +799,16 @@ class VietnameseEmbedder(Embeddings):
 
     def embed_query(self, text: str) -> List[float]:
         try:
-            embedding = self.model.encode([text], show_progress_bar=False)[0]
-            emb_np = np.asarray(embedding, dtype="float32")
-            if emb_np.ndim > 1:
-                emb_np = emb_np[0]
+            with self._model_lock:
+                try:
+                    embedding = self._get_model_locked().encode([text], show_progress_bar=False)[0]
+                    emb_np = np.asarray(embedding, dtype="float32")
+                    if emb_np.ndim > 1:
+                        emb_np = emb_np[0]
+                    if emb_np.ndim == 1 and emb_np.shape[0] > 0:
+                        self.embedding_dim = int(emb_np.shape[0])
+                finally:
+                    self._mark_embedding_finished_locked()
             return emb_np.tolist()
         except Exception as e:
             logger.error(f"Loi khi tao embedding cho query: {e}")

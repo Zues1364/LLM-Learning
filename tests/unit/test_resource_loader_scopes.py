@@ -80,6 +80,51 @@ def test_get_resources_does_not_leak_other_session_items(tmp_path, monkeypatch):
     assert "mail_b.pdf" not in names
 
 
+def test_get_resources_reads_local_scope_without_blob_sync(tmp_path, monkeypatch):
+    rl_mod = importlib.reload(importlib.import_module("resource_loader"))
+
+    resource_root = tmp_path / "resources"
+    pdf_dir = resource_root / "pdfs"
+    html_dir = resource_root / "html"
+    config_file = resource_root / "config.json"
+    session_dir = resource_root / "sessions"
+
+    pdf_dir.mkdir(parents=True, exist_ok=True)
+    html_dir.mkdir(parents=True, exist_ok=True)
+    session_dir.mkdir(parents=True, exist_ok=True)
+    config_file.write_text(json.dumps({"urls": [{"url": "https://example.com/global"}]}), encoding="utf-8")
+
+    monkeypatch.setattr(rl_mod, "PDF_DIR", pdf_dir)
+    monkeypatch.setattr(rl_mod, "HTML_DIR", html_dir)
+    monkeypatch.setattr(rl_mod, "CONFIG_FILE", config_file)
+    monkeypatch.setattr(rl_mod, "SESSION_DIR", session_dir)
+    monkeypatch.setattr(rl_mod, "blob_mode_enabled", lambda: True)
+    monkeypatch.setattr(
+        rl_mod,
+        "get_blob_store",
+        lambda: (_ for _ in ()).throw(AssertionError("request-time resource reads must not hit blob storage")),
+    )
+
+    loader = rl_mod.ResourceLoader()
+    monkeypatch.setattr(
+        loader,
+        "_sync_scope_from_blob",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("scope sync must be explicit, not request-time")),
+    )
+    session_pdf_dir, _, session_config = loader._scope_dirs("session-a")
+    (pdf_dir / "global_rules.pdf").write_text("stub", encoding="utf-8")
+    (session_pdf_dir / "session_mail.pdf").write_text("stub", encoding="utf-8")
+    session_config.write_text(json.dumps({"urls": [{"url": "https://example.com/session"}]}), encoding="utf-8")
+
+    resources = loader.get_resources(session_id="session-a")
+    names = {(item["name"], item["scope"]) for item in resources}
+
+    assert ("global_rules.pdf", "global") in names
+    assert ("session_mail.pdf", "session") in names
+    assert ("https://example.com/global", "global") in names
+    assert ("https://example.com/session", "session") in names
+
+
 def test_scope_signature_and_resource_ids_change_when_global_resources_change(tmp_path, monkeypatch):
     rl_mod = importlib.reload(importlib.import_module("resource_loader"))
 
