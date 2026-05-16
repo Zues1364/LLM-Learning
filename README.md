@@ -4,15 +4,6 @@ Hệ thống này xây dựng chatbot học vụ cho sinh viên UET theo kiểu 
 
 ## 1. Cấu trúc repository
 
-Yêu cầu tối thiểu của repo đã được giữ ở root:
-
-```text
-LLM Learning/
-|- src/                # Mã nguồn backend, MCP server, agent và utility
-|- references/         # PDF tham khảo và tài liệu demo
-`- README.md           # Hướng dẫn cài đặt, chạy và demo
-```
-
 Các thư mục phụ đang dùng trong project:
 
 ```text
