@@ -25,6 +25,7 @@ Thumbs.db
 .pytest_tmp/
 .pytest_tmp_local/
 tmp/
+.coverage
 
 # Data
 *.pdf
@@ -88,6 +89,15 @@ reports/eval_academic_advisor_*.md
 reports/eval_academic_advisor_*.json
 reports/eval_academic_advisor_latest.md
 reports/v2_group_audit_*.json
+reports/coverage_summary_*.json
+reports/coverage_summary_*.xml
+reports/embedding_benchmark_compare_*.json
+reports/embedding_benchmark_compare_*.md
 .gitnexus
 
 .vercel
+
+# Keep only curated PDF references in repo root references/
+!references/
+!references/**/*.md
+!references/**/*.pdf
