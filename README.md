@@ -1,19 +1,19 @@
 # LLM Learning - RAG Academic Advisor
 
-He thong nay xay dung chatbot hoc vu cho sinh vien UET theo kieu RAG + deterministic tools. Bot co the doc bang diem PDF, chuong trinh dao tao, so tay hoc vu, thoi khoa bieu va tra loi cac cau hoi nhu mon con thieu, GPA du kien, lich hoc, dieu kien ngoai ngu, lich mo lop va tra cuu theo giao vien.
+Hệ thống này xây dựng chatbot học vụ cho sinh viên UET theo kiểu RAG kết hợp deterministic tools. Bot có thể đọc bảng điểm PDF, chương trình đào tạo, sổ tay học vụ, thời khóa biểu và trả lời các câu hỏi như môn còn thiếu, GPA dự kiến, lịch học, điều kiện ngoại ngữ, lịch mở lớp và tra cứu theo giáo viên.
 
-## 1. Cau truc repository
+## 1. Cấu trúc repository
 
-Yeu cau toi thieu cua repo da duoc giu o root:
+Yêu cầu tối thiểu của repo đã được giữ ở root:
 
 ```text
 LLM Learning/
-|- src/                # Ma nguon backend, MCP server, agent va utility
-|- references/         # PDF tham khao va tai lieu demo
-`- README.md           # Huong dan cai dat, chay va demo
+|- src/                # Mã nguồn backend, MCP server, agent và utility
+|- references/         # PDF tham khảo và tài liệu demo
+`- README.md           # Hướng dẫn cài đặt, chạy và demo
 ```
 
-Cac thu muc phu dang dung trong project:
+Các thư mục phụ đang dùng trong project:
 
 ```text
 LLM Learning/
@@ -25,50 +25,50 @@ LLM Learning/
 |  |- mcp_client/
 |  `- mcp_server/
 |- frontend/           # Vite + React chat UI
-|- tests/              # Unit + integration tests chinh
+|- tests/              # Unit + integration tests chính
 |- test/               # Script debug / deep checks
 |- scripts/            # Utility scripts
 |- sql/                # Schema / migration SQL
 |- data/               # Runtime data local: cache, memory, uploaded files
-|- references/         # Tai lieu PDF de tham khao va demo
-|- docs/, doc/         # Tai lieu mo ta va file noi bo
+|- references/         # Tài liệu PDF để tham khảo và demo
+|- docs/, doc/         # Tài liệu mô tả và file nội bộ
 `- README.md
 ```
 
-## 2. Thanh phan chinh
+## 2. Thành phần chính
 
 - `src/app.py`: FastAPI backend, route `/ask`, upload file, session, resource APIs.
 - `src/mcp_server/server.py`: MCP server, deterministic tools, advisor pipeline, schedule tools, transcript analysis.
 - `src/agents.py`: planner / answer generation.
-- `frontend/src/App.jsx`: giao dien chat, session, file upload, chuong trinh dao tao.
-- `src/resource_loader.py`: tai local resources, sync scope local/user/session.
+- `frontend/src/App.jsx`: giao diện chat, session, file upload, chương trình đào tạo.
+- `src/resource_loader.py`: tải local resources, sync scope local/user/session.
 - `src/utils.py`: PDF extraction, OCR, chunking, embeddings.
 
-## 3. Tai lieu trong `/references`
+## 3. Tài liệu trong `/references`
 
-Thu muc `references/` chua bo PDF tham khao duoc dung de demo va kiem thu:
+Thư mục `references/` chứa bộ PDF tham khảo được dùng để demo và kiểm thử:
 
 - `SO_TAY_HOC_VU_KY_I_NAM_2023-2024.pdf`
 - `PHU_LUC_THOI_KHOA_BIEU_HKII_2025-2026_DU_LIEU_CAP_NHAT_DEN_22012026_.xlsx_-_Sheet1.pdf`
 - `QuyDinh_KhoaLuanTotNghiep_BoMonCNPM_2026-01.pdf`
 - `2504.11094v2.pdf`
 
-Luu y:
+Lưu ý:
 
-- `references/` la bo tai lieu tham khao de nop repo.
-- `data/` la du lieu runtime local. Code dang doc cache, memory va uploaded file tu day.
-- Neu muon dung nhanh bo PDF tham khao de demo local, ban co the upload qua UI hoac copy thu cong vao `data/resources/pdfs/`.
+- `references/` là bộ tài liệu tham khảo để nộp repo.
+- `data/` là dữ liệu runtime local. Code đang đọc cache, memory và uploaded file từ đây.
+- Nếu muốn dùng nhanh bộ PDF tham khảo để demo local, bạn có thể upload qua UI hoặc copy thủ công vào `data/resources/pdfs/`.
 
-## 4. Yeu cau moi truong
+## 4. Yêu cầu môi trường
 
-### Bat buoc
+### Bắt buộc
 
-- Python `3.11` khuyen nghi, toi thieu `3.10`
+- Python `3.11` khuyến nghị, tối thiểu `3.10`
 - Node.js `18+`
 - npm `9+`
-- Tesseract OCR co language data `vie` va `eng`
+- Tesseract OCR có language data `vie` và `eng`
 
-### Kiem tra nhanh
+### Kiểm tra nhanh
 
 ```powershell
 python --version
@@ -77,16 +77,16 @@ npm --version
 tesseract --version
 ```
 
-## 5. Cai dat moi truong
+## 5. Cài đặt môi trường
 
 ### 5.1. Clone repo
 
 ```powershell
-git clone https://github.com/Zues1364/LLM-Learning.git
+git clone https://github.com/Giang130604/LLM-Learning.git
 cd "LLM Learning"
 ```
 
-### 5.2. Tao virtual environment va cai Python dependencies
+### 5.2. Tạo virtual environment và cài Python dependencies
 
 ```powershell
 python -m venv .venv
@@ -95,13 +95,13 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-Neu can chay them mot so script phu, co the cai editable package:
+Nếu cần chạy thêm một số script phụ, có thể cài editable package:
 
 ```powershell
 python -m pip install -e .
 ```
 
-### 5.3. Cai frontend dependencies
+### 5.3. Cài frontend dependencies
 
 ```powershell
 cd frontend
@@ -109,15 +109,15 @@ npm install
 cd ..
 ```
 
-## 6. Cau hinh `.env`
+## 6. Cấu hình `.env`
 
-Copy file mau:
+Copy file mẫu:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-Toi thieu can dien:
+Tối thiểu cần điền:
 
 ```env
 APP_ENV=development
@@ -127,7 +127,7 @@ MCP_SERVER_URL=http://127.0.0.1:8000
 VITE_API_BASE=http://127.0.0.1:9000
 ```
 
-Neu muon chay day du storage / auth / Postgres memory:
+Nếu muốn chạy đầy đủ storage / auth / Postgres memory:
 
 ```env
 SUPABASE_URL=
@@ -139,11 +139,11 @@ GOOGLE_OAUTH_CLIENT_ID=
 GOOGLE_OAUTH_CLIENT_SECRET=
 ```
 
-Danh sach bien day du nam trong file `.env.example`.
+Danh sách biến đầy đủ nằm trong file `.env.example`.
 
-## 7. Chay code local
+## 7. Chạy code local
 
-Mo 3 terminal trong root repo.
+Mở 3 terminal trong root repo.
 
 ### Terminal 1 - MCP server
 
@@ -166,7 +166,7 @@ cd frontend
 npm run dev
 ```
 
-Mac dinh:
+Mặc định:
 
 - Frontend: [http://127.0.0.1:5173](http://127.0.0.1:5173)
 - Backend docs: [http://127.0.0.1:9000/docs](http://127.0.0.1:9000/docs)
@@ -174,25 +174,25 @@ Mac dinh:
 
 ## 8. Demo end-to-end
 
-### Cach 1 - Demo bang UI
+### Cách 1 - Demo bằng UI
 
-1. Mo frontend tai [http://127.0.0.1:5173](http://127.0.0.1:5173)
-2. Vao `Quan ly Tai nguyen`
-3. Upload cac file trong `references/` hoac trong bo resource rieng cua ban
-4. Quay lai man hinh chat
-5. Chon chuong trinh dao tao
-6. Upload 1 hoac nhieu file bang diem PDF
-7. Tick cac file can dung cho session hien tai
-8. Thu cac cau hoi:
-   - `toi con thieu nhung mon nao theo chuong trinh dao tao`
-   - `toi can ban lap giup toi lich hoc dua tren cac mon con thieu cua toi`
-   - `voi 6.5 ielts toi co du dieu kien tieng anh de ra truong khong`
-   - `mon tri tue nhan tao ki nay lich hoc nhu nao`
-   - `thay Tran Hoang Viet ki nay day nhung mon gi`
+1. Mở frontend tại [http://127.0.0.1:5173](http://127.0.0.1:5173)
+2. Vào `Quản lý Tài nguyên`
+3. Upload các file trong `references/` hoặc trong bộ resource riêng của bạn
+4. Quay lại màn hình chat
+5. Chọn chương trình đào tạo
+6. Upload 1 hoặc nhiều file bảng điểm PDF
+7. Tick các file cần dùng cho session hiện tại
+8. Thử các câu hỏi:
+   - `tôi còn thiếu những môn nào theo chương trình đào tạo`
+   - `tôi cần bạn lập giúp tôi lịch học dựa trên các môn còn thiếu của tôi`
+   - `với 6.5 ielts tôi có đủ điều kiện tiếng anh để ra trường không`
+   - `môn trí tuệ nhân tạo kì này lịch học như nào`
+   - `thầy Trần Hoàng Việt kì này dạy những môn gì`
 
-### Cach 2 - Bootstrap local resources nhanh
+### Cách 2 - Bootstrap local resources nhanh
 
-Neu muon san bo PDF demo trong local runtime:
+Nếu muốn sẵn bộ PDF demo trong local runtime:
 
 ```powershell
 New-Item -ItemType Directory -Force data\\resources\\pdfs | Out-Null
@@ -201,21 +201,21 @@ Copy-Item references\\PHU_LUC_THOI_KHOA_BIEU_HKII_2025-2026_DU_LIEU_CAP_NHAT_DEN
 Copy-Item references\\QuyDinh_KhoaLuanTotNghiep_BoMonCNPM_2026-01.pdf data\\resources\\pdfs\\
 ```
 
-Sau do bam refresh resource trong UI hoac restart backend / MCP.
+Sau đó bấm refresh resource trong UI hoặc restart backend / MCP.
 
-## 9. API chinh
+## 9. API chính
 
-- `POST /ask`: route hoi dap chinh
+- `POST /ask`: route hỏi đáp chính
 - `POST /upload_pdf`, `POST /upload_pdfs`: upload transcript
-- `GET /files`: danh sach file transcript cua session/user
-- `DELETE /session`: xoa lich su session hien tai
-- `GET /history`: lich su hoi dap
-- `GET /api/programs`: danh sach chuong trinh dao tao
-- `GET /api/resources`: danh sach resource local
-- `POST /api/resources/pdf|pdfs|html|htmls|url`: them resource
-- `DELETE /api/resources/{resource_id}`: xoa resource
+- `GET /files`: danh sách file transcript của session/user
+- `DELETE /session`: xóa lịch sử session hiện tại
+- `GET /history`: lịch sử hỏi đáp
+- `GET /api/programs`: danh sách chương trình đào tạo
+- `GET /api/resources`: danh sách resource local
+- `POST /api/resources/pdf|pdfs|html|htmls|url`: thêm resource
+- `DELETE /api/resources/{resource_id}`: xóa resource
 
-## 10. Chay test
+## 10. Chạy test
 
 ### Unit tests
 
@@ -236,34 +236,34 @@ cd frontend
 npx playwright test
 ```
 
-## 11. Loi thuong gap
+## 11. Lỗi thường gặp
 
 ### `GEMINI_API_KEY missing`
 
-- Kiem tra `.env`
-- Restart backend va MCP sau khi sua env
+- Kiểm tra `.env`
+- Restart backend và MCP sau khi sửa env
 
-### Backend khong goi duoc MCP
+### Backend không gọi được MCP
 
-- Kiem tra `MCP_SERVER_URL`
-- Kiem tra terminal MCP co dang chay cong `8000`
+- Kiểm tra `MCP_SERVER_URL`
+- Kiểm tra terminal MCP có đang chạy cổng `8000`
 
-### OCR / PDF extraction loi
+### OCR / PDF extraction lỗi
 
-- Kiem tra `tesseract --version`
-- Kiem tra da cai language `vie`, `eng`
+- Kiểm tra `tesseract --version`
+- Kiểm tra đã cài language `vie`, `eng`
 
-### Upload file thanh cong nhung advisor tra loi thieu du lieu
+### Upload file thành công nhưng advisor trả lời thiếu dữ liệu
 
-- Kiem tra da tick dung transcript trong session hien tai
-- Kiem tra da chon dung chuong trinh dao tao
-- Neu doi file transcript, nen tao session moi de tranh state cu
+- Kiểm tra đã tick đúng transcript trong session hiện tại
+- Kiểm tra đã chọn đúng chương trình đào tạo
+- Nếu đổi file transcript, nên tạo session mới để tránh state cũ
 
-## 12. Ghi chu van hanh
+## 12. Ghi chú vận hành
 
 - `data/cache/`: chunk cache, embedding cache
 - `data/session_cache/`: meta session local
 - `data/resources/`: resource theo scope global / user / session
 - `data/memory.db`, `data/structured_schedule.db`: local runtime state
 
-Neu khong muon commit du lieu runtime, giu nguyen `data/` trong `.gitignore`. Thu muc `references/` moi la noi de dua PDF tham khao vao repo nop bai.
+Nếu không muốn commit dữ liệu runtime, giữ nguyên `data/` trong `.gitignore`. Thư mục `references/` mới là nơi để đưa PDF tham khảo vào repo nộp bài.
