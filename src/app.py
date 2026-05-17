@@ -5996,6 +5996,18 @@ def _extract_schedule_swap_request(query: str) -> Optional[Dict[str, str]]:
     raw_query = str(query or "").strip()
     if not raw_query:
         return None
+    def _trim_swap_subject_hint(text: str) -> str:
+        cleaned = str(text or "").strip(" .,:;!?")
+        trailing_patterns = (
+            r"\s+(?:có\s+được\s+hay\s+không|co\s+duoc\s+hay\s+khong)$",
+            r"\s+(?:có\s+được\s+không|co\s+duoc\s+khong)$",
+            r"\s+(?:được\s+hay\s+không|duoc\s+hay\s+khong)$",
+            r"\s+(?:được\s+không|duoc\s+khong)$",
+        )
+        for pattern in trailing_patterns:
+            cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE).strip(" .,:;!?")
+        return cleaned
+
     patterns = (
         r"(?:thay|doi)\s+(?:mon\s+)?(.+?)\s+(?:bằng|bang|sang)\s+(?:mon\s+)?(.+?)(?:\s+(?:có được không|co duoc khong|được không|duoc khong).*)?$",
         r"(?:thay|doi)\s+(?:mon\s+)?(.+?)\s+(?:bằng|bang|sang)\s+(.+?)(?:\s+(?:có được không|co duoc khong|được không|duoc khong).*)?$",
@@ -6004,8 +6016,8 @@ def _extract_schedule_swap_request(query: str) -> Optional[Dict[str, str]]:
         match = re.search(pattern, raw_query, flags=re.IGNORECASE)
         if not match:
             continue
-        old_subject = str(match.group(1) or "").strip(" .,:;!?")
-        new_subject = str(match.group(2) or "").strip(" .,:;!?")
+        old_subject = _trim_swap_subject_hint(match.group(1) or "")
+        new_subject = _trim_swap_subject_hint(match.group(2) or "")
         if old_subject and new_subject:
             return {"old_subject": old_subject, "new_subject": new_subject}
     return None

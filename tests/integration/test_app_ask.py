@@ -2405,7 +2405,7 @@ def test_ask_schedule_replan_prefers_curriculum_lexical_match_over_wrong_alias(m
     second = client.post(
         "/ask",
         json={
-            "query": "sap xep lai lich hoc giup toi toi muon thay mon mat ma va an toan thong tin bang mon xu ly ngon ngu tu nhien co duoc khong",
+            "query": "sap xep lai lich hoc giup toi toi muon thay mon mat ma va an toan thong tin bang mon xu ly ngon ngu tu nhien co duoc hay khong",
             "session_id": session_id,
             "program_id": "cs_2022",
             "file_ids": file_ids,
