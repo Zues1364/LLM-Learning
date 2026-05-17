@@ -1162,6 +1162,19 @@ def _build_cached_schedule_replan_payload(
         new_code = alias_new_code
         new_name = str(alias_new_subject.get("subject_name_vi") or "").strip()
 
+    logger.info(
+        "[schedule_replan] session=%s old_hint=%r new_hint=%r old_code=%s curriculum_candidate=%s score=%.3f alias_new_code=%s alias_confidence=%.3f chosen_new_code=%s",
+        session_id,
+        old_subject_hint,
+        new_subject_hint,
+        old_code,
+        str((curriculum_candidate or {}).get("subject_code") or ""),
+        curriculum_candidate_score,
+        alias_new_code,
+        alias_new_confidence,
+        new_code,
+    )
+
     if not old_code:
         answer = (
             f"Mình chưa xác định được môn bạn muốn thay trong bảng lịch gần nhất từ cụm '{old_subject_hint}'. "
