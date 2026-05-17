@@ -1099,30 +1099,67 @@ def _build_cached_schedule_replan_payload(
     old_subject_hint = swap_request["old_subject"]
     new_subject_hint = swap_request["new_subject"]
 
-    resolve_old_raw = _invoke_mcp_tool(
-        "resolve_course_alias",
-        {"query": old_subject_hint, "program_id": program_id, "session_id": session_id, "user_id": user_id},
-        timeout_seconds=MCP_TOOL_TIMEOUTS.get("resolve_course_alias"),
+    curriculum_raw = _invoke_mcp_tool(
+        "get_curriculum_lookup",
+        {"program_id": program_id, "session_id": session_id},
+        timeout_seconds=MCP_TOOL_TIMEOUTS.get("get_curriculum_lookup"),
     )
-    resolve_new_raw = _invoke_mcp_tool(
-        "resolve_course_alias",
-        {"query": new_subject_hint, "program_id": program_id, "session_id": session_id, "user_id": user_id},
-        timeout_seconds=MCP_TOOL_TIMEOUTS.get("resolve_course_alias"),
-    )
-    resolve_old = _safe_json_loads(resolve_old_raw) if not isinstance(resolve_old_raw, dict) else resolve_old_raw
-    resolve_new = _safe_json_loads(resolve_new_raw) if not isinstance(resolve_new_raw, dict) else resolve_new_raw
+    curriculum_payload = _safe_json_loads(curriculum_raw) if not isinstance(curriculum_raw, dict) else curriculum_raw
+    curriculum_entries = _collect_curriculum_subject_entries(curriculum_payload if isinstance(curriculum_payload, dict) else {})
+    curriculum_candidate = _pick_curriculum_subject_from_hints([new_subject_hint], curriculum_entries)
+    curriculum_catalog = _extract_curriculum_subject_catalog(curriculum_payload)
 
-    old_code = str(((resolve_old or {}).get("matched_subject") or {}).get("subject_code") or "").strip().upper()
-    new_code = str(((resolve_new or {}).get("matched_subject") or {}).get("subject_code") or "").strip().upper()
-    new_name = str(((resolve_new or {}).get("matched_subject") or {}).get("subject_name_vi") or "").strip()
+    old_code = ""
+    new_code = ""
+    new_name = ""
+
+    for row in schedule_rows:
+        subject_code = str(row.get("subject_code") or "").strip().upper()
+        subject_name = normalize_for_match(str(row.get("subject_name") or ""))
+        if old_subject_hint.upper() == subject_code or normalize_for_match(old_subject_hint) in subject_name:
+            old_code = subject_code
+            break
+
+    resolve_old: Dict[str, Any] = {}
+    resolve_new: Dict[str, Any] = {}
 
     if not old_code:
-        for row in schedule_rows:
-            subject_code = str(row.get("subject_code") or "").strip().upper()
-            subject_name = normalize_for_match(str(row.get("subject_name") or ""))
-            if old_subject_hint.upper() == subject_code or normalize_for_match(old_subject_hint) in subject_name:
-                old_code = subject_code
-                break
+        resolve_old_raw = _invoke_mcp_tool(
+            "resolve_course_alias",
+            {"query": old_subject_hint, "program_id": program_id, "session_id": session_id, "user_id": user_id},
+            timeout_seconds=MCP_TOOL_TIMEOUTS.get("resolve_course_alias"),
+        )
+        resolve_old = _safe_json_loads(resolve_old_raw) if not isinstance(resolve_old_raw, dict) else resolve_old_raw
+        old_code = str(((resolve_old or {}).get("matched_subject") or {}).get("subject_code") or "").strip().upper()
+
+    alias_new_subject: Dict[str, Any] = {}
+    alias_new_code = ""
+    alias_new_confidence = 0.0
+    if not curriculum_candidate or float(curriculum_candidate.get("score") or 0.0) < 0.90:
+        resolve_new_raw = _invoke_mcp_tool(
+            "resolve_course_alias",
+            {"query": new_subject_hint, "program_id": program_id, "session_id": session_id, "user_id": user_id},
+            timeout_seconds=MCP_TOOL_TIMEOUTS.get("resolve_course_alias"),
+        )
+        resolve_new = _safe_json_loads(resolve_new_raw) if not isinstance(resolve_new_raw, dict) else resolve_new_raw
+        alias_new_subject = (
+            resolve_new.get("matched_subject")
+            if isinstance(resolve_new.get("matched_subject"), dict)
+            else {}
+        )
+        alias_new_code = str(alias_new_subject.get("subject_code") or "").strip().upper()
+        alias_new_confidence = float(resolve_new.get("confidence") or 0.0)
+
+    if curriculum_candidate and (
+        not alias_new_code
+        or alias_new_confidence < 0.75
+        or float(curriculum_candidate.get("score") or 0.0) >= alias_new_confidence + 0.05
+    ):
+        new_code = str(curriculum_candidate.get("subject_code") or "").strip().upper()
+        new_name = str(curriculum_candidate.get("subject_name") or "").strip()
+    elif alias_new_code:
+        new_code = alias_new_code
+        new_name = str(alias_new_subject.get("subject_name_vi") or "").strip()
 
     if not old_code:
         answer = (
@@ -1148,12 +1185,6 @@ def _build_cached_schedule_replan_payload(
             "chunk_index": None,
         }
 
-    curriculum_raw = _invoke_mcp_tool(
-        "get_curriculum_lookup",
-        {"program_id": program_id, "session_id": session_id},
-        timeout_seconds=MCP_TOOL_TIMEOUTS.get("get_curriculum_lookup"),
-    )
-    curriculum_catalog = _extract_curriculum_subject_catalog(curriculum_raw)
     new_subject_meta = curriculum_catalog.get(new_code) or {}
     old_subject_meta = curriculum_catalog.get(old_code) or {}
     if not new_name:

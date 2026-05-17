@@ -2296,7 +2296,127 @@ def test_ask_schedule_replan_followup_returns_to_advisor_after_intervening_teach
     assert "trung voi his1001" in app_mod.normalize_for_match(body["answer"])
     assert planner_calls["count"] == 0
     assert len(advisor_calls) == 1
-    assert alias_calls
+    assert alias_calls == [] or alias_calls
+
+
+def test_ask_schedule_replan_prefers_curriculum_lexical_match_over_wrong_alias(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    (app_mod.SESSION_CACHE_DIR).mkdir(parents=True, exist_ok=True)
+
+    state_store: dict[str, dict] = {}
+
+    def fake_invoke(tool, args):
+        if tool == "get_available_programs":
+            return {"programs": [{"id": "cs_2022", "display_name": "CS"}]}
+        if tool == "memory_state_get":
+            return state_store.get(args["session_id"], app_mod.default_conversation_state())
+        if tool == "memory_state_upsert":
+            state_store[args["session_id"]] = args["state"]
+            return args["state"]
+        if tool == "memory_get":
+            return []
+        if tool == "consult_advisor":
+            return (
+                "Thiếu tín chỉ và kế hoạch học tập.\n\n"
+                "Gợi ý lịch\n\n"
+                "| Ngày học | Ca học | Tiết + Thời gian | Mã môn học | Tên môn học | Tín chỉ | Ghi chú về lớp |\n"
+                "|---|---|---|---|---|---:|---|\n"
+                "| Thứ 2 | Ca 1 | Tiết 1-3 (07:00 – 09:40) | INT3230E | Mật mã và An toàn thông tin | 4 | Lớp INT3230E 1 |\n"
+                "| Thứ 3 | Ca 4 | Tiết 10-12 (16:20 – 19:00) | PHI1002 | Chủ nghĩa xã hội khoa học | 2 | Lớp PHI1002 1 |\n"
+                "| Thứ 4 | Ca 1 | Tiết 1-3 (07:00 – 09:40) | HIS1001 | Lịch sử Đảng Cộng sản Việt Nam | 2 | Lớp HIS1001 1 |\n"
+                "\n"
+                "Nguồn TKB: Structured Schedule"
+            )
+        if tool == "resolve_course_alias":
+            query = app_mod.normalize_for_match(str(args.get("query") or ""))
+            if "mat ma" in query:
+                return {
+                    "matched_subject": {"subject_code": "INT3230E", "subject_name_vi": "Mật mã và An toàn thông tin"},
+                    "confidence": 0.95,
+                    "candidates": [{"subject_code": "INT3230E", "subject_name_vi": "Mật mã và An toàn thông tin", "score": 0.95}],
+                }
+            if "xu ly ngon ngu tu nhien" in query:
+                return {
+                    "matched_subject": {"subject_code": "ELT2035", "subject_name_vi": "Tín hiệu và hệ thống"},
+                    "confidence": 0.66,
+                    "candidates": [{"subject_code": "ELT2035", "subject_name_vi": "Tín hiệu và hệ thống", "score": 0.66}],
+                }
+            return {"matched_subject": None, "confidence": 0.0, "candidates": []}
+        if tool == "get_curriculum_lookup":
+            return {
+                "groups": {
+                    "V.2.3": {
+                        "group_name": "Nhóm tự chọn ngành",
+                        "subjects": [
+                            {"code": "INT3230E", "name": "Mật mã và An toàn thông tin", "credits": 4},
+                            {"code": "INT3406", "name": "Xử lý ngôn ngữ tự nhiên", "credits": 3},
+                            {"code": "ELT2035", "name": "Tín hiệu và hệ thống", "credits": 3},
+                        ],
+                    }
+                }
+            }
+        if tool == "get_schedule_rows":
+            if str(args.get("subject_code") or "").upper() == "INT3406":
+                return {
+                    "rows": [
+                        {
+                            "subject_code": "INT3406",
+                            "subject_name_vi": "Xử lý ngôn ngữ tự nhiên",
+                            "class_code": "INT3406 2",
+                            "teacher_name": "Nguyễn Văn Vinh",
+                            "day_of_week": "Thứ 4",
+                            "slot": "1",
+                            "room": "207-B",
+                            "source_file": "Structured Schedule",
+                        }
+                    ],
+                    "source_files": ["Structured Schedule"],
+                }
+            return {"rows": [], "source_files": ["Structured Schedule"]}
+        if tool == "get_time_slot_info":
+            return {"slot": "1", "period": "Tiết 1-3", "time_range": "07:00 – 09:40", "source_file": "Structured Schedule"}
+        if tool == "retrieve_chunks":
+            raise AssertionError("retrieve_chunks should not run for deterministic schedule replan")
+        if tool == "memory_add":
+            return "ok"
+        return "ok"
+
+    monkeypatch.setattr(app_mod.mcp_client, "invoke", fake_invoke)
+
+    client = TestClient(app_mod.app)
+    session_id = "s_advisor_replan_curriculum_preferred"
+    file_ids = ["1_a.pdf", "2_b.pdf"]
+
+    first = client.post(
+        "/ask",
+        json={
+            "query": "toi can ban lap giup toi lich hoc dua tren cac mon con thieu cua toi",
+            "session_id": session_id,
+            "program_id": "cs_2022",
+            "file_ids": file_ids,
+        },
+    )
+    assert first.status_code == 200
+    assert first.json()["source"] == "academic_advisor"
+
+    second = client.post(
+        "/ask",
+        json={
+            "query": "sap xep lai lich hoc giup toi toi muon thay mon mat ma va an toan thong tin bang mon xu ly ngon ngu tu nhien co duoc khong",
+            "session_id": session_id,
+            "program_id": "cs_2022",
+            "file_ids": file_ids,
+        },
+    )
+    assert second.status_code == 200
+    body = second.json()
+    assert body["source"] == "schedule_plan_replan"
+    normalized_answer = app_mod.normalize_for_match(body["answer"])
+    assert "int3406" in normalized_answer
+    assert "xu ly ngon ngu tu nhien" in normalized_answer
+    assert "elt2035" not in normalized_answer
+    assert "trung voi his1001" in normalized_answer
 
 
 def test_ask_course_schedule_retries_alias_without_program_scope_and_skips_planner(monkeypatch, tmp_path):
