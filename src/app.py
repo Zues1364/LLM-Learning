@@ -751,6 +751,10 @@ def _load_structured_state(session_id: str, user_id: Optional[str] = None) -> Di
                 merged_referents = state.get("referents", {}).copy()
                 merged_referents.update(payload.get("referents", {}))
                 state["referents"] = merged_referents
+            if isinstance(payload.get("advisor_context"), dict):
+                merged_advisor_context = state.get("advisor_context", {}).copy()
+                merged_advisor_context.update(payload.get("advisor_context", {}))
+                state["advisor_context"] = merged_advisor_context
     except Exception as e:
         logger.warning("Khong tai duoc structured state cho session %s: %s", session_id, e)
     return state
@@ -5538,6 +5542,53 @@ def _query_requires_advisor_priority(query: str) -> bool:
     return has_missing or has_planning or has_credit_by_curriculum
 
 
+def _query_requests_schedule_replan(query: str) -> bool:
+    norm_q = normalize_for_match(query or "")
+    if not norm_q:
+        return False
+
+    replan_markers = (
+        "sap xep lai",
+        "xep lai lich",
+        "dieu chinh lich",
+        "cap nhat lich",
+        "toi uu lich",
+        "toi muon thay",
+        "thay mon",
+        "doi mon",
+        "doi hoc phan",
+        "thay hoc phan",
+        "bang mon",
+    )
+    return any(marker in norm_q for marker in replan_markers)
+
+
+def _state_has_recent_advisor_schedule_plan(state: Optional[Dict[str, Any]]) -> bool:
+    if not isinstance(state, dict):
+        return False
+
+    advisor_context = state.get("advisor_context")
+    if isinstance(advisor_context, dict) and advisor_context.get("has_recent_schedule_plan"):
+        return True
+
+    last_source = normalize_for_match(str(state.get("last_planner_source") or ""))
+    last_answer = normalize_for_match(str(state.get("last_answer") or ""))
+    if last_source != "academic_advisor" or not last_answer:
+        return False
+
+    schedule_markers = (
+        "goi y lich",
+        "ngay hoc",
+        "ca hoc",
+        "tiet + thoi gian",
+    )
+    return any(marker in last_answer for marker in schedule_markers)
+
+
+def _query_requires_advisor_followup_priority(query: str, state: Optional[Dict[str, Any]]) -> bool:
+    return _query_requests_schedule_replan(query) and _state_has_recent_advisor_schedule_plan(state)
+
+
 def _normalize_program_list(raw: Any) -> List[Dict[str, Any]]:
     payload = raw
     if isinstance(payload, str):
@@ -6781,7 +6832,10 @@ async def ask_question(http_request: Request, payload: QueryRequest):
                 route_intent,
                 route_confidence,
             )
-        advisor_priority_query = bool(selected_files) and _query_requires_advisor_priority(resolved_query)
+        advisor_priority_query = bool(selected_files) and (
+            _query_requires_advisor_priority(resolved_query)
+            or _query_requires_advisor_followup_priority(resolved_query, state_before)
+        )
         structured_prefetch: Optional[Dict[str, Any]] = None
         if STRUCTURED_TKB_ENABLED and route_intent and route_confidence >= 0.45:
             if advisor_priority_query:
@@ -6820,7 +6874,7 @@ async def ask_question(http_request: Request, payload: QueryRequest):
             obj = structured_prefetch
         elif (
             selected_files
-            and _query_requires_transcript_files(resolved_query)
+            and (advisor_priority_query or _query_requires_transcript_files(resolved_query))
             and (advisor_priority_query or not route_intent or route_confidence < 0.45)
         ):
             logger.info(

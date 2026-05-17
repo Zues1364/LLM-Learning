@@ -33,6 +33,12 @@ def default_conversation_state() -> Dict[str, Any]:
             "last_topic": "",
             "last_raw_query": "",
         },
+        "advisor_context": {
+            "has_recent_schedule_plan": False,
+            "last_schedule_plan_query": "",
+            "last_schedule_plan_codes": [],
+            "updated_at": "",
+        },
         "updated_at": _utc_now_iso(),
     }
 
@@ -128,6 +134,22 @@ def _merge_unique(items: List[str], limit: int) -> List[str]:
             continue
         merged.append(value)
     return merged[:limit]
+
+
+def _answer_contains_schedule_plan(answer: str) -> bool:
+    norm = _normalize_text(answer or "")
+    if not norm:
+        return False
+    if "goi y lich" not in norm:
+        return False
+    schedule_markers = (
+        "ngay hoc",
+        "ca hoc",
+        "tiet + thoi gian",
+        "ma mon hoc",
+        "ghi chu ve lop",
+    )
+    return any(marker in norm for marker in schedule_markers)
 
 
 def _extract_course_codes(text: str) -> List[str]:
@@ -274,6 +296,7 @@ def update_state_after_turn(
 
     entities = state.setdefault("entities", {})
     referents = state.setdefault("referents", {})
+    advisor_context = state.setdefault("advisor_context", {})
 
     codes_from_turn = _extract_course_codes(" ".join([raw_query, resolved_query, answer, planner_context]))
     teacher_names = _extract_teacher_names(" ".join([raw_query, answer, planner_context]))
@@ -297,6 +320,15 @@ def update_state_after_turn(
     referents["last_teacher_names"] = _merge_unique(teacher_names, MAX_TRACKED_TEACHERS) or referents.get("last_teacher_names", [])
     referents["last_topic"] = topics[0] if topics else (referents.get("last_topic") or "")
     referents["last_raw_query"] = str(raw_query or "").strip()
+
+    if str(planner_source or "").strip() == "academic_advisor" and _answer_contains_schedule_plan(answer):
+        advisor_context["has_recent_schedule_plan"] = True
+        advisor_context["last_schedule_plan_query"] = str(raw_query or "").strip()
+        advisor_context["last_schedule_plan_codes"] = _merge_unique(
+            _extract_course_codes(answer),
+            MAX_TRACKED_CODES,
+        )
+        advisor_context["updated_at"] = _utc_now_iso()
 
     state["schema_version"] = SCHEMA_VERSION
     state["turn_index"] = int(state.get("turn_index") or 0) + 1

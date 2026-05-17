@@ -2128,6 +2128,126 @@ def test_ask_advisor_priority_query_skips_structured_prefetch_even_with_high_sch
     assert advisor_calls["count"] == 1
 
 
+def test_ask_schedule_replan_followup_returns_to_advisor_after_intervening_teacher_lookup(monkeypatch, tmp_path):
+    app_mod = importlib.reload(importlib.import_module("app"))
+    monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
+    (app_mod.SESSION_CACHE_DIR).mkdir(parents=True, exist_ok=True)
+
+    planner_calls = {"count": 0}
+    advisor_calls: list[str] = []
+    state_store: dict[str, dict] = {}
+
+    class DummyPlanner:
+        def run(self, prompt):
+            planner_calls["count"] += 1
+            payload = {"source": "vector_store", "context": "planner-ctx", "memory": "mem", "chunk_index": None}
+            return type("Resp", (), {"content": json.dumps(payload)})()
+
+    monkeypatch.setattr(app_mod, "get_mcp_planner_agent", lambda allow_web_search=False: DummyPlanner())
+
+    def fake_invoke(tool, args):
+        if tool == "get_available_programs":
+            return {"programs": [{"id": "cs_2022", "display_name": "CS"}]}
+        if tool == "memory_state_get":
+            return state_store.get(args["session_id"], app_mod.default_conversation_state())
+        if tool == "memory_state_upsert":
+            state_store[args["session_id"]] = args["state"]
+            return args["state"]
+        if tool == "memory_get":
+            return []
+        if tool == "consult_advisor":
+            advisor_calls.append(str(args.get("query") or ""))
+            if "sap xep lai" in app_mod.normalize_for_match(args.get("query") or ""):
+                return (
+                    "Đã sắp xếp lại lịch học theo phương án thay môn.\n\n"
+                    "Gợi ý lịch\n\n"
+                    "| Ngày học | Ca học | Tiết + Thời gian | Mã môn học | Tên môn học | Tín chỉ | Ghi chú về lớp |\n"
+                    "|---|---|---|---|---|---:|---|\n"
+                    "| Thứ 4 | Ca 1 | Tiết 1-3 (07:00 – 09:40) | INT3406 | Xử lý ngôn ngữ tự nhiên | 3 | Lớp INT3406 2 |"
+                )
+            return (
+                "Thiếu tín chỉ và kế hoạch học tập.\n\n"
+                "Gợi ý lịch\n\n"
+                "| Ngày học | Ca học | Tiết + Thời gian | Mã môn học | Tên môn học | Tín chỉ | Ghi chú về lớp |\n"
+                "|---|---|---|---|---|---:|---|\n"
+                "| Thứ 2 | Ca 1 | Tiết 1-3 (07:00 – 09:40) | INT3230E | Mật mã và An toàn thông tin | 4 | Lớp INT3230E 1 |"
+            )
+        if tool == "get_classes_by_teacher":
+            return {
+                "rows": [
+                    {
+                        "subject_code": "INT2208",
+                        "subject_name_vi": "Cong nghe phan mem",
+                        "subject_name_en": "",
+                        "teacher_name": "Phạm Ngọc Hùng",
+                        "class_code": "INT2208 3",
+                        "weekday": "Thứ 4",
+                        "slot": "Ca 3",
+                        "period": "Tiết 7-9",
+                        "time_range": "13:30 – 16:10",
+                        "room": "402-B",
+                        "source_file": "Structured Schedule",
+                    }
+                ],
+                "teachers": ["Phạm Ngọc Hùng"],
+                "source_files": ["Structured Schedule"],
+            }
+        if tool in {"resolve_course_alias", "get_schedule_rows", "retrieve_chunks"}:
+            raise AssertionError(f"{tool} should not run for advisor schedule replan follow-up")
+        if tool == "memory_add":
+            return "ok"
+        return "ok"
+
+    monkeypatch.setattr(app_mod.mcp_client, "invoke", fake_invoke)
+
+    client = TestClient(app_mod.app)
+    session_id = "s_advisor_replan_followup"
+    file_ids = ["1_a.pdf", "2_b.pdf"]
+
+    first = client.post(
+        "/ask",
+        json={
+            "query": "toi can ban lap giup toi lich hoc dua tren cac mon con thieu cua toi",
+            "session_id": session_id,
+            "program_id": "cs_2022",
+            "file_ids": file_ids,
+        },
+    )
+    assert first.status_code == 200
+    assert first.json()["source"] == "academic_advisor"
+
+    saved_after_first = state_store.get(session_id) or {}
+    assert (saved_after_first.get("advisor_context") or {}).get("has_recent_schedule_plan") is True
+
+    second = client.post(
+        "/ask",
+        json={
+            "query": "ki hoc nay thay Pham Ngoc Hung day nhung mon gi",
+            "session_id": session_id,
+            "program_id": "cs_2022",
+            "file_ids": file_ids,
+        },
+    )
+    assert second.status_code == 200
+    assert second.json()["source"] == "structured_schedule"
+
+    third = client.post(
+        "/ask",
+        json={
+            "query": "sap xep lai lich hoc giup toi toi muon thay mon mat ma va an toan thong tin bang mon xu ly ngon ngu tu nhien co duoc khong",
+            "session_id": session_id,
+            "program_id": "cs_2022",
+            "file_ids": file_ids,
+        },
+    )
+    assert third.status_code == 200
+    body = third.json()
+    assert body["source"] == "academic_advisor"
+    assert "xu ly ngon ngu tu nhien" in app_mod.normalize_for_match(body["answer"])
+    assert planner_calls["count"] == 0
+    assert len(advisor_calls) == 2
+
+
 def test_ask_course_schedule_retries_alias_without_program_scope_and_skips_planner(monkeypatch, tmp_path):
     app_mod = importlib.reload(importlib.import_module("app"))
     monkeypatch.setattr(app_mod, "SESSION_CACHE_DIR", tmp_path / "session_cache")
