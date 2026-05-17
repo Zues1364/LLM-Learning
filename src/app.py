@@ -1135,7 +1135,12 @@ def _build_cached_schedule_replan_payload(
     alias_new_subject: Dict[str, Any] = {}
     alias_new_code = ""
     alias_new_confidence = 0.0
-    if not curriculum_candidate or float(curriculum_candidate.get("score") or 0.0) < 0.90:
+    curriculum_candidate_score = float(curriculum_candidate.get("score") or 0.0) if curriculum_candidate else 0.0
+    curriculum_candidate_is_strong = bool(curriculum_candidate) and curriculum_candidate_score >= 0.72
+
+    # Replan follows an advisor-generated CTDT schedule, so explicit lexical matches
+    # inside the current curriculum should win over semantic alias guesses.
+    if not curriculum_candidate_is_strong:
         resolve_new_raw = _invoke_mcp_tool(
             "resolve_course_alias",
             {"query": new_subject_hint, "program_id": program_id, "session_id": session_id, "user_id": user_id},
@@ -1150,11 +1155,7 @@ def _build_cached_schedule_replan_payload(
         alias_new_code = str(alias_new_subject.get("subject_code") or "").strip().upper()
         alias_new_confidence = float(resolve_new.get("confidence") or 0.0)
 
-    if curriculum_candidate and (
-        not alias_new_code
-        or alias_new_confidence < 0.75
-        or float(curriculum_candidate.get("score") or 0.0) >= alias_new_confidence + 0.05
-    ):
+    if curriculum_candidate_is_strong:
         new_code = str(curriculum_candidate.get("subject_code") or "").strip().upper()
         new_name = str(curriculum_candidate.get("subject_name") or "").strip()
     elif alias_new_code:

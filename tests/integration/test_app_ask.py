@@ -2305,6 +2305,7 @@ def test_ask_schedule_replan_prefers_curriculum_lexical_match_over_wrong_alias(m
     (app_mod.SESSION_CACHE_DIR).mkdir(parents=True, exist_ok=True)
 
     state_store: dict[str, dict] = {}
+    alias_calls: list[str] = []
 
     def fake_invoke(tool, args):
         if tool == "get_available_programs":
@@ -2330,6 +2331,7 @@ def test_ask_schedule_replan_prefers_curriculum_lexical_match_over_wrong_alias(m
             )
         if tool == "resolve_course_alias":
             query = app_mod.normalize_for_match(str(args.get("query") or ""))
+            alias_calls.append(query)
             if "mat ma" in query:
                 return {
                     "matched_subject": {"subject_code": "INT3230E", "subject_name_vi": "Mật mã và An toàn thông tin"},
@@ -2339,8 +2341,8 @@ def test_ask_schedule_replan_prefers_curriculum_lexical_match_over_wrong_alias(m
             if "xu ly ngon ngu tu nhien" in query:
                 return {
                     "matched_subject": {"subject_code": "ELT2035", "subject_name_vi": "Tín hiệu và hệ thống"},
-                    "confidence": 0.66,
-                    "candidates": [{"subject_code": "ELT2035", "subject_name_vi": "Tín hiệu và hệ thống", "score": 0.66}],
+                    "confidence": 0.95,
+                    "candidates": [{"subject_code": "ELT2035", "subject_name_vi": "Tín hiệu và hệ thống", "score": 0.95}],
                 }
             return {"matched_subject": None, "confidence": 0.0, "candidates": []}
         if tool == "get_curriculum_lookup":
@@ -2417,6 +2419,7 @@ def test_ask_schedule_replan_prefers_curriculum_lexical_match_over_wrong_alias(m
     assert "xu ly ngon ngu tu nhien" in normalized_answer
     assert "elt2035" not in normalized_answer
     assert "trung voi his1001" in normalized_answer
+    assert not any("xu ly ngon ngu tu nhien" in call for call in alias_calls)
 
 
 def test_ask_course_schedule_retries_alias_without_program_scope_and_skips_planner(monkeypatch, tmp_path):
