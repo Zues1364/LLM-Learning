@@ -930,6 +930,380 @@ def _resolve_schedule_source_name(source_name: str) -> str:
         pass
     return candidate
 
+
+def _schedule_day_order(label: str) -> int:
+    norm = normalize_for_match(label or "")
+    if "chu nhat" in norm:
+        return 8
+    match = re.search(r"\bthu\s*([2-8])\b", norm)
+    if match:
+        return int(match.group(1))
+    return 99
+
+
+def _schedule_ca_order(label: str) -> int:
+    match = re.search(r"(\d+)", str(label or ""))
+    if match:
+        return int(match.group(1))
+    return 99
+
+
+def _sort_schedule_plan_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return sorted(
+        [row for row in rows if isinstance(row, dict)],
+        key=lambda row: (
+            _schedule_day_order(str(row.get("day") or row.get("day_of_week") or "")),
+            _schedule_ca_order(str(row.get("ca_hoc") or row.get("slot") or "")),
+            str(row.get("subject_code") or row.get("class_code") or "").upper(),
+        ),
+    )
+
+
+def _render_schedule_plan_table(rows: List[Dict[str, Any]]) -> str:
+    lines = [
+        "| Ngày học | Ca học | Tiết + Thời gian | Mã môn học | Tên môn học | Tín chỉ | Ghi chú về lớp |",
+        "|---|---|---|---|---|---:|---|",
+    ]
+    for row in _sort_schedule_plan_rows(rows):
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    str(row.get("day") or row.get("day_of_week") or ""),
+                    str(row.get("ca_hoc") or ""),
+                    _normalize_schedule_display_text(str(row.get("period_time") or "")),
+                    str(row.get("subject_code") or ""),
+                    str(row.get("subject_name") or ""),
+                    str(_coerce_int(row.get("credits")) or ""),
+                    str(row.get("class_note") or ""),
+                ]
+            )
+            + " |"
+        )
+    return "\n".join(lines)
+
+
+def _structured_row_to_schedule_plan_row(
+    row: Dict[str, Any],
+    *,
+    subject_name: str,
+    credits: Any,
+    slot_info_by_slot: Dict[str, Dict[str, Any]],
+) -> Dict[str, Any]:
+    slot = str(row.get("slot") or "").strip()
+    day = str(row.get("day_of_week") or "").strip() or "Chưa rõ thứ"
+    ca_hoc = f"Ca {slot}" if slot else "Chưa xác định"
+    slot_info = slot_info_by_slot.get(slot) or {}
+    period = str(slot_info.get("period") or "").strip()
+    time_range = str(slot_info.get("time_range") or "").strip()
+    if period and time_range:
+        period_time = f"{period} ({time_range})"
+    elif time_range:
+        period_time = time_range
+    else:
+        period_time = period or "Chưa xác định từ TKB nguồn"
+
+    class_code = str(row.get("class_code") or "").strip()
+    subject_code = str(row.get("subject_code") or "").strip() or class_code.split()[0]
+    room = str(row.get("room") or "").strip()
+    teacher = str(row.get("teacher_name") or "").strip()
+    class_note_parts: List[str] = []
+    if class_code:
+        class_note_parts.append(f"Lớp {class_code}")
+    if room:
+        class_note_parts.append(f"Phòng {room}")
+    if teacher:
+        class_note_parts.append(f"GV {teacher}")
+
+    return {
+        "day": day,
+        "ca_hoc": ca_hoc,
+        "period_time": period_time,
+        "subject_code": subject_code,
+        "subject_name": subject_name,
+        "credits": credits,
+        "class_note": " | ".join(class_note_parts),
+        "source_file": str(row.get("source_file") or "").strip(),
+        "source_page": row.get("source_page"),
+        "source_line": row.get("source_line"),
+        "class_code": class_code,
+        "day_of_week": day,
+        "slot": slot,
+        "room": room,
+        "teacher_name": teacher,
+        "week_note": str(row.get("week_note") or "").strip(),
+    }
+
+
+def _extract_curriculum_subject_catalog(payload: Any) -> Dict[str, Dict[str, Any]]:
+    parsed = _safe_json_loads(payload)
+    if not isinstance(parsed, dict):
+        return {}
+    catalog: Dict[str, Dict[str, Any]] = {}
+    groups = parsed.get("groups")
+    if not isinstance(groups, dict):
+        return catalog
+    for group_code, group_data in groups.items():
+        if not isinstance(group_data, dict):
+            continue
+        group_name = str(group_data.get("group_name") or "").strip()
+        for subject in group_data.get("subjects") or []:
+            if not isinstance(subject, dict):
+                continue
+            code = str(subject.get("code") or "").strip().upper()
+            if not code:
+                continue
+            catalog[code] = {
+                "code": code,
+                "name": str(subject.get("name") or "").strip(),
+                "credits": _coerce_int(subject.get("credits")),
+                "group_code": str(group_code or "").strip(),
+                "group_name": group_name,
+            }
+    return catalog
+
+
+def _dedupe_structured_schedule_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    deduped: List[Dict[str, Any]] = []
+    seen: Set[Tuple[str, str, str, str, str]] = set()
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        key = (
+            str(row.get("class_code") or "").strip().upper(),
+            str(row.get("day_of_week") or "").strip(),
+            str(row.get("slot") or "").strip(),
+            str(row.get("room") or "").strip(),
+            str(row.get("teacher_name") or "").strip(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
+
+
+def _build_cached_schedule_replan_payload(
+    *,
+    query: str,
+    state: Dict[str, Any],
+    session_id: str,
+    program_id: Optional[str],
+    user_id: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    schedule_rows = _state_get_recent_advisor_schedule_rows(state)
+    swap_request = _extract_schedule_swap_request(query)
+    if not schedule_rows or not swap_request:
+        return None
+
+    old_subject_hint = swap_request["old_subject"]
+    new_subject_hint = swap_request["new_subject"]
+
+    resolve_old_raw = _invoke_mcp_tool(
+        "resolve_course_alias",
+        {"query": old_subject_hint, "program_id": program_id, "session_id": session_id, "user_id": user_id},
+        timeout_seconds=MCP_TOOL_TIMEOUTS.get("resolve_course_alias"),
+    )
+    resolve_new_raw = _invoke_mcp_tool(
+        "resolve_course_alias",
+        {"query": new_subject_hint, "program_id": program_id, "session_id": session_id, "user_id": user_id},
+        timeout_seconds=MCP_TOOL_TIMEOUTS.get("resolve_course_alias"),
+    )
+    resolve_old = _safe_json_loads(resolve_old_raw) if not isinstance(resolve_old_raw, dict) else resolve_old_raw
+    resolve_new = _safe_json_loads(resolve_new_raw) if not isinstance(resolve_new_raw, dict) else resolve_new_raw
+
+    old_code = str(((resolve_old or {}).get("matched_subject") or {}).get("subject_code") or "").strip().upper()
+    new_code = str(((resolve_new or {}).get("matched_subject") or {}).get("subject_code") or "").strip().upper()
+    new_name = str(((resolve_new or {}).get("matched_subject") or {}).get("subject_name_vi") or "").strip()
+
+    if not old_code:
+        for row in schedule_rows:
+            subject_code = str(row.get("subject_code") or "").strip().upper()
+            subject_name = normalize_for_match(str(row.get("subject_name") or ""))
+            if old_subject_hint.upper() == subject_code or normalize_for_match(old_subject_hint) in subject_name:
+                old_code = subject_code
+                break
+
+    if not old_code:
+        answer = (
+            f"Mình chưa xác định được môn bạn muốn thay trong bảng lịch gần nhất từ cụm '{old_subject_hint}'. "
+            "Bạn hãy nêu lại đúng mã môn hoặc tên môn trong lịch hiện tại."
+        )
+        return {
+            "source": "schedule_plan_replan",
+            "context": json.dumps({"answer": answer, "rows": [], "source_files": []}, ensure_ascii=False),
+            "memory": "",
+            "chunk_index": None,
+        }
+
+    if not new_code:
+        answer = (
+            f"Mình chưa resolve được môn thay thế từ cụm '{new_subject_hint}' trong CTĐT hiện tại, "
+            "nên chưa thể sắp xếp lại lịch."
+        )
+        return {
+            "source": "schedule_plan_replan",
+            "context": json.dumps({"answer": answer, "rows": [], "source_files": []}, ensure_ascii=False),
+            "memory": "",
+            "chunk_index": None,
+        }
+
+    curriculum_raw = _invoke_mcp_tool(
+        "get_curriculum_lookup",
+        {"program_id": program_id, "session_id": session_id},
+        timeout_seconds=MCP_TOOL_TIMEOUTS.get("get_curriculum_lookup"),
+    )
+    curriculum_catalog = _extract_curriculum_subject_catalog(curriculum_raw)
+    new_subject_meta = curriculum_catalog.get(new_code) or {}
+    old_subject_meta = curriculum_catalog.get(old_code) or {}
+    if not new_name:
+        new_name = str(new_subject_meta.get("name") or "").strip()
+    new_credits = _coerce_int(new_subject_meta.get("credits"))
+
+    schedule_raw = _invoke_mcp_tool(
+        "get_schedule_rows",
+        {"subject_code": new_code, "session_id": session_id, "semester": None},
+        timeout_seconds=MCP_TOOL_TIMEOUTS.get("get_schedule_rows"),
+    )
+    schedule_payload = _safe_json_loads(schedule_raw) if not isinstance(schedule_raw, dict) else schedule_raw
+    raw_rows = schedule_payload.get("rows") if isinstance(schedule_payload, dict) else []
+    available_rows = _dedupe_structured_schedule_rows(raw_rows if isinstance(raw_rows, list) else [])
+
+    source_files: List[str] = []
+    for value in (state.get("advisor_context") or {}).get("last_schedule_plan_source_files") or []:
+        candidate = str(value or "").strip()
+        if candidate and candidate not in source_files:
+            source_files.append(candidate)
+    for row in available_rows:
+        source_name = str(row.get("source_file") or "").strip()
+        if source_name and source_name not in source_files:
+            source_files.append(source_name)
+
+    old_plan_rows = [row for row in schedule_rows if str(row.get("subject_code") or "").strip().upper() == old_code]
+    kept_rows = [row for row in schedule_rows if str(row.get("subject_code") or "").strip().upper() != old_code]
+
+    if not available_rows:
+        old_display = old_code or old_subject_hint
+        new_display = new_code or new_subject_hint
+        answer_lines = [
+            f"Môn {new_display} chưa thấy lịch mở lớp trong dữ liệu TKB hiện tại, nên chưa thể thay trực tiếp cho {old_display}.",
+            "",
+            "Bảng lịch hiện tại được giữ nguyên:",
+            "",
+            _render_schedule_plan_table(schedule_rows),
+        ]
+        if source_files:
+            answer_lines.extend(["", f"Nguồn TKB: {source_files[0]}"])
+        return {
+            "source": "schedule_plan_replan",
+            "context": json.dumps(
+                {
+                    "answer": "\n".join(answer_lines).strip(),
+                    "rows": kept_rows,
+                    "source_files": source_files,
+                    "coverage_note": "Không tìm thấy lớp mở cho môn thay thế trong TKB hiện tại.",
+                },
+                ensure_ascii=False,
+            ),
+            "memory": "",
+            "chunk_index": None,
+        }
+
+    slot_info_by_slot: Dict[str, Dict[str, Any]] = {}
+    for row in available_rows:
+        slot = str(row.get("slot") or "").strip()
+        if not slot or slot in slot_info_by_slot:
+            continue
+        slot_payload = _invoke_mcp_tool(
+            "get_time_slot_info",
+            {"slot": slot, "session_id": session_id},
+            timeout_seconds=MCP_TOOL_TIMEOUTS.get("get_time_slot_info"),
+        )
+        slot_info = _safe_json_loads(slot_payload) if not isinstance(slot_payload, dict) else slot_payload
+        if isinstance(slot_info, dict):
+            slot_info_by_slot[slot] = slot_info
+
+    candidate_plan_rows = [
+        _structured_row_to_schedule_plan_row(
+            row,
+            subject_name=new_name or str(row.get("subject_name_vi") or new_code),
+            credits=new_credits,
+            slot_info_by_slot=slot_info_by_slot,
+        )
+        for row in available_rows
+    ]
+
+    conflicts: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
+    for candidate in candidate_plan_rows:
+        candidate_day = str(candidate.get("day") or "").strip()
+        candidate_ca = str(candidate.get("ca_hoc") or "").strip()
+        for existing in kept_rows:
+            existing_day = str(existing.get("day") or "").strip()
+            existing_ca = str(existing.get("ca_hoc") or "").strip()
+            if candidate_day and candidate_ca and candidate_day == existing_day and candidate_ca == existing_ca:
+                conflicts.append((candidate, existing))
+
+    old_label = old_code
+    if old_subject_meta.get("name"):
+        old_label = f"{old_code} - {old_subject_meta.get('name')}"
+    new_label = new_code
+    if new_name:
+        new_label = f"{new_code} - {new_name}"
+
+    answer_lines: List[str] = []
+    replacement_is_curriculum_subject = bool(new_subject_meta)
+    if replacement_is_curriculum_subject:
+        answer_lines.append(
+            f"Môn {new_label} có trong CTĐT hiện tại và có lịch mở lớp trong kỳ này, nên về mặt dữ liệu có thể dùng để thay cho {old_label} trong phương án tự chọn."
+        )
+    else:
+        answer_lines.append(
+            f"Môn {new_label} có lịch mở lớp trong TKB, nhưng mình chưa thấy nó trong CTĐT đang chọn nên chưa thể khẳng định dùng để bù tín chỉ còn thiếu."
+        )
+
+    if conflicts:
+        answer_lines.append("")
+        answer_lines.append("Tuy nhiên phương án thay trực tiếp hiện chưa ổn vì môn thay thế đang trùng lịch với các môn sau:")
+        seen_conflicts: Set[str] = set()
+        for candidate, existing in conflicts:
+            conflict_label = (
+                f"- {candidate.get('subject_code')} ({candidate.get('day')}, {candidate.get('ca_hoc')}) "
+                f"trùng với {existing.get('subject_code')} - {existing.get('subject_name')}."
+            )
+            if conflict_label not in seen_conflicts:
+                seen_conflicts.add(conflict_label)
+                answer_lines.append(conflict_label)
+        answer_lines.append("")
+        answer_lines.append("Bảng lịch hiện tại được giữ nguyên:")
+        answer_lines.append("")
+        answer_lines.append(_render_schedule_plan_table(schedule_rows))
+    else:
+        updated_rows = kept_rows + candidate_plan_rows
+        answer_lines.append("")
+        answer_lines.append("Bảng lịch sau khi thay môn:")
+        answer_lines.append("")
+        answer_lines.append(_render_schedule_plan_table(updated_rows))
+        schedule_rows = updated_rows
+
+    if source_files:
+        answer_lines.extend(["", f"Nguồn TKB: {source_files[0]}"])
+
+    citation_rows = candidate_plan_rows if candidate_plan_rows else kept_rows
+    return {
+        "source": "schedule_plan_replan",
+        "context": json.dumps(
+            {
+                "answer": "\n".join(answer_lines).strip(),
+                "rows": citation_rows,
+                "source_files": source_files,
+                "coverage_note": "Đã tra lại lịch mở lớp cho phương án thay môn.",
+            },
+            ensure_ascii=False,
+        ),
+        "memory": "",
+        "chunk_index": None,
+    }
+
 _CITATION_FORCE_KEYWORDS: Tuple[str, ...] = (
     "ielts",
     "toeic",
@@ -4662,6 +5036,16 @@ def _render_semester_code_lookup_answer(context: str) -> str:
     return f"Mã kỳ học hiện tại theo thời khóa biểu là `{semester_code}`{source_note}."
 
 
+def _render_schedule_plan_replan_answer(context: str) -> str:
+    payload = _safe_json_loads(context)
+    if not isinstance(payload, dict):
+        return str(context or "").strip() or "Chưa sắp xếp lại được lịch học."
+    answer = str(payload.get("answer") or "").strip()
+    if answer:
+        return answer
+    return "Chưa sắp xếp lại được lịch học."
+
+
 def _render_structured_schedule_answer(query: str, context: str) -> str:
     payload = _safe_json_loads(context)
     rows = payload.get("rows") if isinstance(payload.get("rows"), list) else []
@@ -5563,6 +5947,25 @@ def _query_requests_schedule_replan(query: str) -> bool:
     return any(marker in norm_q for marker in replan_markers)
 
 
+def _extract_schedule_swap_request(query: str) -> Optional[Dict[str, str]]:
+    raw_query = str(query or "").strip()
+    if not raw_query:
+        return None
+    patterns = (
+        r"(?:thay|doi)\s+(?:mon\s+)?(.+?)\s+(?:bằng|bang|sang)\s+(?:mon\s+)?(.+?)(?:\s+(?:có được không|co duoc khong|được không|duoc khong).*)?$",
+        r"(?:thay|doi)\s+(?:mon\s+)?(.+?)\s+(?:bằng|bang|sang)\s+(.+?)(?:\s+(?:có được không|co duoc khong|được không|duoc khong).*)?$",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, raw_query, flags=re.IGNORECASE)
+        if not match:
+            continue
+        old_subject = str(match.group(1) or "").strip(" .,:;!?")
+        new_subject = str(match.group(2) or "").strip(" .,:;!?")
+        if old_subject and new_subject:
+            return {"old_subject": old_subject, "new_subject": new_subject}
+    return None
+
+
 def _state_has_recent_advisor_schedule_plan(state: Optional[Dict[str, Any]]) -> bool:
     if not isinstance(state, dict):
         return False
@@ -5583,6 +5986,18 @@ def _state_has_recent_advisor_schedule_plan(state: Optional[Dict[str, Any]]) -> 
         "tiet + thoi gian",
     )
     return any(marker in last_answer for marker in schedule_markers)
+
+
+def _state_get_recent_advisor_schedule_rows(state: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not isinstance(state, dict):
+        return []
+    advisor_context = state.get("advisor_context")
+    if not isinstance(advisor_context, dict):
+        return []
+    rows = advisor_context.get("last_schedule_plan_rows")
+    if not isinstance(rows, list):
+        return []
+    return [row for row in rows if isinstance(row, dict)]
 
 
 def _query_requires_advisor_followup_priority(query: str, state: Optional[Dict[str, Any]]) -> bool:
@@ -6821,6 +7236,27 @@ async def ask_question(http_request: Request, payload: QueryRequest):
             )
         else:
             memory_context = _load_memory_context_for_session(session_id=session_id, max_rows=10, user_id=user_id)
+        cached_schedule_replan_payload: Optional[Dict[str, Any]] = None
+        if _query_requires_advisor_followup_priority(resolved_query, state_before):
+            try:
+                cached_schedule_replan_payload = _build_cached_schedule_replan_payload(
+                    query=query,
+                    state=state_before,
+                    session_id=session_id,
+                    program_id=effective_program_id,
+                    user_id=user_id,
+                )
+                if cached_schedule_replan_payload:
+                    logger.info(
+                        "[route] using cached advisor schedule snapshot for replan follow-up. session=%s",
+                        session_id,
+                    )
+            except Exception as e:
+                logger.warning(
+                    "[route] cached advisor schedule replan failed; falling back to advisor flow. session=%s error=%s",
+                    session_id,
+                    e,
+                )
         planner_orchestration_required = (
             STRUCTURED_TKB_ENABLED
             and _query_requires_planner_orchestration(query=resolved_query, route_intent=route_intent)
@@ -6858,7 +7294,9 @@ async def ask_question(http_request: Request, payload: QueryRequest):
                 )
 
         obj: Dict[str, Any]
-        if (
+        if cached_schedule_replan_payload:
+            obj = cached_schedule_replan_payload
+        elif (
             STRUCTURED_TKB_ENABLED
             and structured_prefetch
             and route_confidence >= 0.75
@@ -7046,6 +7484,8 @@ async def ask_question(http_request: Request, payload: QueryRequest):
                     "Hệ thống tư vấn học vụ chưa trả về nội dung ở lần gọi này. "
                     "Vui lòng thử lại sau vài giây."
                 )
+        elif source == "schedule_plan_replan":
+            answer = _render_schedule_plan_replan_answer(context=context)
         elif source == "structured_schedule":
             answer = _render_structured_schedule_answer(query=resolved_query, context=context)
         elif source == "time_slot_lookup":
@@ -7080,7 +7520,7 @@ async def ask_question(http_request: Request, payload: QueryRequest):
             citations = _extract_time_slot_citations(context, max_items=4)
         elif source == "semester_code_lookup":
             citations = _extract_semester_code_citations(context, max_items=4)
-        elif source in {"structured_schedule", "electives_schedule", "electives_recommendation", "course_offering_status", "course_overview"}:
+        elif source in {"structured_schedule", "electives_schedule", "electives_recommendation", "course_offering_status", "course_overview", "schedule_plan_replan"}:
             citations = _extract_structured_schedule_citations(context, max_items=12)
         elif source == "academic_advisor":
             # Some advisor answers embed retrieve-style context; parse directly first.
@@ -7102,6 +7542,7 @@ async def ask_question(http_request: Request, payload: QueryRequest):
             "semester_code_lookup",
             "course_overview",
             "language_requirement",
+            "schedule_plan_replan",
         }
         if not citations and source not in {"error", "program_selection"} and source not in deterministic_citation_sources:
             citations = _backfill_retrieve_citations_for_answer(

@@ -2135,6 +2135,7 @@ def test_ask_schedule_replan_followup_returns_to_advisor_after_intervening_teach
 
     planner_calls = {"count": 0}
     advisor_calls: list[str] = []
+    alias_calls: list[str] = []
     state_store: dict[str, dict] = {}
 
     class DummyPlanner:
@@ -2157,20 +2158,15 @@ def test_ask_schedule_replan_followup_returns_to_advisor_after_intervening_teach
             return []
         if tool == "consult_advisor":
             advisor_calls.append(str(args.get("query") or ""))
-            if "sap xep lai" in app_mod.normalize_for_match(args.get("query") or ""):
-                return (
-                    "Đã sắp xếp lại lịch học theo phương án thay môn.\n\n"
-                    "Gợi ý lịch\n\n"
-                    "| Ngày học | Ca học | Tiết + Thời gian | Mã môn học | Tên môn học | Tín chỉ | Ghi chú về lớp |\n"
-                    "|---|---|---|---|---|---:|---|\n"
-                    "| Thứ 4 | Ca 1 | Tiết 1-3 (07:00 – 09:40) | INT3406 | Xử lý ngôn ngữ tự nhiên | 3 | Lớp INT3406 2 |"
-                )
             return (
                 "Thiếu tín chỉ và kế hoạch học tập.\n\n"
                 "Gợi ý lịch\n\n"
                 "| Ngày học | Ca học | Tiết + Thời gian | Mã môn học | Tên môn học | Tín chỉ | Ghi chú về lớp |\n"
                 "|---|---|---|---|---|---:|---|\n"
-                "| Thứ 2 | Ca 1 | Tiết 1-3 (07:00 – 09:40) | INT3230E | Mật mã và An toàn thông tin | 4 | Lớp INT3230E 1 |"
+                "| Thứ 2 | Ca 1 | Tiết 1-3 (07:00 – 09:40) | INT3230E | Mật mã và An toàn thông tin | 4 | Lớp INT3230E 1 |\n"
+                "| Thứ 4 | Ca 1 | Tiết 1-3 (07:00 – 09:40) | HIS1001 | Lịch sử Đảng Cộng sản Việt Nam | 2 | Lớp HIS1001 1 |\n"
+                "\n"
+                "Nguồn TKB: Structured Schedule"
             )
         if tool == "get_classes_by_teacher":
             return {
@@ -2192,7 +2188,60 @@ def test_ask_schedule_replan_followup_returns_to_advisor_after_intervening_teach
                 "teachers": ["Phạm Ngọc Hùng"],
                 "source_files": ["Structured Schedule"],
             }
-        if tool in {"resolve_course_alias", "get_schedule_rows", "retrieve_chunks"}:
+        if tool == "resolve_course_alias":
+            alias_calls.append(str(args.get("query") or ""))
+            query = app_mod.normalize_for_match(str(args.get("query") or ""))
+            if "mat ma" in query:
+                return {
+                    "matched_subject": {"subject_code": "INT3230E", "subject_name_vi": "Mật mã và An toàn thông tin"},
+                    "confidence": 0.95,
+                    "candidates": [{"subject_code": "INT3230E", "subject_name_vi": "Mật mã và An toàn thông tin", "score": 0.95}],
+                }
+            if "xu ly ngon ngu tu nhien" in query:
+                return {
+                    "matched_subject": {"subject_code": "INT3406", "subject_name_vi": "Xử lý ngôn ngữ tự nhiên"},
+                    "confidence": 0.95,
+                    "candidates": [{"subject_code": "INT3406", "subject_name_vi": "Xử lý ngôn ngữ tự nhiên", "score": 0.95}],
+                }
+            return {"matched_subject": None, "confidence": 0.0, "candidates": []}
+        if tool == "get_curriculum_lookup":
+            return json.dumps(
+                {
+                    "groups": {
+                        "V.2.3": {
+                            "group_name": "Nhóm tự chọn ngành",
+                            "subjects": [
+                                {"code": "INT3230E", "name": "Mật mã và An toàn thông tin", "credits": 4},
+                                {"code": "INT3406", "name": "Xử lý ngôn ngữ tự nhiên", "credits": 3},
+                            ],
+                        }
+                    }
+                },
+                ensure_ascii=False,
+            )
+        if tool == "get_schedule_rows":
+            return {
+                "rows": [
+                    {
+                        "subject_code": "INT3406",
+                        "subject_name_vi": "Xử lý ngôn ngữ tự nhiên",
+                        "class_code": "INT3406 2",
+                        "teacher_name": "Nguyễn Văn Vinh",
+                        "day_of_week": "Thứ 4",
+                        "slot": "1",
+                        "room": "207-B",
+                        "week_note": "Học 1 ca/15 tuần",
+                        "source_file": "Structured Schedule",
+                        "source_page": 3,
+                        "source_line": 8,
+                    }
+                ],
+                "source_files": ["Structured Schedule"],
+                "coverage_note": "Tìm thấy dữ liệu lịch học.",
+            }
+        if tool == "get_time_slot_info":
+            return {"slot": "1", "period": "Tiết 1-3", "time_range": "07:00 – 09:40", "source_file": "Structured Schedule"}
+        if tool == "retrieve_chunks":
             raise AssertionError(f"{tool} should not run for advisor schedule replan follow-up")
         if tool == "memory_add":
             return "ok"
@@ -2242,10 +2291,12 @@ def test_ask_schedule_replan_followup_returns_to_advisor_after_intervening_teach
     )
     assert third.status_code == 200
     body = third.json()
-    assert body["source"] == "academic_advisor"
+    assert body["source"] == "schedule_plan_replan"
     assert "xu ly ngon ngu tu nhien" in app_mod.normalize_for_match(body["answer"])
+    assert "trung voi his1001" in app_mod.normalize_for_match(body["answer"])
     assert planner_calls["count"] == 0
-    assert len(advisor_calls) == 2
+    assert len(advisor_calls) == 1
+    assert alias_calls
 
 
 def test_ask_course_schedule_retries_alias_without_program_scope_and_skips_planner(monkeypatch, tmp_path):

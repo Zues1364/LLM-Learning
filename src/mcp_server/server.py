@@ -158,7 +158,7 @@ CURRICULUM_HTML_DIR = RESOURCE_DIR / "html"
 CURRICULUM_PDF_DIR = RESOURCE_DIR / "pdfs"
 VECTOR_SNAPSHOT_DIR = DATA_DIR / "cache" / "vector_snapshots"
 GLOBAL_VECTOR_SNAPSHOT_FILE = VECTOR_SNAPSHOT_DIR / "global_resources_snapshot.pkl"
-TRANSCRIPT_ANALYSIS_CACHE_VERSION = "v2_text_only"
+TRANSCRIPT_ANALYSIS_CACHE_VERSION = "v3_text_only_deterministic_merge"
 
 _embedder: Optional[VietnameseEmbedder] = None
 _store: Optional[FAISSVectorStore] = None  
@@ -1348,6 +1348,259 @@ def _is_transcript_usable(payload: Dict[str, Any] | None) -> bool:
     return False
 
 
+def _parse_deterministic_transcript_subjects(texts: List[Any]) -> Dict[str, Any]:
+    semester_header_re = re.compile(r"ma hoc ky\s*(\d{3})", re.IGNORECASE)
+    code_re = re.compile(r"^[A-Z]{2,4}\d{4}[A-Z]?$")
+    grade_letter_re = re.compile(r"^(A\+|A|B\+|B|C\+|C|D\+|D|F)$", re.IGNORECASE)
+
+    subjects_by_code: Dict[str, Dict[str, Any]] = {}
+    total_credits_markers: List[int] = []
+    class_hint: Optional[str] = None
+
+    def _try_parse_pipe_row(row_text: str, semester_code: Optional[str]) -> Optional[Dict[str, Any]]:
+        parts = [part.strip() for part in row_text.split("|")]
+        parts = [part for part in parts if part != ""]
+        if len(parts) < 7 or not re.fullmatch(r"\d+", parts[0] or ""):
+            return None
+        code = str(parts[1] or "").strip().upper()
+        if not code_re.fullmatch(code):
+            return None
+
+        credits_text, grade10_text, grade_letter_text, grade4_text = parts[-4:]
+        if not grade_letter_re.fullmatch(str(grade_letter_text or "").strip().upper()):
+            return None
+
+        name_parts = [part for part in parts[2:-4] if part and not code_re.fullmatch(str(part or "").strip().upper())]
+        name = " ".join(name_parts).strip()
+        if not name:
+            name = code
+
+        try:
+            credits = int(float(str(credits_text).replace(",", ".").strip()))
+            grade_10 = float(str(grade10_text).replace(",", ".").strip())
+            grade_4 = float(str(grade4_text).replace(",", ".").strip())
+        except Exception:
+            return None
+
+        return {
+            "semester_code": semester_code,
+            "code": code,
+            "name": name,
+            "credits": credits,
+            "grade_10": grade_10,
+            "grade_letter": str(grade_letter_text or "").strip().upper(),
+            "grade_4": grade_4,
+        }
+
+    def _merge_subject(candidate: Dict[str, Any]) -> None:
+        code = str(candidate.get("code") or "").strip().upper()
+        if not code:
+            return
+        existing = subjects_by_code.get(code)
+        if existing is None:
+            subjects_by_code[code] = candidate
+            return
+
+        def _score(item: Dict[str, Any]) -> Tuple[int, int, int]:
+            return (
+                1 if item.get("credits") else 0,
+                1 if item.get("grade_4") is not None else 0,
+                len(str(item.get("name") or "").strip()),
+            )
+
+        merged = dict(existing)
+        if _score(candidate) > _score(existing):
+            merged.update(candidate)
+        else:
+            for key in ("semester_code", "name", "credits", "grade_10", "grade_letter", "grade_4"):
+                if merged.get(key) in (None, "", 0):
+                    merged[key] = candidate.get(key)
+        subjects_by_code[code] = merged
+
+    for entry in texts or []:
+        raw_text = ""
+        if isinstance(entry, dict):
+            raw_text = str(entry.get("text") or entry.get("page_content") or "")
+        else:
+            raw_text = str(
+                getattr(entry, "page_content", None)
+                or getattr(entry, "text", None)
+                or ""
+            )
+        if not raw_text:
+            continue
+        if not class_hint:
+            class_hint = _extract_class_code_from_text(raw_text)
+        semester_code: Optional[str] = None
+        lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            norm_line = normalize_for_match(line)
+
+            header_match = semester_header_re.search(norm_line)
+            if header_match:
+                semester_code = header_match.group(1)
+                i += 1
+                continue
+
+            if "tong tin chi tich luy" in norm_line or norm_line.startswith("tong tin chi"):
+                marker_match = re.search(r"(\d+)", norm_line)
+                if marker_match:
+                    try:
+                        total_credits_markers.append(int(marker_match.group(1)))
+                    except Exception:
+                        pass
+
+            if "|" in line:
+                row_text = line
+                parsed = _try_parse_pipe_row(row_text, semester_code)
+                if parsed is None and i + 1 < len(lines):
+                    row_text = f"{line} {lines[i + 1]}"
+                    parsed = _try_parse_pipe_row(row_text, semester_code)
+                    if parsed is not None:
+                        i += 1
+                if parsed is not None:
+                    _merge_subject(parsed)
+            i += 1
+
+    semesters_map: Dict[str, List[Dict[str, Any]]] = {}
+    for subject in subjects_by_code.values():
+        sem_code = str(subject.get("semester_code") or "").strip() or "unknown"
+        semesters_map.setdefault(sem_code, []).append(
+            {
+                "code": subject.get("code"),
+                "name": subject.get("name"),
+                "credits": subject.get("credits"),
+                "grade_10": subject.get("grade_10"),
+                "grade_letter": subject.get("grade_letter"),
+                "grade_4": subject.get("grade_4"),
+            }
+        )
+
+    semester_rows = []
+    for sem_code, subjects in sorted(
+        semesters_map.items(),
+        key=lambda item: (item[0] == "unknown", item[0]),
+        reverse=True,
+    ):
+        semester_rows.append(
+            {
+                "semester_code": sem_code if sem_code != "unknown" else None,
+                "semester_title": f"Học kỳ {sem_code}" if sem_code != "unknown" else "",
+                "subjects": sorted(subjects, key=lambda item: str(item.get("code") or "")),
+            }
+        )
+
+    total_credits = sum(int(subject.get("credits") or 0) for subject in subjects_by_code.values())
+    if total_credits_markers:
+        total_credits = max([total_credits] + total_credits_markers)
+
+    return {
+        "semesters": semester_rows,
+        "completed_subjects": list(subjects_by_code.values()),
+        "overview": {"total_credits_accumulated": total_credits},
+        "student_info": {"class": class_hint or ""},
+    }
+
+
+def _merge_transcript_with_deterministic_supplement(
+    transcript_payload: Dict[str, Any],
+    texts: List[Dict[str, str]],
+) -> Dict[str, Any]:
+    deterministic = _parse_deterministic_transcript_subjects(texts)
+    deterministic_completed = _build_completed_subjects(deterministic.get("semesters") or [])
+    if not deterministic_completed:
+        return transcript_payload
+
+    merged_payload = json.loads(json.dumps(transcript_payload or {}, ensure_ascii=False))
+    if not isinstance(merged_payload.get("semesters"), list):
+        merged_payload["semesters"] = []
+    if not isinstance(merged_payload.get("student_info"), dict):
+        merged_payload["student_info"] = {}
+
+    semesters = merged_payload.get("semesters") or []
+    sem_by_code: Dict[str, Dict[str, Any]] = {}
+    for sem in semesters:
+        code = str((sem or {}).get("semester_code") or "").strip()
+        if code:
+            sem_by_code[code] = sem
+
+    existing_completed = _build_completed_subjects(semesters)
+    for code, subject in deterministic_completed.items():
+        current = existing_completed.get(code)
+        target_sem_code = str(subject.get("semester") or "").strip()
+        if current is None:
+            target_sem = sem_by_code.get(target_sem_code)
+            if target_sem is None:
+                target_sem = {
+                    "semester_code": target_sem_code or None,
+                    "semester_title": f"Học kỳ {target_sem_code}" if target_sem_code else "",
+                    "subjects": [],
+                }
+                semesters.append(target_sem)
+                if target_sem_code:
+                    sem_by_code[target_sem_code] = target_sem
+            target_sem.setdefault("subjects", []).append(
+                {
+                    "code": subject.get("code"),
+                    "name": subject.get("name"),
+                    "credits": subject.get("credits"),
+                    "grade_10": subject.get("grade_10"),
+                    "grade_letter": subject.get("grade_letter"),
+                    "grade_4": subject.get("grade_4"),
+                }
+            )
+            continue
+
+        for sem in semesters:
+            for existing_subject in (sem.get("subjects") or []):
+                if _normalize_subject_code(existing_subject.get("code")) != code:
+                    continue
+                for key in ("name", "credits", "grade_10", "grade_letter", "grade_4"):
+                    if existing_subject.get(key) in (None, "", 0):
+                        existing_subject[key] = subject.get(key)
+
+    deterministic_total = int(((deterministic.get("overview") or {}).get("total_credits_accumulated")) or 0)
+    payload_total = int(((merged_payload.get("overview") or {}).get("total_credits_accumulated")) or 0)
+    if not isinstance(merged_payload.get("overview"), dict):
+        merged_payload["overview"] = {}
+    merged_payload["overview"]["total_credits_accumulated"] = max(payload_total, deterministic_total)
+
+    class_hint = str(((deterministic.get("student_info") or {}).get("class")) or "").strip()
+    if class_hint and not str((merged_payload.get("student_info") or {}).get("class") or "").strip():
+        merged_payload["student_info"]["class"] = class_hint
+
+    completed_map = _build_completed_subjects(merged_payload.get("semesters") or [])
+    overview = merged_payload.setdefault("overview", {})
+    total_credits = 0
+    total_points = 0.0
+    for subject in completed_map.values():
+        try:
+            credits = int(float(subject.get("credits") or 0))
+        except Exception:
+            credits = 0
+        try:
+            grade_4 = float(subject.get("grade_4")) if subject.get("grade_4") is not None else None
+        except Exception:
+            grade_4 = None
+        if credits > 0:
+            total_credits += credits
+        if credits > 0 and grade_4 is not None and grade_4 > 0:
+            total_points += grade_4 * credits
+
+    overview["total_credits_accumulated"] = max(
+        int(overview.get("total_credits_accumulated") or 0),
+        deterministic_total,
+        total_credits,
+    )
+    if total_credits > 0:
+        overview["raw_gpa_4"] = round(total_points / total_credits, 4)
+
+    merged_payload["completed_subjects"] = list(completed_map.values())
+    return merged_payload
+
+
 @mcp_tool("analyze_transcript")
 def analyze_transcript(file_ids: str | List[str], session_id: Optional[str] = None) -> str:
     """
@@ -1699,6 +1952,7 @@ def analyze_transcript(file_ids: str | List[str], session_id: Optional[str] = No
         return json.dumps({"error": f"No semesters. {errors}"}, ensure_ascii=False)
     
     normalized = _normalize_data(merged)
+    normalized = _merge_transcript_with_deterministic_supplement(normalized, texts)
 
     # Enrich student info with class/program hints
     if normalized.get("student_info") is None:

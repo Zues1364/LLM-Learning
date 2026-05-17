@@ -37,6 +37,8 @@ def default_conversation_state() -> Dict[str, Any]:
             "has_recent_schedule_plan": False,
             "last_schedule_plan_query": "",
             "last_schedule_plan_codes": [],
+            "last_schedule_plan_rows": [],
+            "last_schedule_plan_source_files": [],
             "updated_at": "",
         },
         "updated_at": _utc_now_iso(),
@@ -150,6 +152,48 @@ def _answer_contains_schedule_plan(answer: str) -> bool:
         "ghi chu ve lop",
     )
     return any(marker in norm for marker in schedule_markers)
+
+
+def _extract_schedule_plan_source_files(answer: str) -> List[str]:
+    source_files: List[str] = []
+    for raw_line in str(answer or "").splitlines():
+        line = str(raw_line or "").strip()
+        if not line:
+            continue
+        norm = _normalize_text(line)
+        if not norm.startswith("nguon tkb:"):
+            continue
+        payload = line.split(":", 1)[1].strip() if ":" in line else ""
+        if payload and payload not in source_files:
+            source_files.append(payload)
+    return source_files
+
+
+def _extract_schedule_plan_rows(answer: str) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for raw_line in str(answer or "").splitlines():
+        line = str(raw_line or "").strip()
+        if not (line.startswith("|") and line.endswith("|")):
+            continue
+        parts = [part.strip() for part in line.split("|")[1:-1]]
+        if len(parts) != 7:
+            continue
+        if _normalize_text(parts[0]) == "ngay hoc":
+            continue
+        if all(set(part) <= {"-", ":"} for part in parts if part):
+            continue
+        rows.append(
+            {
+                "day": parts[0],
+                "ca_hoc": parts[1],
+                "period_time": parts[2],
+                "subject_code": parts[3],
+                "subject_name": parts[4],
+                "credits": parts[5],
+                "class_note": parts[6],
+            }
+        )
+    return rows
 
 
 def _extract_course_codes(text: str) -> List[str]:
@@ -321,13 +365,16 @@ def update_state_after_turn(
     referents["last_topic"] = topics[0] if topics else (referents.get("last_topic") or "")
     referents["last_raw_query"] = str(raw_query or "").strip()
 
-    if str(planner_source or "").strip() == "academic_advisor" and _answer_contains_schedule_plan(answer):
+    planner_source_norm = str(planner_source or "").strip()
+    if planner_source_norm in {"academic_advisor", "schedule_plan_replan"} and _answer_contains_schedule_plan(answer):
         advisor_context["has_recent_schedule_plan"] = True
         advisor_context["last_schedule_plan_query"] = str(raw_query or "").strip()
         advisor_context["last_schedule_plan_codes"] = _merge_unique(
             _extract_course_codes(answer),
             MAX_TRACKED_CODES,
         )
+        advisor_context["last_schedule_plan_rows"] = _extract_schedule_plan_rows(answer)
+        advisor_context["last_schedule_plan_source_files"] = _extract_schedule_plan_source_files(answer)
         advisor_context["updated_at"] = _utc_now_iso()
 
     state["schema_version"] = SCHEMA_VERSION
