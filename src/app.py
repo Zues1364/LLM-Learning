@@ -6517,7 +6517,11 @@ def get_resources(request: Request, session_id: Optional[str] = Query(default=No
     normalized_session = _normalize_session_id(session_id) if session_id else None
     user = _current_user_from_request(request)
     user_id = str(user.get("id") or "") if user else None
-    return resource_loader.get_resources(session_id=normalized_session, user_id=user_id)
+    return resource_loader.get_resources(
+        session_id=normalized_session,
+        user_id=user_id,
+        sync_from_blob=True,
+    )
 
 @app.get("/api/programs")
 def get_programs(refresh: bool = False):

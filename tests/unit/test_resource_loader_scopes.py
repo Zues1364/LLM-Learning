@@ -125,6 +125,53 @@ def test_get_resources_reads_local_scope_without_blob_sync(tmp_path, monkeypatch
     assert ("https://example.com/session", "session") in names
 
 
+def test_get_resources_can_sync_from_blob_when_requested(tmp_path, monkeypatch):
+    rl_mod = importlib.reload(importlib.import_module("resource_loader"))
+
+    resource_root = tmp_path / "resources"
+    pdf_dir = resource_root / "pdfs"
+    html_dir = resource_root / "html"
+    config_file = resource_root / "config.json"
+    session_dir = resource_root / "sessions"
+
+    pdf_dir.mkdir(parents=True, exist_ok=True)
+    html_dir.mkdir(parents=True, exist_ok=True)
+    session_dir.mkdir(parents=True, exist_ok=True)
+    config_file.write_text(json.dumps({"urls": []}), encoding="utf-8")
+
+    monkeypatch.setattr(rl_mod, "PDF_DIR", pdf_dir)
+    monkeypatch.setattr(rl_mod, "HTML_DIR", html_dir)
+    monkeypatch.setattr(rl_mod, "CONFIG_FILE", config_file)
+    monkeypatch.setattr(rl_mod, "SESSION_DIR", session_dir)
+    monkeypatch.setattr(rl_mod, "blob_mode_enabled", lambda: False)
+
+    loader = rl_mod.ResourceLoader()
+
+    def _fake_sync(*, scope, safe_user, safe_session):
+        if scope == "global":
+            (pdf_dir / "global_rules.pdf").write_text("blob-global", encoding="utf-8")
+            config_file.write_text(json.dumps({"urls": [{"url": "https://example.com/global"}]}), encoding="utf-8")
+            return
+
+        assert scope == "session"
+        session_pdf_dir = session_dir / safe_session / "pdfs"
+        session_config = session_dir / safe_session / "config.json"
+        session_pdf_dir.mkdir(parents=True, exist_ok=True)
+        session_pdf_dir.joinpath("session_mail.pdf").write_text("blob-session", encoding="utf-8")
+        session_config.parent.mkdir(parents=True, exist_ok=True)
+        session_config.write_text(json.dumps({"urls": [{"url": "https://example.com/session"}]}), encoding="utf-8")
+
+    monkeypatch.setattr(loader, "_sync_scope_from_blob", _fake_sync)
+
+    resources = loader.get_resources(session_id="session-a", sync_from_blob=True)
+    names = {(item["name"], item["scope"]) for item in resources}
+
+    assert ("global_rules.pdf", "global") in names
+    assert ("session_mail.pdf", "session") in names
+    assert ("https://example.com/global", "global") in names
+    assert ("https://example.com/session", "session") in names
+
+
 def test_scope_signature_and_resource_ids_change_when_global_resources_change(tmp_path, monkeypatch):
     rl_mod = importlib.reload(importlib.import_module("resource_loader"))
 

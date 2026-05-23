@@ -496,7 +496,13 @@ class ResourceLoader:
         # Trigger load single
         self.load_resources(session_id=safe_session, user_id=safe_user)
 
-    def get_resources(self, session_id: Optional[str] = None, user_id: Optional[str] = None) -> List[Dict]:
+    def get_resources(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        *,
+        sync_from_blob: bool = False,
+    ) -> List[Dict]:
         """
         Returns list of available resources.
         """
@@ -509,7 +515,11 @@ class ResourceLoader:
 
         res = []
         for scope_user, scope_session, scope_name in scope_specs:
-            pdf_dir, html_dir, _ = self._scope_dirs(session_id=scope_session, user_id=scope_user)
+            pdf_dir, html_dir, _ = self._scope_dirs(
+                session_id=scope_session,
+                user_id=scope_user,
+                sync_from_blob=sync_from_blob,
+            )
 
             for p in pdf_dir.glob("*.pdf"):
                 res.append(
@@ -535,7 +545,11 @@ class ResourceLoader:
                     }
                 )
 
-            config = self._load_config(session_id=scope_session, user_id=scope_user)
+            config = self._load_config(
+                session_id=scope_session,
+                user_id=scope_user,
+                sync_from_blob=sync_from_blob,
+            )
             for u in config.get("urls", []):
                 url_value = u["url"]
                 url_hash = f"url_{hashlib.md5(url_value.encode('utf-8')).hexdigest()}"
