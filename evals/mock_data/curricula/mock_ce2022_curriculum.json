@@ -1,0 +1,37 @@
+{
+  "program_id": "ce_2022",
+  "program_name": "Kỹ thuật máy tính QH-2022 mock",
+  "required_credits": 136,
+  "groups": [
+    {
+      "id": "I",
+      "name": "Khối kiến thức chung",
+      "required_credits": 22,
+      "required_subjects": ["PHI1006", "MAT1093", "MAT1094", "HIS1001"]
+    },
+    {
+      "id": "III",
+      "name": "Cơ sở ngành",
+      "required_credits": 44,
+      "required_subjects": ["INT1003", "INT1007", "INT2210", "INT2204", "INT2208", "INT3401", "INT3402"]
+    },
+    {
+      "id": "IV",
+      "name": "Phần cứng và hệ nhúng",
+      "required_credits": 28,
+      "required_subjects": ["INT3413", "INT3414", "INT3415", "INT3416", "INT3417"]
+    },
+    {
+      "id": "V",
+      "name": "Tự chọn chuyên ngành",
+      "required_credits": 18,
+      "elective_subjects": ["INT3418", "INT3419", "INT3420", "INT3421", "INT3422"]
+    },
+    {
+      "id": "VI",
+      "name": "Đồ án và khóa luận",
+      "required_credits": 10,
+      "required_subjects": ["INT3131", "INT4050"]
+    }
+  ]
+}

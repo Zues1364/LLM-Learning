@@ -1,29 +1,29 @@
 {
   "program_id": "it_2022",
-  "program_name": "Cong nghe thong tin QH-2022 mock",
+  "program_name": "Công nghệ thông tin QH-2022 mock",
   "required_credits": 136,
   "groups": [
     {
       "id": "I",
-      "name": "Khoi kien thuc chung",
+      "name": "Khối kiến thức chung",
       "required_credits": 23,
       "required_subjects": ["PHI1006", "MAT1093", "MAT1094", "PEC1008", "HIS1001"]
     },
     {
       "id": "III",
-      "name": "Co so nganh",
+      "name": "Cơ sở ngành",
       "required_credits": 48,
       "required_subjects": ["INT1003", "INT1007", "INT2210", "INT2215", "INT2208", "INT2204", "INT3110", "INT3117"]
     },
     {
       "id": "V",
-      "name": "Tu chon nganh",
+      "name": "Tự chọn ngành",
       "required_credits": 24,
       "elective_subjects": ["INT3306", "INT3323", "INT3230E", "INT3229E", "INT3406", "INT3121"]
     },
     {
       "id": "VI",
-      "name": "Do an va khoa luan",
+      "name": "Đồ án và khóa luận",
       "required_credits": 13,
       "required_subjects": ["INT3131", "INT3132", "INT4050"]
     }

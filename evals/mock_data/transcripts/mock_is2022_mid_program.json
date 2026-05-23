@@ -1,0 +1,178 @@
+{
+  "profile_id": "mock_is2022_mid_program",
+  "student": {
+    "student_id": "MOCK220004",
+    "name": "Đỗ Hà Mock",
+    "program_id": "is_2022",
+    "program_name": "Hệ thống thông tin QH-2022"
+  },
+  "summary": {
+    "completed_credits": 72,
+    "recognized_credits": 72,
+    "expected_missing_credits": 64,
+    "expected_required_missing_codes": [
+      "MAT1094",
+      "PEC1008",
+      "INT1003",
+      "INT1007",
+      "INT3220",
+      "INT3221",
+      "INT3222",
+      "INT3223",
+      "INT3224",
+      "INT3131",
+      "INT4050"
+    ],
+    "expected_open_group_missing_credits": {
+      "specialized_electives": 20
+    }
+  },
+  "semesters": [
+    {
+      "semester": "2022-2023-1",
+      "subjects": [
+        {
+          "code": "PHI1006",
+          "name": "Triết học Mác - Lênin",
+          "credits": 3,
+          "grade_4": 2.8
+        },
+        {
+          "code": "MAT1093",
+          "name": "Đại số",
+          "credits": 4,
+          "grade_4": 3.0
+        },
+        {
+          "code": "MAT1041",
+          "name": "Giải tích 1",
+          "credits": 4,
+          "grade_4": 2.9
+        },
+        {
+          "code": "INT1008",
+          "name": "Tin học cơ sở",
+          "credits": 4,
+          "grade_4": 3.1
+        },
+        {
+          "code": "EPN1095",
+          "name": "Vật lý đại cương 1",
+          "credits": 2,
+          "grade_4": 2.7
+        }
+      ]
+    },
+    {
+      "semester": "2022-2023-2",
+      "subjects": [
+        {
+          "code": "MAT1042",
+          "name": "Giải tích 2",
+          "credits": 4,
+          "grade_4": 2.8
+        },
+        {
+          "code": "EPN1096",
+          "name": "Vật lý đại cương 2",
+          "credits": 2,
+          "grade_4": 2.6
+        },
+        {
+          "code": "ELT2035",
+          "name": "Tín hiệu và hệ thống",
+          "credits": 3,
+          "grade_4": 2.5
+        },
+        {
+          "code": "MAT1101",
+          "name": "Xác suất thống kê",
+          "credits": 3,
+          "grade_4": 3.0
+        },
+        {
+          "code": "INT2210",
+          "name": "Cấu trúc dữ liệu và giải thuật",
+          "credits": 4,
+          "grade_4": 3.2
+        },
+        {
+          "code": "INT2215",
+          "name": "Lập trình nâng cao",
+          "credits": 4,
+          "grade_4": 3.1
+        }
+      ]
+    },
+    {
+      "semester": "2023-2024-1",
+      "subjects": [
+        {
+          "code": "INT2211",
+          "name": "Cơ sở dữ liệu",
+          "credits": 4,
+          "grade_4": 3.0
+        },
+        {
+          "code": "INT2212",
+          "name": "Kiến trúc máy tính",
+          "credits": 4,
+          "grade_4": 2.9
+        },
+        {
+          "code": "INT1050",
+          "name": "Toán rời rạc",
+          "credits": 3,
+          "grade_4": 3.1
+        },
+        {
+          "code": "INT2214",
+          "name": "Nguyên lý hệ điều hành",
+          "credits": 4,
+          "grade_4": 3.0
+        },
+        {
+          "code": "INT2213",
+          "name": "Mạng máy tính",
+          "credits": 4,
+          "grade_4": 2.8
+        }
+      ]
+    },
+    {
+      "semester": "2023-2024-2",
+      "subjects": [
+        {
+          "code": "INT2204",
+          "name": "Lập trình hướng đối tượng",
+          "credits": 3,
+          "grade_4": 3.3
+        },
+        {
+          "code": "INT2208",
+          "name": "Công nghệ phần mềm",
+          "credits": 3,
+          "grade_4": 3.0
+        },
+        {
+          "code": "INT3201",
+          "name": "Cơ sở các hệ thống thông tin",
+          "credits": 4,
+          "grade_4": 3.2
+        },
+        {
+          "code": "INT2020E",
+          "name": "Phân tích thiết kế hệ thống thông tin",
+          "credits": 3,
+          "grade_4": 3.1
+        },
+        {
+          "code": "INT3202E",
+          "name": "Hệ quản trị cơ sở dữ liệu",
+          "credits": 3,
+          "grade_4": 3.0
+        }
+      ]
+    }
+  ]
+}

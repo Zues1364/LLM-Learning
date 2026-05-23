@@ -1,0 +1,45 @@
+{
+  "doc_id": "schedule_appendix_p3_ai_fast",
+  "title": "Phụ lục TKB trang 3 - lớp AI tiến trình nhanh",
+  "doc_type": "schedule",
+  "subtype": "course_schedule",
+  "source": {
+    "kind": "pdf_page",
+    "relative_path": "data/resources/pdfs/PHU_LUC_THOI_KHOA_BIEU_HKII_2025-2026_DU_LIEU_CAP_NHAT_DEN_22012026_.xlsx_-_Sheet1.pdf",
+    "page": 3
+  },
+  "expected_fields": [
+    "subject_code",
+    "course_name",
+    "class_code",
+    "teacher_name",
+    "day",
+    "slot",
+    "room"
+  ],
+  "key_fields": [
+    "subject_code",
+    "class_code",
+    "slot"
+  ],
+  "expected_rows": [
+    {
+      "subject_code": "AIT3003",
+      "course_name": "Khai phá và phân tích dữ liệu",
+      "class_code": "AIT3003 1",
+      "teacher_name": "Nguyễn Phương Thái",
+      "day": "Thứ 4",
+      "slot": "1",
+      "room": "209-B"
+    },
+    {
+      "subject_code": "INT3229",
+      "course_name": "Kỹ thuật và công nghệ dữ liệu lớn",
+      "class_code": "INT3229 1",
+      "teacher_name": "Ngô Minh Hương",
+      "day": "Thứ 5",
+      "slot": "1",
+      "room": "306-A"
+    }
+  ]
+}

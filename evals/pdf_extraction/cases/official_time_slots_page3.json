@@ -1,0 +1,31 @@
+{
+  "doc_id": "official_time_slots_page3",
+  "title": "Công văn TKB chính thức - bảng khung giờ",
+  "doc_type": "schedule",
+  "subtype": "time_slot",
+  "source": {
+    "kind": "pdf_page",
+    "relative_path": "data/resources/pdfs/Signed.Signed.CV_TKB_chinh_thuc_HKII_25-26_gui_SV.pdf",
+    "page": 3
+  },
+  "expected_fields": [
+    "ca",
+    "period",
+    "time_range"
+  ],
+  "key_fields": [
+    "ca"
+  ],
+  "expected_rows": [
+    {
+      "ca": "1",
+      "period": "Tiết 1-3",
+      "time_range": "07:00 – 09:40"
+    },
+    {
+      "ca": "2",
+      "period": "Tiết 4-6",
+      "time_range": "09:50 – 12:30"
+    }
+  ]
+}

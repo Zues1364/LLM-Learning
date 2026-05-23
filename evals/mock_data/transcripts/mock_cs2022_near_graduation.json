@@ -2,15 +2,19 @@
   "profile_id": "mock_cs2022_near_graduation",
   "student": {
     "student_id": "MOCK220001",
-    "name": "Nguyen Van Mock",
+    "name": "Nguyễn Văn Mock",
     "program_id": "cs_2022",
-    "program_name": "Khoa hoc may tinh QH-2022"
+    "program_name": "Khoa học máy tính QH-2022"
   },
   "summary": {
     "completed_credits": 115,
     "recognized_credits": 115,
     "expected_missing_credits": 21,
-    "expected_required_missing_codes": ["INT3131", "INT3132", "INT4050"],
+    "expected_required_missing_codes": [
+      "INT3131",
+      "INT3132",
+      "INT4050"
+    ],
     "expected_open_group_missing_credits": {
       "general_knowledge": 6,
       "specialized_electives": 5
@@ -20,46 +24,146 @@
     {
       "semester": "2022-2023-1",
       "subjects": [
-        {"code": "PHI1006", "name": "Triet hoc Mac - Lenin", "credits": 3, "grade_4": 3.2},
-        {"code": "MAT1093", "name": "Dai so", "credits": 4, "grade_4": 3.0},
-        {"code": "INT1003", "name": "Tin hoc co so 1", "credits": 4, "grade_4": 3.4},
-        {"code": "INT1006", "name": "Kien truc may tinh", "credits": 3, "grade_4": 3.0}
+        {
+          "code": "PHI1006",
+          "name": "Triết học Mác - Lênin",
+          "credits": 3,
+          "grade_4": 3.2
+        },
+        {
+          "code": "MAT1093",
+          "name": "Đại số",
+          "credits": 4,
+          "grade_4": 3.0
+        },
+        {
+          "code": "INT1003",
+          "name": "Tin học cơ sở 1",
+          "credits": 4,
+          "grade_4": 3.4
+        },
+        {
+          "code": "INT1006",
+          "name": "Kiến trúc máy tính",
+          "credits": 3,
+          "grade_4": 3.0
+        }
       ]
     },
     {
       "semester": "2022-2023-2",
       "subjects": [
-        {"code": "MAT1094", "name": "Giai tich 1", "credits": 4, "grade_4": 3.1},
-        {"code": "INT1007", "name": "Tin hoc co so 2", "credits": 4, "grade_4": 3.5},
-        {"code": "INT2210", "name": "Cau truc du lieu va giai thuat", "credits": 4, "grade_4": 3.3},
-        {"code": "ELT2035", "name": "Tieng Anh B1", "credits": 4, "grade_4": 3.0}
+        {
+          "code": "MAT1094",
+          "name": "Giải tích 1",
+          "credits": 4,
+          "grade_4": 3.1
+        },
+        {
+          "code": "INT1007",
+          "name": "Tin học cơ sở 2",
+          "credits": 4,
+          "grade_4": 3.5
+        },
+        {
+          "code": "INT2210",
+          "name": "Cấu trúc dữ liệu và giải thuật",
+          "credits": 4,
+          "grade_4": 3.3
+        },
+        {
+          "code": "ELT2035",
+          "name": "Tiếng Anh B1",
+          "credits": 4,
+          "grade_4": 3.0
+        }
       ]
     },
     {
       "semester": "2023-2024-1",
       "subjects": [
-        {"code": "MAT1101", "name": "Xac suat thong ke", "credits": 3, "grade_4": 3.4},
-        {"code": "INT2204", "name": "Lap trinh huong doi tuong", "credits": 3, "grade_4": 3.6},
-        {"code": "INT2215", "name": "Co so du lieu", "credits": 3, "grade_4": 3.2},
-        {"code": "INT2211", "name": "He dieu hanh", "credits": 3, "grade_4": 3.0}
+        {
+          "code": "MAT1101",
+          "name": "Xác suất thống kê",
+          "credits": 3,
+          "grade_4": 3.4
+        },
+        {
+          "code": "INT2204",
+          "name": "Lập trình hướng đối tượng",
+          "credits": 3,
+          "grade_4": 3.6
+        },
+        {
+          "code": "INT2215",
+          "name": "Cơ sở dữ liệu",
+          "credits": 3,
+          "grade_4": 3.2
+        },
+        {
+          "code": "INT2211",
+          "name": "Hệ điều hành",
+          "credits": 3,
+          "grade_4": 3.0
+        }
       ]
     },
     {
       "semester": "2023-2024-2",
       "subjects": [
-        {"code": "INT2208", "name": "Mang may tinh", "credits": 3, "grade_4": 3.1},
-        {"code": "INT3405E", "name": "Hoc may", "credits": 3, "grade_4": 3.7},
-        {"code": "INT3110", "name": "Phan tich va thiet ke he thong", "credits": 3, "grade_4": 3.2},
-        {"code": "INT3306", "name": "Phat trien ung dung web", "credits": 3, "grade_4": 3.4}
+        {
+          "code": "INT2208",
+          "name": "Mạng máy tính",
+          "credits": 3,
+          "grade_4": 3.1
+        },
+        {
+          "code": "INT3405E",
+          "name": "Học máy",
+          "credits": 3,
+          "grade_4": 3.7
+        },
+        {
+          "code": "INT3110",
+          "name": "Phân tích và thiết kế hệ thống",
+          "credits": 3,
+          "grade_4": 3.2
+        },
+        {
+          "code": "INT3306",
+          "name": "Phát triển ứng dụng web",
+          "credits": 3,
+          "grade_4": 3.4
+        }
       ]
     },
     {
       "semester": "2024-2025-1",
       "subjects": [
-        {"code": "INT3117", "name": "Kiem thu va dam bao chat luong phan mem", "credits": 3, "grade_4": 3.3},
-        {"code": "INT3120", "name": "Phat trien ung dung di dong", "credits": 3, "grade_4": 3.1},
-        {"code": "INT3412E", "name": "Thi giac may tinh", "credits": 3, "grade_4": 3.6},
-        {"code": "INT2041", "name": "Tuong tac nguoi may", "credits": 3, "grade_4": 3.4}
+        {
+          "code": "INT3117",
+          "name": "Kiểm thử và đảm bảo chất lượng phần mềm",
+          "credits": 3,
+          "grade_4": 3.3
+        },
+        {
+          "code": "INT3120",
+          "name": "Phát triển ứng dụng di động",
+          "credits": 3,
+          "grade_4": 3.1
+        },
+        {
+          "code": "INT3412E",
+          "name": "Thị giác máy tính",
+          "credits": 3,
+          "grade_4": 3.6
+        },
+        {
+          "code": "INT2041",
+          "name": "Tương tác người máy",
+          "credits": 3,
+          "grade_4": 3.4
+        }
       ]
     }
   ]

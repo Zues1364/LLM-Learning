@@ -1,24 +1,24 @@
 {
   "program_id": "cs_2022",
-  "program_name": "Khoa hoc may tinh QH-2022 mock",
+  "program_name": "Khoa học máy tính QH-2022 mock",
   "required_credits": 136,
   "groups": [
     {
       "id": "I",
-      "name": "Khoi kien thuc chung",
+      "name": "Khối kiến thức chung",
       "required_credits": 21,
       "required_subjects": ["PHI1006", "MAT1093", "MAT1094"],
       "open_group_missing_target": 6
     },
     {
       "id": "III",
-      "name": "Co so nganh",
+      "name": "Cơ sở ngành",
       "required_credits": 42,
       "required_subjects": ["INT1003", "INT1007", "INT2210", "INT2215", "INT2208", "INT2204", "INT2211"]
     },
     {
       "id": "V.2",
-      "name": "Tu chon chuyen sau",
+      "name": "Tự chọn chuyên sâu",
       "required_credits": 24,
       "required_subjects": [],
       "elective_subjects": ["INT3117", "INT3120", "INT3306", "INT3323", "INT3230E", "INT3229E", "INT3412E", "INT2041"],
@@ -26,7 +26,7 @@
     },
     {
       "id": "VI",
-      "name": "Do an va khoa luan",
+      "name": "Đồ án và khóa luận",
       "required_credits": 13,
       "required_subjects": ["INT3131", "INT3132", "INT4050"]
     }

@@ -1,0 +1,45 @@
+{
+  "doc_id": "schedule_appendix_p1_int2213",
+  "title": "Phụ lục TKB trang 1 - INT2213",
+  "doc_type": "schedule",
+  "subtype": "course_schedule",
+  "source": {
+    "kind": "pdf_page",
+    "relative_path": "data/resources/pdfs/PHU_LUC_THOI_KHOA_BIEU_HKII_2025-2026_DU_LIEU_CAP_NHAT_DEN_22012026_.xlsx_-_Sheet1.pdf",
+    "page": 1
+  },
+  "expected_fields": [
+    "subject_code",
+    "course_name",
+    "class_code",
+    "teacher_name",
+    "day",
+    "slot",
+    "room"
+  ],
+  "key_fields": [
+    "subject_code",
+    "class_code",
+    "slot"
+  ],
+  "expected_rows": [
+    {
+      "subject_code": "INT2213",
+      "course_name": "Mạng máy tính",
+      "class_code": "INT2213 1",
+      "teacher_name": "Nguyễn Hoài Sơn",
+      "day": "Thứ 6",
+      "slot": "4",
+      "room": "105-B"
+    },
+    {
+      "subject_code": "INT2213",
+      "course_name": "Mạng máy tính",
+      "class_code": "INT2213 1",
+      "teacher_name": "Đào Minh Thư",
+      "day": "Thứ 4",
+      "slot": "3",
+      "room": "407-A"
+    }
+  ]
+}

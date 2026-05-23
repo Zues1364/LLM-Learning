@@ -2,15 +2,21 @@
   "profile_id": "mock_ai2025_cross_program",
   "student": {
     "student_id": "MOCK250001",
-    "name": "Le AI Mock",
+    "name": "Lê AI Mock",
     "program_id": "ai_2025",
-    "program_name": "Tri tue nhan tao QH-2025"
+    "program_name": "Trí tuệ nhân tạo QH-2025"
   },
   "summary": {
     "completed_credits": 28,
     "recognized_credits": 28,
     "expected_missing_credits": 108,
-    "expected_required_missing_codes": ["AIT2001", "AIT3001", "AIT3002", "INT4050"],
+    "expected_required_missing_codes": [
+      "AIT2001",
+      "AIT3001",
+      "AIT3002",
+      "AIT3003",
+      "INT4050"
+    ],
     "expected_open_group_missing_credits": {
       "math_foundation": 9,
       "ai_core": 24
@@ -20,17 +26,47 @@
     {
       "semester": "2025-2026-1",
       "subjects": [
-        {"code": "MAT1093", "name": "Dai so", "credits": 4, "grade_4": 3.2},
-        {"code": "MAT1094", "name": "Giai tich 1", "credits": 4, "grade_4": 3.1},
-        {"code": "INT1003", "name": "Tin hoc co so 1", "credits": 4, "grade_4": 3.5}
+        {
+          "code": "MAT1093",
+          "name": "Đại số",
+          "credits": 4,
+          "grade_4": 3.2
+        },
+        {
+          "code": "MAT1094",
+          "name": "Giải tích 1",
+          "credits": 4,
+          "grade_4": 3.1
+        },
+        {
+          "code": "INT1003",
+          "name": "Tin học cơ sở 1",
+          "credits": 4,
+          "grade_4": 3.5
+        }
       ]
     },
     {
       "semester": "2025-2026-2",
       "subjects": [
-        {"code": "INT1007", "name": "Tin hoc co so 2", "credits": 4, "grade_4": 3.4},
-        {"code": "AIT1001", "name": "Nhap mon tri tue nhan tao", "credits": 3, "grade_4": 3.7},
-        {"code": "MAT1101", "name": "Xac suat thong ke", "credits": 3, "grade_4": 3.0}
+        {
+          "code": "INT1007",
+          "name": "Tin học cơ sở 2",
+          "credits": 4,
+          "grade_4": 3.4
+        },
+        {
+          "code": "AIT1001",
+          "name": "Nhập môn trí tuệ nhân tạo",
+          "credits": 3,
+          "grade_4": 3.7
+        },
+        {
+          "code": "MAT1101",
+          "name": "Xác suất thống kê",
+          "credits": 3,
+          "grade_4": 3.0
+        }
       ]
     }
   ]

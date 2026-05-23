@@ -1,0 +1,45 @@
+{
+  "doc_id": "transcript_ce2022_image",
+  "title": "Bảng điểm mock CE2022 - image PDF",
+  "doc_type": "transcript",
+  "subtype": "mock_transcript",
+  "source": {
+    "kind": "mock_transcript_csv",
+    "relative_path": "evals/mock_data/transcripts/mock_ce2022_mid_program.csv",
+    "render_mode": "image_table_pdf"
+  },
+  "expected_fields": [
+    "semester",
+    "course_code",
+    "course_name",
+    "credits",
+    "grade_4"
+  ],
+  "key_fields": [
+    "semester",
+    "course_code"
+  ],
+  "expected_rows": [
+    {
+      "semester": "2022-2023-1",
+      "course_code": "EPN1095",
+      "course_name": "Vật lý đại cương 1",
+      "credits": 2,
+      "grade_4": 2.7
+    },
+    {
+      "semester": "2023-2024-1",
+      "course_code": "ELT3144",
+      "course_name": "Xử lý tín hiệu số",
+      "credits": 4,
+      "grade_4": 3.2
+    },
+    {
+      "semester": "2023-2024-2",
+      "course_code": "INT2204",
+      "course_name": "Lập trình hướng đối tượng",
+      "credits": 3,
+      "grade_4": 3.3
+    }
+  ]
+}

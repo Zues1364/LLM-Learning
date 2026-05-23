@@ -1,0 +1,163 @@
+{
+  "profile_id": "mock_cyber2024_mid_program",
+  "student": {
+    "student_id": "MOCK240001",
+    "name": "Ngô An Mock",
+    "program_id": "cyber_2024",
+    "program_name": "An toàn thông tin QH-2024"
+  },
+  "summary": {
+    "completed_credits": 60,
+    "recognized_credits": 60,
+    "expected_missing_credits": 76,
+    "expected_required_missing_codes": [
+      "INT3505",
+      "INT3131",
+      "INT4050"
+    ],
+    "expected_open_group_missing_credits": {
+      "security_electives": 10
+    }
+  },
+  "semesters": [
+    {
+      "semester": "2024-2025-1",
+      "subjects": [
+        {
+          "code": "PHI1006",
+          "name": "Triết học Mác - Lênin",
+          "credits": 3,
+          "grade_4": 2.8
+        },
+        {
+          "code": "MAT1093",
+          "name": "Đại số",
+          "credits": 4,
+          "grade_4": 3.0
+        },
+        {
+          "code": "INT1003",
+          "name": "Tin học cơ sở 1",
+          "credits": 4,
+          "grade_4": 3.2
+        },
+        {
+          "code": "HIS1001",
+          "name": "Lịch sử Đảng Cộng sản Việt Nam",
+          "credits": 2,
+          "grade_4": 3.1
+        }
+      ]
+    },
+    {
+      "semester": "2024-2025-2",
+      "subjects": [
+        {
+          "code": "MAT1094",
+          "name": "Giải tích 1",
+          "credits": 4,
+          "grade_4": 2.9
+        },
+        {
+          "code": "INT1007",
+          "name": "Tin học cơ sở 2",
+          "credits": 4,
+          "grade_4": 3.1
+        },
+        {
+          "code": "INT2210",
+          "name": "Cấu trúc dữ liệu và giải thuật",
+          "credits": 4,
+          "grade_4": 3.0
+        },
+        {
+          "code": "PEC1008",
+          "name": "Giáo dục thể chất 1",
+          "credits": 1,
+          "grade_4": 3.4
+        }
+      ]
+    },
+    {
+      "semester": "2025-2026-1",
+      "subjects": [
+        {
+          "code": "INT2215",
+          "name": "Cơ sở dữ liệu",
+          "credits": 3,
+          "grade_4": 3.2
+        },
+        {
+          "code": "INT2204",
+          "name": "Lập trình hướng đối tượng",
+          "credits": 3,
+          "grade_4": 3.1
+        },
+        {
+          "code": "INT2208",
+          "name": "Mạng máy tính",
+          "credits": 3,
+          "grade_4": 3.0
+        },
+        {
+          "code": "INT3501",
+          "name": "Nhập môn an toàn thông tin",
+          "credits": 3,
+          "grade_4": 3.5
+        }
+      ]
+    },
+    {
+      "semester": "2025-2026-2",
+      "subjects": [
+        {
+          "code": "INT3502",
+          "name": "Mật mã học ứng dụng",
+          "credits": 3,
+          "grade_4": 3.4
+        },
+        {
+          "code": "INT3503",
+          "name": "An ninh mạng",
+          "credits": 3,
+          "grade_4": 3.3
+        },
+        {
+          "code": "INT3506",
+          "name": "Phân tích mã độc",
+          "credits": 3,
+          "grade_4": 3.2
+        },
+        {
+          "code": "ELT2035",
+          "name": "Tiếng Anh B1",
+          "credits": 4,
+          "grade_4": 3.0
+        }
+      ]
+    },
+    {
+      "semester": "2026-2027-1",
+      "subjects": [
+        {
+          "code": "MAT1101",
+          "name": "Xác suất thống kê",
+          "credits": 3,
+          "grade_4": 2.9
+        },
+        {
+          "code": "INT3504",
+          "name": "An toàn hệ thống",
+          "credits": 3,
+          "grade_4": 3.3
+        },
+        {
+          "code": "INT2041",
+          "name": "Tương tác người máy",
+          "credits": 3,
+          "grade_4": 3.1
+        }
+      ]
+    }
+  ]
+}

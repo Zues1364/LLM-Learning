@@ -26,9 +26,31 @@ DEFAULT_LOCAL_URL = "http://127.0.0.1:9000"
 DEFAULT_FRONTEND_URL = "https://llm-learning.vercel.app"
 DEFAULT_MCP_PUBLIC_URL = "https://mcp-production-95c4.up.railway.app"
 
+CASE_CONTEXT_FIELDS = [
+    "query",
+    "program_id",
+    "mock_profile_id",
+    "turn_group",
+    "execution",
+    "expected_source_any",
+    "expected_keywords",
+    "forbidden_keywords",
+    "expected_codes",
+    "expected_numbers",
+    "review_rubric",
+]
+
 
 def utc_stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+
+
+def attach_case_context(row: Dict[str, Any], case: Dict[str, Any]) -> Dict[str, Any]:
+    row["category"] = case.get("category")
+    for key in CASE_CONTEXT_FIELDS:
+        if key in case and case.get(key) not in (None, "", [], {}):
+            row[key] = case.get(key)
+    return row
 
 
 def normalize_text(value: Any) -> str:
@@ -88,6 +110,40 @@ def load_jsonl(path: Path) -> List[Dict[str, Any]]:
     return cases
 
 
+def dataset_counts(path: Path, cases: List[Dict[str, Any]]) -> Dict[str, Any]:
+    static_cases = [case for case in cases if case.get("execution") == "mock_static"]
+    smoke_cases = [case for case in cases if case.get("execution") == "deploy_smoke"]
+    live_cases = [
+        case
+        for case in cases
+        if case.get("execution") not in {"mock_static", "deploy_smoke"}
+    ]
+    return {
+        "path": str(path),
+        "case_count": len(cases),
+        "static_case_count": len(static_cases),
+        "smoke_case_count": len(smoke_cases),
+        "live_case_count": len(live_cases),
+    }
+
+
+def select_cases(cases: List[Dict[str, Any]], requested_ids: List[str]) -> List[Dict[str, Any]]:
+    if not requested_ids:
+        return cases
+    by_id = {str(case.get("id")): case for case in cases}
+    missing = [case_id for case_id in requested_ids if case_id not in by_id]
+    if missing:
+        raise ValueError(f"Unknown case id(s): {', '.join(missing)}")
+    seen: set[str] = set()
+    selected: List[Dict[str, Any]] = []
+    for case_id in requested_ids:
+        if case_id in seen:
+            continue
+        selected.append(by_id[case_id])
+        seen.add(case_id)
+    return selected
+
+
 def load_mock_profiles(mock_dir: Path) -> Dict[str, Dict[str, Any]]:
     profiles: Dict[str, Dict[str, Any]] = {}
     for path in sorted((mock_dir / "transcripts").glob("*.json")):
@@ -106,6 +162,31 @@ def load_mock_curricula(mock_dir: Path) -> Dict[str, Dict[str, Any]]:
     return curricula
 
 
+def collect_taken_subject_codes(profile: Dict[str, Any]) -> List[str]:
+    return [
+        str(subject.get("code"))
+        for semester in profile.get("semesters") or []
+        for subject in (semester.get("subjects") or [])
+        if str(subject.get("code") or "").strip()
+    ]
+
+
+def compute_required_missing_codes(
+    profile: Dict[str, Any],
+    curriculum: Optional[Dict[str, Any]],
+) -> List[str]:
+    if not curriculum:
+        return []
+    taken_codes = set(collect_taken_subject_codes(profile))
+    missing_codes: List[str] = []
+    for group in curriculum.get("groups") or []:
+        for code in group.get("required_subjects") or []:
+            normalized = str(code or "").strip()
+            if normalized and normalized not in taken_codes:
+                missing_codes.append(normalized)
+    return missing_codes
+
+
 def validate_mock_data(mock_dir: Path, cases: List[Dict[str, Any]]) -> Dict[str, Any]:
     profiles = load_mock_profiles(mock_dir)
     curricula = load_mock_curricula(mock_dir)
@@ -114,22 +195,28 @@ def validate_mock_data(mock_dir: Path, cases: List[Dict[str, Any]]) -> Dict[str,
     for profile_id, profile in profiles.items():
         program_id = profile.get("student", {}).get("program_id")
         summary = profile.get("summary") or {}
+        curriculum = curricula.get(str(program_id))
         subjects = [
             subject
             for sem in profile.get("semesters") or []
             for subject in (sem.get("subjects") or [])
         ]
-        required_codes = summary.get("expected_required_missing_codes") or []
+        stored_required_codes = summary.get("expected_required_missing_codes") or []
+        computed_required_codes = compute_required_missing_codes(profile, curriculum)
+        required_codes_match = stored_required_codes == computed_required_codes
         checks.append(
             {
                 "name": f"profile:{profile_id}",
-                "pass": bool(program_id in curricula and subjects and required_codes),
+                "pass": bool(program_id in curricula and subjects and required_codes_match),
                 "details": {
                     "program_id": program_id,
                     "subject_count": len(subjects),
                     "completed_credits": summary.get("completed_credits"),
                     "expected_missing_credits": summary.get("expected_missing_credits"),
-                    "required_missing_codes": required_codes,
+                    "required_missing_codes": stored_required_codes,
+                    "computed_required_missing_codes": computed_required_codes,
+                    "required_missing_match": required_codes_match,
+                    "open_group_missing_credits": summary.get("expected_open_group_missing_credits") or {},
                     "has_curriculum": program_id in curricula,
                 },
             }
@@ -155,16 +242,21 @@ def validate_mock_data(mock_dir: Path, cases: List[Dict[str, Any]]) -> Dict[str,
         "status": "pass" if all(item["pass"] for item in checks) else "fail",
         "profile_count": len(profiles),
         "curriculum_count": len(curricula),
-        "profiles": summarize_mock_profiles(profiles),
+        "profiles": summarize_mock_profiles(profiles, curricula),
         "checks": checks,
     }
 
 
-def summarize_mock_profiles(profiles: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+def summarize_mock_profiles(
+    profiles: Dict[str, Dict[str, Any]],
+    curricula: Dict[str, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     for profile_id, profile in sorted(profiles.items()):
         summary = profile.get("summary") or {}
         student = profile.get("student") or {}
+        curriculum = curricula.get(str(student.get("program_id")))
+        required_missing_codes = compute_required_missing_codes(profile, curriculum)
         rows.append(
             {
                 "profile_id": profile_id,
@@ -172,7 +264,8 @@ def summarize_mock_profiles(profiles: Dict[str, Dict[str, Any]]) -> List[Dict[st
                 "completed_credits": summary.get("completed_credits"),
                 "recognized_credits": summary.get("recognized_credits"),
                 "expected_missing_credits": summary.get("expected_missing_credits"),
-                "expected_required_missing_codes": summary.get("expected_required_missing_codes") or [],
+                "expected_required_missing_codes": required_missing_codes,
+                "expected_open_group_missing_credits": summary.get("expected_open_group_missing_credits") or {},
             }
         )
     return rows
@@ -312,6 +405,10 @@ def score_observation(case: Dict[str, Any], observation: Dict[str, Any]) -> Dict
             json.dumps(observation.get("json") or {}, ensure_ascii=False),
         ]
     )
+    program_selection_prompt = (
+        contains_text(text, "vui lòng chọn chương trình đào tạo")
+        and contains_text(text, "khóa tuyển sinh")
+    ) or contains_text(text, "requires_program_selection")
     checks: List[Dict[str, Any]] = []
 
     def add_check(
@@ -328,6 +425,34 @@ def score_observation(case: Dict[str, Any], observation: Dict[str, Any]) -> Dict
                 "dimension": dimension,
             }
         )
+
+    if case.get("accept_program_selection_guardrail") and program_selection_prompt:
+        checks = [
+            {
+                "name": "program_selection_guardrail_source",
+                "pass": True,
+                "details": {"actual": str(observation.get("source") or "")},
+                "dimension": "source",
+            },
+            {
+                "name": "program_selection_guardrail_content",
+                "pass": True,
+                "details": {"matched": "select_program_before_answer"},
+                "dimension": "content",
+            },
+        ]
+        return {
+            "status": "warn",
+            "pass": True,
+            "checks": checks,
+            "dimensions": {
+                "source": {"status": "warn", "pass": True, "check_count": 1, "fail": 0},
+                "content": {"status": "warn", "pass": True, "check_count": 1, "fail": 0},
+                "transport": {"status": "not_applicable", "pass": True, "check_count": 0, "fail": 0},
+            },
+            "source_status": "warn",
+            "content_status": "warn",
+        }
 
     if "expected_status_lt" in case:
         status_code = observation.get("status_code")
@@ -457,12 +582,19 @@ def run_smoke_case(case: Dict[str, Any], timeout: int) -> Dict[str, Any]:
 def target_preflight(name: str, base_url: str, timeout: int) -> Dict[str, Any]:
     health = safe_get(f"{base_url.rstrip('/')}/healthz", timeout=timeout)
     ready = safe_get(f"{base_url.rstrip('/')}/readyz", timeout=timeout)
+    health_status = health.get("status_code")
+    ready_status = ready.get("status_code")
     return {
         "target": name,
         "base_url": base_url,
         "healthz": {k: health.get(k) for k in ("ok", "status_code", "latency_ms", "error")},
         "readyz": {k: ready.get(k) for k in ("ok", "status_code", "latency_ms", "error")},
-        "ready": bool(health.get("ok") and ready.get("ok")),
+        "ready": bool(
+            isinstance(health_status, int)
+            and 200 <= health_status < 400
+            and isinstance(ready_status, int)
+            and 200 <= ready_status < 400
+        ),
     }
 
 
@@ -657,6 +789,83 @@ def group_by(items: Iterable[Dict[str, Any]], key_fn) -> Dict[str, List[Dict[str
     return dict(out)
 
 
+def enrich_observations_with_case_context(
+    observations: List[Dict[str, Any]],
+    cases: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    by_id = {str(case.get("id")): case for case in cases}
+    enriched: List[Dict[str, Any]] = []
+    for row in observations:
+        copied = dict(row)
+        case = by_id.get(str(copied.get("case_id") or ""))
+        if case:
+            attach_case_context(copied, case)
+        enriched.append(copied)
+    return enriched
+
+
+def merge_with_latest_report(
+    current_report: Dict[str, Any],
+    latest_path: Path,
+    all_cases: List[Dict[str, Any]],
+    all_dataset: Dict[str, Any],
+) -> Dict[str, Any]:
+    if not latest_path.exists():
+        current_report["dataset"] = all_dataset
+        current_report["observations"] = enrich_observations_with_case_context(
+            current_report.get("observations") or [],
+            all_cases,
+        )
+        current_report["summary"] = summarize_observations(current_report["observations"])
+        current_report["merge"] = {
+            "mode": "created_latest",
+            "latest_path": str(latest_path),
+            "updated_observations": len(current_report["observations"]),
+        }
+        return current_report
+
+    latest_report = json.loads(latest_path.read_text(encoding="utf-8"))
+    current_rows = current_report.get("observations") or []
+    current_by_key = {
+        (str(row.get("target") or ""), str(row.get("case_id") or "")): row
+        for row in current_rows
+    }
+    merged_rows: List[Dict[str, Any]] = []
+    replaced = 0
+    for row in latest_report.get("observations") or []:
+        key = (str(row.get("target") or ""), str(row.get("case_id") or ""))
+        replacement = current_by_key.pop(key, None)
+        if replacement is not None:
+            merged_rows.append(replacement)
+            replaced += 1
+        else:
+            merged_rows.append(row)
+    added = len(current_by_key)
+    merged_rows.extend(current_by_key.values())
+    merged_rows = enrich_observations_with_case_context(merged_rows, all_cases)
+
+    merged_report = dict(latest_report)
+    merged_report.update(
+        {
+            "generated_at_utc": current_report["generated_at_utc"],
+            "dataset": all_dataset,
+            "mock_validation": current_report["mock_validation"],
+            "preflight": current_report["preflight"],
+            "embedding_benchmark": current_report["embedding_benchmark"],
+            "observations": merged_rows,
+            "summary": summarize_observations(merged_rows),
+            "merge": {
+                "mode": "merge_latest",
+                "latest_path": str(latest_path),
+                "updated_observations": len(current_rows),
+                "replaced_observations": replaced,
+                "added_observations": added,
+            },
+        }
+    )
+    return merged_report
+
+
 def latest_embedding_summary() -> Dict[str, Any]:
     candidates = sorted(DEFAULT_REPORTS_DIR.glob("embedding_benchmark_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
     if not candidates:
@@ -673,6 +882,22 @@ def latest_embedding_summary() -> Dict[str, Any]:
     }
 
 
+def clamp_text(value: Any, max_chars: int = 1800) -> str:
+    text = str(value or "").strip()
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rstrip() + "\n...[truncated]"
+
+
+def status_label(row: Dict[str, Any]) -> str:
+    status = str(row.get("score", {}).get("status") or "unknown").upper()
+    return status
+
+
+def failed_checks(row: Dict[str, Any], limit: int = 5) -> List[Dict[str, Any]]:
+    return [check for check in row.get("score", {}).get("checks", []) if not check.get("pass")][:limit]
+
+
 def render_markdown(report: Dict[str, Any]) -> str:
     lines: List[str] = []
     lines.append("# Academic Advisor Chatbot Evaluation")
@@ -683,12 +908,19 @@ def render_markdown(report: Dict[str, Any]) -> str:
     lines.append("")
     lines.append("## Mock data")
     lines.append("")
-    lines.append("| Profile | Program | Completed | Missing expected | Required missing |")
-    lines.append("| --- | --- | ---: | ---: | --- |")
+    lines.append("| Profile | Program | Completed credits | Missing credits | Required missing courses (full) | Open-group missing credits |")
+    lines.append("| --- | --- | ---: | ---: | --- | --- |")
     for row in report["mock_validation"].get("profiles") or []:
+        required_missing = ", ".join(row["expected_required_missing_codes"]) or "—"
+        open_group_missing = row.get("expected_open_group_missing_credits") or {}
+        open_group_text = (
+            ", ".join(f"{key}: {value}" for key, value in open_group_missing.items())
+            if open_group_missing
+            else "—"
+        )
         lines.append(
             f"| `{row['profile_id']}` | `{row['program_id']}` | {row['completed_credits']} | "
-            f"{row['expected_missing_credits']} | `{', '.join(row['expected_required_missing_codes'])}` |"
+            f"{row['expected_missing_credits']} | `{required_missing}` | `{open_group_text}` |"
         )
     lines.append("")
     lines.append("## Preflight")
@@ -699,7 +931,7 @@ def render_markdown(report: Dict[str, Any]) -> str:
     lines.append("")
     lines.append("## Target summary")
     lines.append("")
-    lines.append("| Target | Cases | Pass | Warn | Fail | Pass rate | Source | Content | p50 ms | p95 ms |")
+    lines.append("| Target | Cases | Pass | Warn | Fail | Accepted rate | Source | Content | p50 ms | p95 ms |")
     lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
     for target, summary in sorted((report.get("summary") or {}).items()):
         lines.append(
@@ -715,10 +947,48 @@ def render_markdown(report: Dict[str, Any]) -> str:
         lines.append("No deterministic failures.")
     for row in failed[:30]:
         lines.append(f"- `{row.get('target')}/{row.get('case_id')}` source=`{row.get('source')}` status=`{row.get('status_code')}`")
+        if row.get("query"):
+            lines.append(f"  - query: `{row.get('query')}`")
         checks = [c for c in row.get("score", {}).get("checks", []) if not c.get("pass")]
         for check in checks[:3]:
             lines.append(f"  - {check.get('name')}: {json.dumps(check.get('details'), ensure_ascii=False)}")
     lines.append("")
+    lines.append("## Case details")
+    lines.append("")
+    for row in sorted(
+        report.get("observations", []),
+        key=lambda item: (
+            str(item.get("target") or ""),
+            str(item.get("category") or ""),
+            str(item.get("case_id") or ""),
+        ),
+    ):
+        lines.append(
+            f"### `{row.get('target')}/{row.get('case_id')}` - {status_label(row)}"
+        )
+        lines.append("")
+        lines.append(f"- Category: `{row.get('category')}`")
+        lines.append(f"- Query: `{row.get('query') or ''}`")
+        lines.append(
+            f"- Source: `{row.get('source')}`; HTTP status: `{row.get('status_code')}`; latency_ms: `{row.get('latency_ms')}`"
+        )
+        if row.get("program_id"):
+            lines.append(f"- Program: `{row.get('program_id')}`")
+        if row.get("mock_profile_id"):
+            lines.append(f"- Mock profile: `{row.get('mock_profile_id')}`")
+        checks = failed_checks(row)
+        if checks:
+            lines.append("- Failed checks:")
+            for check in checks:
+                lines.append(
+                    f"  - `{check.get('name')}`: {json.dumps(check.get('details'), ensure_ascii=False)}"
+                )
+        lines.append("- Answer:")
+        lines.append("")
+        lines.append("```text")
+        lines.append(clamp_text(row.get("answer")).replace("```", "'''"))
+        lines.append("```")
+        lines.append("")
     lines.append("## Embedding benchmark")
     lines.append("")
     lines.append("```json")
@@ -738,6 +1008,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mcp-public-url", default=DEFAULT_MCP_PUBLIC_URL)
     parser.add_argument("--timeout", type=int, default=90)
     parser.add_argument("--max-cases", type=int, default=0, help="Limit live /ask cases per target; 0 means all.")
+    parser.add_argument(
+        "--case-id",
+        action="append",
+        default=[],
+        help="Run only the selected case id. Can be passed multiple times.",
+    )
+    parser.add_argument(
+        "--merge-latest",
+        action="store_true",
+        help="Merge this run into eval_academic_advisor_latest instead of replacing unrelated cases.",
+    )
     parser.add_argument("--skip-live", action="store_true", help="Only validate mock/static and smoke checks.")
     parser.add_argument("--reports-dir", default=str(DEFAULT_REPORTS_DIR))
     return parser.parse_args()
@@ -751,9 +1032,14 @@ def main() -> int:
     reports_dir = Path(args.reports_dir)
     reports_dir.mkdir(parents=True, exist_ok=True)
 
-    cases = load_jsonl(dataset_path)
+    all_cases = load_jsonl(dataset_path)
+    try:
+        cases = select_cases(all_cases, args.case_id)
+    except ValueError as exc:
+        print(f"[eval] {exc}")
+        return 2
     profiles = load_mock_profiles(mock_dir)
-    mock_validation = validate_mock_data(mock_dir, cases)
+    mock_validation = validate_mock_data(mock_dir, all_cases)
     upload_cache: Dict[Tuple[str, str, str], List[str]] = {}
 
     preflight: Dict[str, Any] = {
@@ -779,16 +1065,29 @@ def main() -> int:
     if args.max_cases > 0:
         live_cases = live_cases[: args.max_cases]
 
+    if args.merge_latest and live_cases and not args.skip_live:
+        not_ready_targets = [
+            name
+            for name in targets
+            if not bool(preflight["targets"].get(name, {}).get("ready"))
+        ]
+        if not_ready_targets:
+            for name in not_ready_targets:
+                target_info = preflight["targets"].get(name, {})
+                print(
+                    "[eval] aborting merge because target is not ready: "
+                    f"{name} healthz={target_info.get('healthz')} readyz={target_info.get('readyz')}"
+                )
+            return 3
+
     for case in static_cases:
         print(f"[eval] mock_static {case['id']}", flush=True)
-        row = run_mock_static_case(case, profiles)
-        row["category"] = case.get("category")
+        row = attach_case_context(run_mock_static_case(case, profiles), case)
         observations.append(row)
 
     for case in smoke_cases:
         print(f"[eval] deploy_smoke {case['id']}", flush=True)
-        row = run_smoke_case(case, timeout=min(args.timeout, 30))
-        row["category"] = case.get("category")
+        row = attach_case_context(run_smoke_case(case, timeout=min(args.timeout, 30)), case)
         observations.append(row)
 
     if not args.skip_live:
@@ -796,11 +1095,9 @@ def main() -> int:
             target_ready = bool(preflight["targets"].get(target_name, {}).get("ready"))
             if not target_ready:
                 for case in live_cases:
-                    observations.append(
-                        {
+                    row = {
                             "target": target_name,
                             "case_id": case["id"],
-                            "category": case.get("category"),
                             "status_code": None,
                             "source": "blocked",
                             "answer": "target preflight not ready",
@@ -810,31 +1107,28 @@ def main() -> int:
                             "error": "target_not_ready",
                             "score": {"status": "fail", "pass": False, "checks": [{"name": "target_ready", "pass": False, "details": {}}]},
                         }
-                    )
+                    observations.append(attach_case_context(row, case))
                 continue
             for case in live_cases:
                 print(f"[eval] {target_name} {case['id']}", flush=True)
-                row = run_live_case(
-                    case=case,
-                    target_name=target_name,
-                    base_url=base_url,
-                    profiles=profiles,
-                    upload_cache=upload_cache,
-                    timeout=args.timeout,
-                    stamp=stamp,
+                row = attach_case_context(
+                    run_live_case(
+                        case=case,
+                        target_name=target_name,
+                        base_url=base_url,
+                        profiles=profiles,
+                        upload_cache=upload_cache,
+                        timeout=args.timeout,
+                        stamp=stamp,
+                    ),
+                    case,
                 )
-                row["category"] = case.get("category")
                 observations.append(row)
 
     report = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-        "dataset": {
-            "path": str(dataset_path),
-            "case_count": len(cases),
-            "static_case_count": len(static_cases),
-            "smoke_case_count": len(smoke_cases),
-            "live_case_count": len(live_cases),
-        },
+        "dataset": dataset_counts(dataset_path, cases),
+        "selected_case_ids": args.case_id,
         "mock_validation": mock_validation,
         "preflight": preflight,
         "embedding_benchmark": latest_embedding_summary(),
@@ -844,14 +1138,24 @@ def main() -> int:
 
     json_path = reports_dir / f"eval_academic_advisor_{stamp}.json"
     md_path = reports_dir / f"eval_academic_advisor_{stamp}.md"
+    latest_json = reports_dir / "eval_academic_advisor_latest.json"
     latest_md = reports_dir / "eval_academic_advisor_latest.md"
+    if args.merge_latest:
+        report = merge_with_latest_report(
+            current_report=report,
+            latest_path=latest_json,
+            all_cases=all_cases,
+            all_dataset=dataset_counts(dataset_path, all_cases),
+        )
     json_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     markdown = render_markdown(report)
     md_path.write_text(markdown, encoding="utf-8")
+    latest_json.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     latest_md.write_text(markdown, encoding="utf-8")
 
     print(f"[eval] json={json_path}")
     print(f"[eval] md={md_path}")
+    print(f"[eval] latest_json={latest_json}")
     print(f"[eval] latest={latest_md}")
     print(f"[eval] targets={','.join(sorted(report['summary'].keys()))}")
     return 0 if all(s.get("fail", 0) == 0 for s in report["summary"].values()) else 2

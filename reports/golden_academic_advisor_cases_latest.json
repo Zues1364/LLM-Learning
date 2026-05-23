@@ -1,0 +1,2388 @@
+{
+  "generated_at": "2026-05-22T03:17:57+07:00",
+  "dataset": "D:\\LLM\\LLM Learning\\evals\\golden_academic_advisor.jsonl",
+  "latest_eval_report": "D:\\LLM\\LLM Learning\\reports\\eval_academic_advisor_latest.json",
+  "latest_eval_generated_at_utc": "2026-05-21T20:17:29.672922+00:00",
+  "total_cases": 67,
+  "category_counts": {
+    "rag_policy": 8,
+    "schedule": 8,
+    "curriculum": 25,
+    "transcript_advisor": 8,
+    "session_state": 8,
+    "missing_data": 5,
+    "deploy_smoke": 5
+  },
+  "categories": {
+    "rag_policy": [
+      {
+        "index": 1,
+        "id": "rag_ielts_65",
+        "line_no": 1,
+        "query": "IELTS 6.5 có đáp ứng điều kiện tiếng Anh đầu ra không?",
+        "details": {
+          "program_id": "cs_2022",
+          "expected_source_any": [
+            "language_requirement",
+            "vector_store"
+          ],
+          "expected_keywords": [
+            "IELTS"
+          ],
+          "expected_numbers": [
+            "6.5"
+          ],
+          "review_rubric": "Câu trả lời phải dựa vào sổ tay hoặc quy chế và nêu nguồn."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "fail",
+            "source": null,
+            "status_code": 200,
+            "latency_ms": 68095.52,
+            "answer": "Mình chưa đọc được dữ liệu bảng điểm từ file bạn chọn nên không thể xác định chính xác môn còn thiếu/GPA/lịch học. Chi tiết lỗi: Error: 400: Khong tim thay bat ky file bang diem nao hop le.",
+            "failed_checks": [
+              {
+                "name": "source",
+                "details": {
+                  "actual": "",
+                  "expected_any": [
+                    "language_requirement",
+                    "vector_store"
+                  ]
+                }
+              },
+              {
+                "name": "citation_present",
+                "details": {
+                  "citation_count": 0
+                }
+              },
+              {
+                "name": "keyword_present:IELTS",
+                "details": {
+                  "needle": "IELTS"
+                }
+              },
+              {
+                "name": "number_present:6.5",
+                "details": {
+                  "needle": "6.5"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "index": 2,
+        "id": "rag_toefl_72",
+        "line_no": 2,
+        "query": "TOEFL iBT 72 có tương đương chuẩn đầu ra ngoại ngữ không?",
+        "details": {
+          "program_id": "cs_2022",
+          "expected_source_any": [
+            "language_requirement",
+            "vector_store"
+          ],
+          "expected_keywords": [
+            "TOEFL"
+          ],
+          "expected_numbers": [
+            "72"
+          ],
+          "review_rubric": "Cần nêu mức quy đổi và không suy luận nếu thiếu bảng đối chiếu."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "language_requirement",
+            "status_code": 200,
+            "latency_ms": 3721.07,
+            "answer": "Chương trình yêu cầu chuẩn Bậc 4 về ngoại ngữ, tương đương IELTS 5.5. Bạn cần cung cấp điểm/chứng chỉ cụ thể để đối chiếu.",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 3,
+        "id": "rag_vstep_60",
+        "line_no": 3,
+        "query": "VSTEP 6.0 tương đương bậc nào?",
+        "details": {
+          "program_id": "cs_2022",
+          "expected_source_any": [
+            "language_requirement",
+            "vector_store"
+          ],
+          "expected_keywords": [
+            "VSTEP"
+          ],
+          "expected_numbers": [
+            "6.0"
+          ],
+          "review_rubric": "Cần trích nguồn từ bảng quy đổi ngoại ngữ."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "fail",
+            "source": "vector_store",
+            "status_code": 200,
+            "latency_ms": 87562.4,
+            "answer": "VSTEP 6.0 tương đương bậc 6 theo Khung năng lực ngoại ngữ 6 bậc dùng cho Việt Nam (VnPCRFL) và trình độ C2 theo Khung tham chiếu chung Châu Âu (CEFR).",
+            "failed_checks": [
+              {
+                "name": "citation_present",
+                "details": {
+                  "citation_count": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "index": 4,
+        "id": "rag_graduation_condition",
+        "line_no": 4,
+        "query": "Điều kiện xét tốt nghiệp của chương trình đào tạo chuẩn gồm những gì?",
+        "details": {
+          "program_id": "cs_2022",
+          "expected_source_any": [
+            "vector_store",
+            "language_requirement"
+          ],
+          "expected_keywords": [
+            "tốt nghiệp"
+          ],
+          "review_rubric": "Cần trả lời theo quy chế và nêu nguồn."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "fail",
+            "source": "academic_advisor",
+            "status_code": 200,
+            "latency_ms": 8782.23,
+            "answer": "Mình chưa đọc được dữ liệu bảng điểm từ file bạn chọn nên không thể xác định chính xác môn còn thiếu/GPA/lịch học. Chi tiết lỗi: Error: 400: Khong tim thay bat ky file bang diem nao hop le.",
+            "failed_checks": [
+              {
+                "name": "source",
+                "details": {
+                  "actual": "academic_advisor",
+                  "expected_any": [
+                    "vector_store",
+                    "language_requirement"
+                  ]
+                }
+              },
+              {
+                "name": "citation_present",
+                "details": {
+                  "citation_count": 0
+                }
+              },
+              {
+                "name": "keyword_present:tốt nghiệp",
+                "details": {
+                  "needle": "tốt nghiệp"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "index": 5,
+        "id": "rag_warning_insufficient_data",
+        "line_no": 5,
+        "query": "Nếu tài liệu không ghi rõ điều kiện học bổng thì hệ thống có được tự suy luận không?",
+        "details": {
+          "program_id": "cs_2022",
+          "expected_source_any": [
+            "vector_store",
+            "error"
+          ],
+          "expected_keywords": [
+            "không"
+          ],
+          "review_rubric": "Phải cảnh báo giới hạn nguồn thay vì tự suy luận."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "vector_store",
+            "status_code": 200,
+            "latency_ms": 57900.77,
+            "answer": "Không. Hệ thống không được tự suy luận nếu tài liệu không ghi rõ điều kiện học bổng. Bạn cần dựa vào thông tin được cung cấp trong tài liệu.",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 6,
+        "id": "rag_credit_definition",
+        "line_no": 6,
+        "query": "Tín chỉ trong quy chế đào tạo được hiểu như thế nào?",
+        "details": {
+          "program_id": "cs_2022",
+          "expected_source_any": [
+            "vector_store"
+          ],
+          "expected_keywords": [
+            "tín chỉ"
+          ],
+          "review_rubric": "Cần có trích dẫn đến tài liệu học vụ nếu trả lời nội dung quy chế."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "fail",
+            "source": "academic_advisor",
+            "status_code": 200,
+            "latency_ms": 8169.97,
+            "answer": "Mình chưa đọc được dữ liệu bảng điểm từ file bạn chọn nên không thể xác định chính xác môn còn thiếu/GPA/lịch học. Chi tiết lỗi: Error: 400: Khong tim thay bat ky file bang diem nao hop le.",
+            "failed_checks": [
+              {
+                "name": "source",
+                "details": {
+                  "actual": "academic_advisor",
+                  "expected_any": [
+                    "vector_store"
+                  ]
+                }
+              },
+              {
+                "name": "citation_present",
+                "details": {
+                  "citation_count": 0
+                }
+              },
+              {
+                "name": "keyword_present:tín chỉ",
+                "details": {
+                  "needle": "tín chỉ"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "index": 7,
+        "id": "rag_retaking_policy",
+        "line_no": 7,
+        "query": "Sinh viên học lại thì điểm được tính như thế nào?",
+        "details": {
+          "program_id": "cs_2022",
+          "expected_source_any": [
+            "vector_store"
+          ],
+          "expected_keywords": [
+            "học lại"
+          ],
+          "review_rubric": "Nếu không có nguồn rõ thì phải nói chưa đủ thông tin."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "fail",
+            "source": null,
+            "status_code": null,
+            "latency_ms": 30585.74,
+            "answer": "('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))",
+            "failed_checks": [
+              {
+                "name": "source",
+                "details": {
+                  "actual": "",
+                  "expected_any": [
+                    "vector_store"
+                  ]
+                }
+              },
+              {
+                "name": "citation_present",
+                "details": {
+                  "citation_count": 0
+                }
+              },
+              {
+                "name": "keyword_present:học lại",
+                "details": {
+                  "needle": "học lại"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "index": 8,
+        "id": "rag_scope_guardrail",
+        "line_no": 8,
+        "query": "Hãy tự đoán quy định mới nhất năm 2030 của trường.",
+        "details": {
+          "program_id": "cs_2022",
+          "expected_source_any": [
+            "vector_store",
+            "error"
+          ],
+          "forbidden_keywords": [
+            "chắc chắn"
+          ],
+          "review_rubric": "Phải từ chối suy đoán quy định năm 2030 nếu không có tài liệu."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "fail",
+            "source": null,
+            "status_code": 200,
+            "latency_ms": 43949.52,
+            "answer": "Tôi không thể dự đoán tương lai. Thông tin của tôi chỉ giới hạn trong các tài liệu và dữ liệu đã được cung cấp.",
+            "failed_checks": [
+              {
+                "name": "source",
+                "details": {
+                  "actual": "",
+                  "expected_any": [
+                    "vector_store",
+                    "error"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "schedule": [
+      {
+        "index": 9,
+        "id": "schedule_ca1",
+        "line_no": 9,
+        "query": "Ca 1 bắt đầu và kết thúc lúc mấy giờ?",
+        "details": {
+          "program_id": "cs_2022",
+          "expected_source_any": [
+            "time_slot_lookup",
+            "vector_store"
+          ],
+          "expected_keywords": [
+            "Ca 1"
+          ],
+          "expected_numbers": [
+            "07:00",
+            "09:40"
+          ],
+          "review_rubric": "Cần trả đúng thời gian ca học và nêu nguồn TKB."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "time_slot_lookup",
+            "status_code": 200,
+            "latency_ms": 4376.1,
+            "answer": "Ca 1 bắt đầu từ 07:00 và kết thúc lúc 09:40 (Tiết 1-3). (Theo mốc giờ ca học UET đang dùng trong hệ thống.)",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 10,
+        "id": "schedule_ca2",
+        "line_no": 10,
+        "query": "Ca 2 học từ mấy giờ đến mấy giờ?",
+        "details": {
+          "program_id": "cs_2022",
+          "expected_source_any": [
+            "time_slot_lookup",
+            "vector_store"
+          ],
+          "expected_numbers": [
+            "09:50",
+            "12:30"
+          ],
+          "review_rubric": "Cần trả đúng mốc giờ của ca 2."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "time_slot_lookup",
+            "status_code": 200,
+            "latency_ms": 4168.02,
+            "answer": "Ca 2 bắt đầu từ 09:50 và kết thúc lúc 12:30 (Tiết 4-6). (Theo mốc giờ ca học UET đang dùng trong hệ thống.)",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 11,
+        "id": "schedule_ca4",
+        "line_no": 11,
+        "query": "Ca 4 là khoảng thời gian nào?",
+        "details": {
+          "program_id": "cs_2022",
+          "expected_source_any": [
+            "time_slot_lookup",
+            "vector_store"
+          ],
+          "expected_numbers": [
+            "16:20",
+            "19:00"
+          ],
+          "review_rubric": "Cần trả đúng mốc giờ của ca 4."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "time_slot_lookup",
+            "status_code": 200,
+            "latency_ms": 4264.73,
+            "answer": "Ca 4 bắt đầu từ 16:20 và kết thúc lúc 19:00 (Tiết 10-12). (Theo mốc giờ ca học UET đang dùng trong hệ thống.)",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 12,
+        "id": "schedule_int3412e",
+        "line_no": 12,
+        "query": "INT3412E kỳ này có lịch học như thế nào?",
+        "details": {
+          "program_id": "cs_2022",
+          "expected_source_any": [
+            "structured_schedule",
+            "course_offering_status",
+            "course_overview"
+          ],
+          "expected_keywords": [
+            "Lê Thanh Hà"
+          ],
+          "expected_codes": [
+            "INT3412E"
+          ],
+          "review_rubric": "Không được nhầm INT3412 với INT3412E."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "structured_schedule",
+            "status_code": 200,
+            "latency_ms": 8437.0,
+            "answer": "Lịch học theo từng môn:\n\nINT3412E\n- INT3412E 1: Thứ 3, Ca 2, phòng 209-T, GV Lê Thanh Hà",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 13,
+        "id": "schedule_int2041",
+        "line_no": 13,
+        "query": "Môn Tương tác người máy kỳ này có mở lớp không?",
+        "details": {
+          "program_id": "cs_2022",
+          "expected_source_any": [
+            "course_offering_status",
+            "structured_schedule",
+            "course_overview"
+          ],
+          "expected_codes": [
+            "INT2041"
+          ],
+          "review_rubric": "Cần nêu lớp hoặc giảng viên nếu có dữ liệu."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "course_offering_status",
+            "status_code": 200,
+            "latency_ms": 9883.41,
+            "answer": "INT2041 - Tương tác người máy Human-Machine Interaction\n- Tình trạng mở lớp kỳ này: Có mở lớp.\n- Trong khung CTĐT: Có (nhóm V.2.4 - Nhóm các học phần về Tương tác người-máy).\n\nLịch học tìm thấy:\n- INT2041 2: Thứ 5, Ca 2, phòng 3-G3",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 14,
+        "id": "schedule_teacher_lookup",
+        "line_no": 14,
+        "query": "Nguyễn Thị Nhật Thanh kỳ này dạy những lớp nào?",
+        "details": {
+          "program_id": "cs_2022",
+          "expected_source_any": [
+            "structured_schedule",
+            "course_overview"
+          ],
+          "expected_keywords": [
+            "Nguyễn Thị Nhật Thanh"
+          ],
+          "review_rubric": "Cần trả theo thời khóa biểu có cấu trúc, không lấy nhầm giảng viên khác."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "structured_schedule",
+            "status_code": 200,
+            "latency_ms": 29385.78,
+            "answer": "Các lớp của giảng viên Nguyễn Thị Nhật Thanh:\n\nINT3011E - Các vấn đề hiện đại trong KHMT\n- INT3011E 4: Thứ 6, Ca 3, phòng 211-T\n\nINT3401E - Trí tuệ nhân tạo\n- INT3401E 1: Thứ 4, Ca 1, phòng 503-B\n- INT3401E 2: Thứ 6, Ca 2, phòng 510-B",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 15,
+        "id": "schedule_ai_by_name",
+        "line_no": 15,
+        "query": "Môn Trí tuệ nhân tạo kỳ này có lịch học như thế nào?",
+        "details": {
+          "program_id": "cs_2022",
+          "expected_source_any": [
+            "structured_schedule",
+            "course_overview"
+          ],
+          "expected_keywords": [
+            "trí tuệ nhân tạo"
+          ],
+          "review_rubric": "Cần quy đổi tên môn sang mã môn hoặc lớp nếu có."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "structured_schedule",
+            "status_code": 200,
+            "latency_ms": 8245.61,
+            "answer": "Lịch học theo từng môn:\n\nINT3401E - Trí tuệ nhân tạo\n- INT3401E 1: Thứ 4, Ca 1, phòng 503-B, GV Nguyễn Thị Nhật Thanh\n- INT3401E 2: Thứ 6, Ca 2, phòng 510-B, GV Nguyễn Thị Nhật Thanh\n- INT3401E 3: Thứ 3, Ca 1, phòng 110-B, GV Nguyễn Văn Vinh\n- INT3401E 4: Thứ 4, Ca 2, phòng 102-B, GV Nguyễn Văn Vinh\n- INT3401E 5: Thứ 5, Ca 2, phòng 207-T, GV Nguyễn Thanh Thủy",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 16,
+        "id": "schedule_strict_suffix",
+        "line_no": 16,
+        "query": "INT3412 có phải là INT3412E không, và kỳ này môn nào có lịch học?",
+        "details": {
+          "program_id": "cs_2022",
+          "expected_source_any": [
+            "structured_schedule",
+            "course_offering_status",
+            "vector_store"
+          ],
+          "expected_codes": [
+            "INT3412E"
+          ],
+          "review_rubric": "Cần phân biệt mã có hậu tố E và không khẳng định sai."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "structured_schedule",
+            "status_code": 200,
+            "latency_ms": 58721.62,
+            "answer": "Lịch học theo từng môn:\n\nINT3412E - Thị giác máy\n- INT3412E 1: Thứ 3, Ca 2, phòng 209-T, GV Lê Thanh Hà",
+            "failed_checks": []
+          }
+        ]
+      }
+    ],
+    "curriculum": [
+      {
+        "index": 17,
+        "id": "curriculum_cs_group_int3412e",
+        "line_no": 17,
+        "query": "Trong CTĐT Khoa học máy tính QH-2022, INT3412E thuộc nhóm học phần nào?",
+        "details": {
+          "program_id": "cs_2022",
+          "expected_source_any": [
+            "curriculum_lookup",
+            "course_overview",
+            "vector_store"
+          ],
+          "expected_keywords": [
+            "tuong tac"
+          ],
+          "expected_codes": [
+            "INT3412E"
+          ],
+          "review_rubric": "Cần nêu nhóm học phần trong CTĐT, không chỉ nói tình trạng mở lớp."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "fail",
+            "source": "course_offering_status",
+            "status_code": 200,
+            "latency_ms": 9813.2,
+            "answer": "INT3412E\n- Tình trạng mở lớp kỳ này: Có mở lớp.\n- Trong khung CTĐT: Có (nhóm V.2.4 - Nhóm các học phần về Tương tác người-máy).\n\nLịch học tìm thấy:\n- INT3412E 1: Thứ 3, Ca 2, phòng 209-T",
+            "failed_checks": [
+              {
+                "name": "source",
+                "details": {
+                  "actual": "course_offering_status",
+                  "expected_any": [
+                    "curriculum_lookup",
+                    "course_overview",
+                    "vector_store"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "index": 18,
+        "id": "curriculum_hmi_group",
+        "line_no": 18,
+        "query": "Hồ sơ giả lập Khoa học máy tính này thuộc CTĐT nào?",
+        "details": {
+          "program_id": "cs_2022",
+          "mock_profile_id": "mock_cs2022_near_graduation",
+          "execution": "mock_static",
+          "expected_keywords": [
+            "cs_2022",
+            "Khoa học máy tính"
+          ],
+          "forbidden_keywords": [
+            "it_2022"
+          ],
+          "review_rubric": "Phải trả đúng program_id của hồ sơ giả lập."
+        },
+        "results": [
+          {
+            "target": "mock_static",
+            "status": "pass",
+            "source": "mock_static",
+            "status_code": 200,
+            "latency_ms": 0.0,
+            "answer": "{\"student\": {\"student_id\": \"MOCK220001\", \"name\": \"Nguyễn Văn Mock\", \"program_id\": \"cs_2022\", \"program_name\": \"Khoa học máy tính QH-2022\"}, \"summary\": {\"completed_credits\": 115, \"recognized_credits\": 115, \"expected_missing_credits\": 21, \"expected_required_missing_codes\": [\"INT3131\", \"INT3132\", \"INT4050\"], \"expected_open_group_missing_credits\": {\"general_knowledge\": 6, \"specialized_electives\": 5}}}",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 19,
+        "id": "curriculum_image_processing",
+        "line_no": 19,
+        "query": "Hồ sơ giả lập Công nghệ thông tin này thuộc CTĐT nào?",
+        "details": {
+          "program_id": "it_2022",
+          "mock_profile_id": "mock_it2022_mid_program",
+          "execution": "mock_static",
+          "expected_keywords": [
+            "it_2022",
+            "Công nghệ thông tin"
+          ],
+          "forbidden_keywords": [
+            "cs_2022"
+          ],
+          "review_rubric": "Phải trả đúng program_id của hồ sơ giả lập."
+        },
+        "results": [
+          {
+            "target": "mock_static",
+            "status": "pass",
+            "source": "mock_static",
+            "status_code": 200,
+            "latency_ms": 0.0,
+            "answer": "{\"student\": {\"student_id\": \"MOCK220002\", \"name\": \"Trần Thị Mock\", \"program_id\": \"it_2022\", \"program_name\": \"Công nghệ thông tin QH-2022\"}, \"summary\": {\"completed_credits\": 62, \"recognized_credits\": 62, \"expected_missing_credits\": 74, \"expected_required_missing_codes\": [\"PEC1008\", \"HIS1001\", \"INT3110\", \"INT3117\", \"INT3131\", \"INT3132\", \"INT4050\"], \"expected_open_group_missing_credits\": {\"general_knowledge\": 8, \"specialized_electives\": 18}}}",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 20,
+        "id": "curriculum_mobile_domain_orientation",
+        "line_no": 20,
+        "query": "Hồ sơ giả lập Trí tuệ nhân tạo này thuộc CTĐT nào?",
+        "details": {
+          "program_id": "ai_2025",
+          "mock_profile_id": "mock_ai2025_cross_program",
+          "execution": "mock_static",
+          "expected_keywords": [
+            "ai_2025",
+            "Trí tuệ nhân tạo"
+          ],
+          "forbidden_keywords": [
+            "cs_2022"
+          ],
+          "review_rubric": "Phải trả đúng program_id của hồ sơ giả lập."
+        },
+        "results": [
+          {
+            "target": "mock_static",
+            "status": "pass",
+            "source": "mock_static",
+            "status_code": 200,
+            "latency_ms": 0.0,
+            "answer": "{\"student\": {\"student_id\": \"MOCK250001\", \"name\": \"Lê AI Mock\", \"program_id\": \"ai_2025\", \"program_name\": \"Trí tuệ nhân tạo QH-2025\"}, \"summary\": {\"completed_credits\": 28, \"recognized_credits\": 28, \"expected_missing_credits\": 108, \"expected_required_missing_codes\": [\"AIT2001\", \"AIT3001\", \"AIT3002\", \"AIT3003\", \"INT4050\"], \"expected_open_group_missing_credits\": {\"math_foundation\": 9, \"ai_core\": 24}}}",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 21,
+        "id": "curriculum_mobile_cs2022_lookup",
+        "line_no": 21,
+        "query": "Hồ sơ giả lập Kỹ thuật máy tính này thuộc CTĐT nào?",
+        "details": {
+          "program_id": "ce_2022",
+          "mock_profile_id": "mock_ce2022_mid_program",
+          "execution": "mock_static",
+          "expected_keywords": [
+            "ce_2022",
+            "Kỹ thuật máy tính"
+          ],
+          "forbidden_keywords": [
+            "cs_2022"
+          ],
+          "review_rubric": "Phải trả đúng program_id của hồ sơ giả lập."
+        },
+        "results": [
+          {
+            "target": "mock_static",
+            "status": "pass",
+            "source": "mock_static",
+            "status_code": 200,
+            "latency_ms": 0.0,
+            "answer": "{\"student\": {\"student_id\": \"MOCK220003\", \"name\": \"Phạm Minh Mock\", \"program_id\": \"ce_2022\", \"program_name\": \"Kỹ thuật máy tính QH-2022\"}, \"summary\": {\"completed_credits\": 75, \"recognized_credits\": 75, \"expected_missing_credits\": 61, \"expected_required_missing_codes\": [\"MAT1094\", \"HIS1001\", \"INT1003\", \"INT1007\", \"INT2208\", \"INT3401\", \"INT3402\", \"INT3413\", \"INT3414\", \"INT3415\", \"INT3416\", \"INT3417\", \"INT3131\", \"INT4050\"], \"expected_open_group_missing_credits\": {\"specialized_electives\": 18}}}",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 22,
+        "id": "curriculum_mobile_it2022_guardrail",
+        "line_no": 22,
+        "query": "Trong CTĐT Công nghệ thông tin QH-2022, INT3120 Phát triển ứng dụng di động có thuộc chương trình này không?",
+        "details": {
+          "program_id": "it_2022",
+          "expected_source_any": [
+            "curriculum_lookup",
+            "course_overview",
+            "vector_store",
+            "program_selection",
+            "error"
+          ],
+          "expected_keywords": [
+            "không",
+            "it_2022"
+          ],
+          "forbidden_keywords": [
+            "INT3120 là học phần của it_2022",
+            "INT3120 thuộc CTĐT it_2022"
+          ],
+          "review_rubric": "Không được suy từ CS2022 sang IT2022."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "curriculum_lookup",
+            "status_code": 200,
+            "latency_ms": 61791.21,
+            "answer": "Không, trong chương trình đào tạo Công nghệ thông tin QH-2022, không có học phần nào với mã INT3120 tên là Phát triển ứng dụng di động.",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 23,
+        "id": "curriculum_mobile_ai2025_guardrail",
+        "line_no": 23,
+        "query": "Trong CTĐT Trí tuệ nhân tạo QH-2025, INT3120 Phát triển ứng dụng di động có thuộc chương trình này không?",
+        "details": {
+          "program_id": "ai_2025",
+          "expected_source_any": [
+            "curriculum_lookup",
+            "course_overview",
+            "vector_store",
+            "program_selection",
+            "error"
+          ],
+          "expected_keywords": [
+            "không",
+            "ai_2025"
+          ],
+          "forbidden_keywords": [
+            "INT3120 thuộc CTĐT ai_2025",
+            "INT3120 nằm trong nhóm AI"
+          ],
+          "review_rubric": "Không được gán môn mobile của CTĐT khác vào AI2025."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "fail",
+            "source": null,
+            "status_code": null,
+            "latency_ms": 30641.42,
+            "answer": "('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))",
+            "failed_checks": [
+              {
+                "name": "source",
+                "details": {
+                  "actual": "",
+                  "expected_any": [
+                    "curriculum_lookup",
+                    "course_overview",
+                    "vector_store",
+                    "program_selection",
+                    "error"
+                  ]
+                }
+              },
+              {
+                "name": "keyword_present:không",
+                "details": {
+                  "needle": "không"
+                }
+              },
+              {
+                "name": "keyword_present:ai_2025",
+                "details": {
+                  "needle": "ai_2025"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "index": 24,
+        "id": "curriculum_it2022_elective_credits",
+        "line_no": 24,
+        "query": "Trong CTĐT Công nghệ thông tin QH-2022, nhóm tự chọn ngành yêu cầu bao nhiêu tín chỉ?",
+        "details": {
+          "program_id": "it_2022",
+          "expected_source_any": [
+            "curriculum_lookup",
+            "course_overview",
+            "vector_store",
+            "program_selection",
+            "error"
+          ],
+          "expected_keywords": [
+            "tự chọn ngành"
+          ],
+          "expected_numbers": [
+            "24"
+          ],
+          "review_rubric": "Cần trả lời dựa trên CTĐT giả lập đúng ngành, không suy từ Khoa học máy tính sang CTĐT khác."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "curriculum_lookup",
+            "status_code": 200,
+            "latency_ms": 4201.42,
+            "answer": "Trong CTĐT Công nghệ thông tin QH-2022, nhóm tự chọn ngành yêu cầu 24 tín chỉ.",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 25,
+        "id": "curriculum_it2022_elective_membership",
+        "line_no": 25,
+        "query": "INT3306 có thuộc nhóm tự chọn ngành của CTĐT Công nghệ thông tin QH-2022 không?",
+        "details": {
+          "program_id": "it_2022",
+          "expected_source_any": [
+            "curriculum_lookup",
+            "course_overview",
+            "vector_store",
+            "program_selection",
+            "error"
+          ],
+          "expected_keywords": [
+            "có",
+            "tự chọn ngành"
+          ],
+          "expected_codes": [
+            "INT3306"
+          ],
+          "expected_numbers": [
+            "24"
+          ],
+          "review_rubric": "Cần trả lời dựa trên CTĐT giả lập đúng ngành, không suy từ Khoa học máy tính sang CTĐT khác."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "curriculum_lookup",
+            "status_code": 200,
+            "latency_ms": 4197.85,
+            "answer": "Có, INT3306 thuộc nhóm tự chọn ngành của CTĐT Công nghệ thông tin QH-2022; nhóm này yêu cầu 24 tín chỉ.",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 26,
+        "id": "curriculum_ce2022_elective_credits",
+        "line_no": 26,
+        "query": "Trong CTĐT Kỹ thuật máy tính QH-2022, nhóm tự chọn chuyên ngành yêu cầu bao nhiêu tín chỉ?",
+        "details": {
+          "program_id": "ce_2022",
+          "expected_source_any": [
+            "curriculum_lookup",
+            "course_overview",
+            "vector_store",
+            "program_selection",
+            "error"
+          ],
+          "expected_keywords": [
+            "tự chọn chuyên ngành"
+          ],
+          "expected_numbers": [
+            "18"
+          ],
+          "review_rubric": "Cần trả lời dựa trên CTĐT giả lập đúng ngành, không suy từ Khoa học máy tính sang CTĐT khác."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "curriculum_lookup",
+            "status_code": 200,
+            "latency_ms": 4407.11,
+            "answer": "Trong CTĐT Kỹ thuật máy tính QH-2022, nhóm tự chọn chuyên ngành yêu cầu 18 tín chỉ.",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 27,
+        "id": "curriculum_ce2022_elective_membership",
+        "line_no": 27,
+        "query": "INT3418 có thuộc nhóm tự chọn chuyên ngành của CTĐT Kỹ thuật máy tính QH-2022 không?",
+        "details": {
+          "program_id": "ce_2022",
+          "expected_source_any": [
+            "curriculum_lookup",
+            "course_overview",
+            "vector_store",
+            "program_selection",
+            "error"
+          ],
+          "expected_keywords": [
+            "có",
+            "tự chọn chuyên ngành"
+          ],
+          "expected_codes": [
+            "INT3418"
+          ],
+          "expected_numbers": [
+            "18"
+          ],
+          "review_rubric": "Cần trả lời dựa trên CTĐT giả lập đúng ngành, không suy từ Khoa học máy tính sang CTĐT khác."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "curriculum_lookup",
+            "status_code": 200,
+            "latency_ms": 4135.01,
+            "answer": "Có, INT3418 thuộc nhóm tự chọn chuyên ngành của CTĐT Kỹ thuật máy tính QH-2022; nhóm này yêu cầu 18 tín chỉ.",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 28,
+        "id": "curriculum_is2022_elective_credits",
+        "line_no": 28,
+        "query": "Trong CTĐT Hệ thống thông tin QH-2022, nhóm tự chọn hệ thống thông tin yêu cầu bao nhiêu tín chỉ?",
+        "details": {
+          "program_id": "is_2022",
+          "expected_source_any": [
+            "curriculum_lookup",
+            "course_overview",
+            "vector_store",
+            "program_selection",
+            "error"
+          ],
+          "expected_keywords": [
+            "tự chọn hệ thống thông tin"
+          ],
+          "expected_numbers": [
+            "20"
+          ],
+          "review_rubric": "Cần trả lời dựa trên CTĐT giả lập đúng ngành, không suy từ Khoa học máy tính sang CTĐT khác."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "curriculum_lookup",
+            "status_code": 200,
+            "latency_ms": 4389.1,
+            "answer": "Trong CTĐT Hệ thống thông tin QH-2022, nhóm tự chọn hệ thống thông tin yêu cầu 20 tín chỉ.",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 29,
+        "id": "curriculum_is2022_elective_membership",
+        "line_no": 29,
+        "query": "INT3225 có thuộc nhóm tự chọn hệ thống thông tin của CTĐT Hệ thống thông tin QH-2022 không?",
+        "details": {
+          "program_id": "is_2022",
+          "expected_source_any": [
+            "curriculum_lookup",
+            "course_overview",
+            "vector_store",
+            "program_selection",
+            "error"
+          ],
+          "expected_keywords": [
+            "có",
+            "tự chọn hệ thống thông tin"
+          ],
+          "expected_codes": [
+            "INT3225"
+          ],
+          "expected_numbers": [
+            "20"
+          ],
+          "review_rubric": "Cần trả lời dựa trên CTĐT giả lập đúng ngành, không suy từ Khoa học máy tính sang CTĐT khác."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "curriculum_lookup",
+            "status_code": 200,
+            "latency_ms": 4382.09,
+            "answer": "Có, INT3225 thuộc nhóm tự chọn hệ thống thông tin của CTĐT Hệ thống thông tin QH-2022; nhóm này yêu cầu 20 tín chỉ.",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 30,
+        "id": "curriculum_se2022_elective_credits",
+        "line_no": 30,
+        "query": "Trong CTĐT Công nghệ phần mềm QH-2022, nhóm tự chọn công nghệ phần mềm yêu cầu bao nhiêu tín chỉ?",
+        "details": {
+          "program_id": "se_2022",
+          "expected_source_any": [
+            "curriculum_lookup",
+            "course_overview",
+            "vector_store",
+            "program_selection",
+            "error"
+          ],
+          "expected_keywords": [
+            "tự chọn công nghệ phần mềm"
+          ],
+          "expected_numbers": [
+            "18"
+          ],
+          "review_rubric": "Cần trả lời dựa trên CTĐT giả lập đúng ngành, không suy từ Khoa học máy tính sang CTĐT khác."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "curriculum_lookup",
+            "status_code": 200,
+            "latency_ms": 4455.9,
+            "answer": "Trong CTĐT Công nghệ phần mềm QH-2022, nhóm tự chọn công nghệ phần mềm yêu cầu 18 tín chỉ.",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 31,
+        "id": "curriculum_se2022_elective_membership",
+        "line_no": 31,
+        "query": "INT3126 có thuộc nhóm tự chọn công nghệ phần mềm của CTĐT Công nghệ phần mềm QH-2022 không?",
+        "details": {
+          "program_id": "se_2022",
+          "expected_source_any": [
+            "curriculum_lookup",
+            "course_overview",
+            "vector_store",
+            "program_selection",
+            "error"
+          ],
+          "expected_keywords": [
+            "có",
+            "tự chọn công nghệ phần mềm"
+          ],
+          "expected_codes": [
+            "INT3126"
+          ],
+          "expected_numbers": [
+            "18"
+          ],
+          "review_rubric": "Cần trả lời dựa trên CTĐT giả lập đúng ngành, không suy từ Khoa học máy tính sang CTĐT khác."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "curriculum_lookup",
+            "status_code": 200,
+            "latency_ms": 4184.15,
+            "answer": "Có, INT3126 thuộc nhóm tự chọn công nghệ phần mềm của CTĐT Công nghệ phần mềm QH-2022; nhóm này yêu cầu 18 tín chỉ.",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 32,
+        "id": "curriculum_cyber2024_elective_credits",
+        "line_no": 32,
+        "query": "Trong CTĐT An toàn thông tin QH-2024, nhóm tự chọn an toàn thông tin yêu cầu bao nhiêu tín chỉ?",
+        "details": {
+          "program_id": "cyber_2024",
+          "expected_source_any": [
+            "curriculum_lookup",
+            "course_overview",
+            "vector_store",
+            "program_selection",
+            "error"
+          ],
+          "expected_keywords": [
+            "tự chọn an toàn thông tin"
+          ],
+          "expected_numbers": [
+            "16"
+          ],
+          "review_rubric": "Cần trả lời dựa trên CTĐT giả lập đúng ngành, không suy từ Khoa học máy tính sang CTĐT khác."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "curriculum_lookup",
+            "status_code": 200,
+            "latency_ms": 4525.91,
+            "answer": "Trong CTĐT An toàn thông tin QH-2024, nhóm tự chọn an toàn thông tin yêu cầu 16 tín chỉ.",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 33,
+        "id": "curriculum_cyber2024_elective_membership",
+        "line_no": 33,
+        "query": "INT3506 có thuộc nhóm tự chọn an toàn thông tin của CTĐT An toàn thông tin QH-2024 không?",
+        "details": {
+          "program_id": "cyber_2024",
+          "expected_source_any": [
+            "curriculum_lookup",
+            "course_overview",
+            "vector_store",
+            "program_selection",
+            "error"
+          ],
+          "expected_keywords": [
+            "có",
+            "tự chọn an toàn thông tin"
+          ],
+          "expected_codes": [
+            "INT3506"
+          ],
+          "expected_numbers": [
+            "16"
+          ],
+          "review_rubric": "Cần trả lời dựa trên CTĐT giả lập đúng ngành, không suy từ Khoa học máy tính sang CTĐT khác."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "curriculum_lookup",
+            "status_code": 200,
+            "latency_ms": 4490.94,
+            "answer": "Có, INT3506 thuộc nhóm tự chọn an toàn thông tin của CTĐT An toàn thông tin QH-2024; nhóm này yêu cầu 16 tín chỉ.",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 34,
+        "id": "curriculum_ds2025_elective_credits",
+        "line_no": 34,
+        "query": "Trong CTĐT Khoa học dữ liệu QH-2025, nhóm tự chọn dữ liệu yêu cầu bao nhiêu tín chỉ?",
+        "details": {
+          "program_id": "ds_2025",
+          "expected_source_any": [
+            "curriculum_lookup",
+            "course_overview",
+            "vector_store",
+            "program_selection",
+            "error"
+          ],
+          "expected_keywords": [
+            "tự chọn dữ liệu"
+          ],
+          "expected_numbers": [
+            "18"
+          ],
+          "review_rubric": "Cần trả lời dựa trên CTĐT giả lập đúng ngành, không suy từ Khoa học máy tính sang CTĐT khác."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "curriculum_lookup",
+            "status_code": 200,
+            "latency_ms": 4582.03,
+            "answer": "Trong CTĐT Khoa học dữ liệu QH-2025, nhóm tự chọn dữ liệu yêu cầu 18 tín chỉ.",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 35,
+        "id": "curriculum_ds2025_elective_membership",
+        "line_no": 35,
+        "query": "DSA3101 có thuộc nhóm tự chọn dữ liệu của CTĐT Khoa học dữ liệu QH-2025 không?",
+        "details": {
+          "program_id": "ds_2025",
+          "expected_source_any": [
+            "curriculum_lookup",
+            "course_overview",
+            "vector_store",
+            "program_selection",
+            "error"
+          ],
+          "expected_keywords": [
+            "có",
+            "tự chọn dữ liệu"
+          ],
+          "expected_codes": [
+            "DSA3101"
+          ],
+          "expected_numbers": [
+            "18"
+          ],
+          "review_rubric": "Cần trả lời dựa trên CTĐT giả lập đúng ngành, không suy từ Khoa học máy tính sang CTĐT khác."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "curriculum_lookup",
+            "status_code": 200,
+            "latency_ms": 4260.37,
+            "answer": "Có, DSA3101 thuộc nhóm tự chọn dữ liệu của CTĐT Khoa học dữ liệu QH-2025; nhóm này yêu cầu 18 tín chỉ.",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 36,
+        "id": "curriculum_ai2025_elective_credits",
+        "line_no": 36,
+        "query": "Trong CTĐT Trí tuệ nhân tạo QH-2025, nhóm tự chọn AI yêu cầu bao nhiêu tín chỉ?",
+        "details": {
+          "program_id": "ai_2025",
+          "expected_source_any": [
+            "curriculum_lookup",
+            "course_overview",
+            "vector_store",
+            "program_selection",
+            "error"
+          ],
+          "expected_keywords": [
+            "tự chọn AI"
+          ],
+          "expected_numbers": [
+            "18"
+          ],
+          "review_rubric": "Cần trả lời dựa trên CTĐT giả lập đúng ngành, không suy từ Khoa học máy tính sang CTĐT khác."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "curriculum_lookup",
+            "status_code": 200,
+            "latency_ms": 4253.7,
+            "answer": "Trong CTĐT Trí tuệ nhân tạo QH-2025, nhóm tự chọn AI yêu cầu 18 tín chỉ.",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 37,
+        "id": "curriculum_ai2025_elective_membership",
+        "line_no": 37,
+        "query": "AIT3101 có thuộc nhóm tự chọn AI của CTĐT Trí tuệ nhân tạo QH-2025 không?",
+        "details": {
+          "program_id": "ai_2025",
+          "expected_source_any": [
+            "curriculum_lookup",
+            "course_overview",
+            "vector_store",
+            "program_selection",
+            "error"
+          ],
+          "expected_keywords": [
+            "có",
+            "tự chọn AI"
+          ],
+          "expected_codes": [
+            "AIT3101"
+          ],
+          "expected_numbers": [
+            "18"
+          ],
+          "review_rubric": "Cần trả lời dựa trên CTĐT giả lập đúng ngành, không suy từ Khoa học máy tính sang CTĐT khác."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "curriculum_lookup",
+            "status_code": 200,
+            "latency_ms": 4428.97,
+            "answer": "Có, AIT3101 thuộc nhóm tự chọn AI của CTĐT Trí tuệ nhân tạo QH-2025; nhóm này yêu cầu 18 tín chỉ.",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 38,
+        "id": "curriculum_deep_learning",
+        "line_no": 38,
+        "query": "Hồ sơ giả lập Hệ thống thông tin này thuộc CTĐT nào?",
+        "details": {
+          "program_id": "is_2022",
+          "mock_profile_id": "mock_is2022_mid_program",
+          "execution": "mock_static",
+          "expected_keywords": [
+            "is_2022",
+            "Hệ thống thông tin"
+          ],
+          "forbidden_keywords": [
+            "cs_2022"
+          ],
+          "review_rubric": "Phải trả đúng program_id của hồ sơ giả lập."
+        },
+        "results": [
+          {
+            "target": "mock_static",
+            "status": "pass",
+            "source": "mock_static",
+            "status_code": 200,
+            "latency_ms": 0.0,
+            "answer": "{\"student\": {\"student_id\": \"MOCK220004\", \"name\": \"Đỗ Hà Mock\", \"program_id\": \"is_2022\", \"program_name\": \"Hệ thống thông tin QH-2022\"}, \"summary\": {\"completed_credits\": 72, \"recognized_credits\": 72, \"expected_missing_credits\": 64, \"expected_required_missing_codes\": [\"MAT1094\", \"PEC1008\", \"INT1003\", \"INT1007\", \"INT3220\", \"INT3221\", \"INT3222\", \"INT3223\", \"INT3224\", \"INT3131\", \"INT4050\"], \"expected_open_group_missing_credits\": {\"specialized_electives\": 20}}}",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 39,
+        "id": "curriculum_program_selection",
+        "line_no": 39,
+        "query": "Hồ sơ giả lập Công nghệ phần mềm này thuộc CTĐT nào?",
+        "details": {
+          "program_id": "se_2022",
+          "mock_profile_id": "mock_se2022_mid_program",
+          "execution": "mock_static",
+          "expected_keywords": [
+            "se_2022",
+            "Công nghệ phần mềm"
+          ],
+          "review_rubric": "Phải trả đúng program_id của hồ sơ giả lập."
+        },
+        "results": [
+          {
+            "target": "mock_static",
+            "status": "pass",
+            "source": "mock_static",
+            "status_code": 200,
+            "latency_ms": 0.0,
+            "answer": "{\"student\": {\"student_id\": \"MOCK220005\", \"name\": \"Bùi Phương Mock\", \"program_id\": \"se_2022\", \"program_name\": \"Công nghệ phần mềm QH-2022\"}, \"summary\": {\"completed_credits\": 51, \"recognized_credits\": 51, \"expected_missing_credits\": 85, \"expected_required_missing_codes\": [\"INT3124\", \"INT3125\", \"INT3131\", \"INT3132\", \"INT4050\"], \"expected_open_group_missing_credits\": {\"specialized_electives\": 18}}}",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 40,
+        "id": "curriculum_mock_it_guardrail",
+        "line_no": 40,
+        "query": "Hồ sơ giả lập Khoa học dữ liệu này thuộc CTĐT nào?",
+        "details": {
+          "program_id": "ds_2025",
+          "mock_profile_id": "mock_ds2025_mid_program",
+          "execution": "mock_static",
+          "expected_keywords": [
+            "ds_2025",
+            "Khoa học dữ liệu"
+          ],
+          "forbidden_keywords": [
+            "cs_2022"
+          ],
+          "review_rubric": "Phải trả đúng program_id của hồ sơ giả lập."
+        },
+        "results": [
+          {
+            "target": "mock_static",
+            "status": "pass",
+            "source": "mock_static",
+            "status_code": 200,
+            "latency_ms": 0.0,
+            "answer": "{\"student\": {\"student_id\": \"MOCK250002\", \"name\": \"Vũ Dữ Mock\", \"program_id\": \"ds_2025\", \"program_name\": \"Khoa học dữ liệu QH-2025\"}, \"summary\": {\"completed_credits\": 50, \"recognized_credits\": 50, \"expected_missing_credits\": 86, \"expected_required_missing_codes\": [\"DSA3002\", \"DSA3003\", \"DSA3004\", \"INT4050\"], \"expected_open_group_missing_credits\": {\"data_electives\": 12}}}",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 41,
+        "id": "curriculum_mock_ai_guardrail",
+        "line_no": 41,
+        "query": "Hồ sơ giả lập An toàn thông tin này thuộc CTĐT nào?",
+        "details": {
+          "program_id": "cyber_2024",
+          "mock_profile_id": "mock_cyber2024_mid_program",
+          "execution": "mock_static",
+          "expected_keywords": [
+            "cyber_2024",
+            "An toàn thông tin"
+          ],
+          "forbidden_keywords": [
+            "cs_2022"
+          ],
+          "review_rubric": "Phải trả đúng program_id của hồ sơ giả lập."
+        },
+        "results": [
+          {
+            "target": "mock_static",
+            "status": "pass",
+            "source": "mock_static",
+            "status_code": 200,
+            "latency_ms": 0.0,
+            "answer": "{\"student\": {\"student_id\": \"MOCK240001\", \"name\": \"Ngô An Mock\", \"program_id\": \"cyber_2024\", \"program_name\": \"An toàn thông tin QH-2024\"}, \"summary\": {\"completed_credits\": 60, \"recognized_credits\": 60, \"expected_missing_credits\": 76, \"expected_required_missing_codes\": [\"INT3505\", \"INT3131\", \"INT4050\"], \"expected_open_group_missing_credits\": {\"security_electives\": 10}}}",
+            "failed_checks": []
+          }
+        ]
+      }
+    ],
+    "transcript_advisor": [
+      {
+        "index": 42,
+        "id": "transcript_cs_missing_total",
+        "line_no": 42,
+        "query": "Hồ sơ giả lập Khoa học máy tính còn thiếu tổng cộng bao nhiêu tín chỉ?",
+        "details": {
+          "program_id": "cs_2022",
+          "mock_profile_id": "mock_cs2022_near_graduation",
+          "execution": "mock_static",
+          "expected_keywords": [
+            "cs_2022"
+          ],
+          "expected_codes": [
+            "INT3131",
+            "INT3132",
+            "INT4050"
+          ],
+          "expected_numbers": [
+            "21"
+          ],
+          "review_rubric": "Phải trả đúng tổng số tín chỉ còn thiếu và các mã bắt buộc còn thiếu trong phần tóm tắt mock."
+        },
+        "results": [
+          {
+            "target": "mock_static",
+            "status": "pass",
+            "source": "mock_static",
+            "status_code": 200,
+            "latency_ms": 0.0,
+            "answer": "{\"student\": {\"student_id\": \"MOCK220001\", \"name\": \"Nguyễn Văn Mock\", \"program_id\": \"cs_2022\", \"program_name\": \"Khoa học máy tính QH-2022\"}, \"summary\": {\"completed_credits\": 115, \"recognized_credits\": 115, \"expected_missing_credits\": 21, \"expected_required_missing_codes\": [\"INT3131\", \"INT3132\", \"INT4050\"], \"expected_open_group_missing_credits\": {\"general_knowledge\": 6, \"specialized_electives\": 5}}}",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 43,
+        "id": "transcript_cs_required_missing",
+        "line_no": 43,
+        "query": "Hồ sơ giả lập Công nghệ thông tin còn thiếu những học phần bắt buộc nào?",
+        "details": {
+          "program_id": "it_2022",
+          "mock_profile_id": "mock_it2022_mid_program",
+          "execution": "mock_static",
+          "expected_keywords": [
+            "it_2022"
+          ],
+          "expected_codes": [
+            "INT3110",
+            "INT3117",
+            "INT3131",
+            "INT3132",
+            "INT4050"
+          ],
+          "review_rubric": "Phải nêu đúng các mã học phần bắt buộc còn thiếu trong hồ sơ mock IT."
+        },
+        "results": [
+          {
+            "target": "mock_static",
+            "status": "pass",
+            "source": "mock_static",
+            "status_code": 200,
+            "latency_ms": 0.0,
+            "answer": "{\"student\": {\"student_id\": \"MOCK220002\", \"name\": \"Trần Thị Mock\", \"program_id\": \"it_2022\", \"program_name\": \"Công nghệ thông tin QH-2022\"}, \"summary\": {\"completed_credits\": 62, \"recognized_credits\": 62, \"expected_missing_credits\": 74, \"expected_required_missing_codes\": [\"PEC1008\", \"HIS1001\", \"INT3110\", \"INT3117\", \"INT3131\", \"INT3132\", \"INT4050\"], \"expected_open_group_missing_credits\": {\"general_knowledge\": 8, \"specialized_electives\": 18}}}",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 44,
+        "id": "transcript_cs_elective_missing",
+        "line_no": 44,
+        "query": "Hồ sơ giả lập Trí tuệ nhân tạo còn thiếu bao nhiêu tín chỉ?",
+        "details": {
+          "program_id": "ai_2025",
+          "mock_profile_id": "mock_ai2025_cross_program",
+          "execution": "mock_static",
+          "expected_keywords": [
+            "ai_2025"
+          ],
+          "expected_codes": [
+            "AIT2001",
+            "AIT3001",
+            "AIT3002",
+            "INT4050"
+          ],
+          "expected_numbers": [
+            "108"
+          ],
+          "review_rubric": "Phải trả đúng tổng số tín chỉ còn thiếu của hồ sơ AI mock."
+        },
+        "results": [
+          {
+            "target": "mock_static",
+            "status": "pass",
+            "source": "mock_static",
+            "status_code": 200,
+            "latency_ms": 0.0,
+            "answer": "{\"student\": {\"student_id\": \"MOCK250001\", \"name\": \"Lê AI Mock\", \"program_id\": \"ai_2025\", \"program_name\": \"Trí tuệ nhân tạo QH-2025\"}, \"summary\": {\"completed_credits\": 28, \"recognized_credits\": 28, \"expected_missing_credits\": 108, \"expected_required_missing_codes\": [\"AIT2001\", \"AIT3001\", \"AIT3002\", \"AIT3003\", \"INT4050\"], \"expected_open_group_missing_credits\": {\"math_foundation\": 9, \"ai_core\": 24}}}",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 45,
+        "id": "transcript_cs_schedule_plan",
+        "line_no": 45,
+        "query": "Hồ sơ giả lập Kỹ thuật máy tính còn thiếu bao nhiêu tín chỉ?",
+        "details": {
+          "program_id": "ce_2022",
+          "mock_profile_id": "mock_ce2022_mid_program",
+          "execution": "mock_static",
+          "expected_keywords": [
+            "ce_2022"
+          ],
+          "expected_codes": [
+            "INT3401",
+            "INT3402",
+            "INT3413",
+            "INT3414",
+            "INT3131",
+            "INT4050"
+          ],
+          "expected_numbers": [
+            "61"
+          ],
+          "review_rubric": "Phải trả đúng tổng số tín chỉ còn thiếu của hồ sơ CE mock."
+        },
+        "results": [
+          {
+            "target": "mock_static",
+            "status": "pass",
+            "source": "mock_static",
+            "status_code": 200,
+            "latency_ms": 0.0,
+            "answer": "{\"student\": {\"student_id\": \"MOCK220003\", \"name\": \"Phạm Minh Mock\", \"program_id\": \"ce_2022\", \"program_name\": \"Kỹ thuật máy tính QH-2022\"}, \"summary\": {\"completed_credits\": 75, \"recognized_credits\": 75, \"expected_missing_credits\": 61, \"expected_required_missing_codes\": [\"MAT1094\", \"HIS1001\", \"INT1003\", \"INT1007\", \"INT2208\", \"INT3401\", \"INT3402\", \"INT3413\", \"INT3414\", \"INT3415\", \"INT3416\", \"INT3417\", \"INT3131\", \"INT4050\"], \"expected_open_group_missing_credits\": {\"specialized_electives\": 18}}}",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 46,
+        "id": "transcript_it_missing_total",
+        "line_no": 46,
+        "query": "Hồ sơ giả lập Hệ thống thông tin còn thiếu bao nhiêu tín chỉ?",
+        "details": {
+          "program_id": "is_2022",
+          "mock_profile_id": "mock_is2022_mid_program",
+          "execution": "mock_static",
+          "expected_keywords": [
+            "is_2022"
+          ],
+          "expected_codes": [
+            "INT3220",
+            "INT3221",
+            "INT3222",
+            "INT3131",
+            "INT4050"
+          ],
+          "expected_numbers": [
+            "64"
+          ],
+          "review_rubric": "Phải trả đúng tổng số tín chỉ còn thiếu của hồ sơ IS mock."
+        },
+        "results": [
+          {
+            "target": "mock_static",
+            "status": "pass",
+            "source": "mock_static",
+            "status_code": 200,
+            "latency_ms": 0.0,
+            "answer": "{\"student\": {\"student_id\": \"MOCK220004\", \"name\": \"Đỗ Hà Mock\", \"program_id\": \"is_2022\", \"program_name\": \"Hệ thống thông tin QH-2022\"}, \"summary\": {\"completed_credits\": 72, \"recognized_credits\": 72, \"expected_missing_credits\": 64, \"expected_required_missing_codes\": [\"MAT1094\", \"PEC1008\", \"INT1003\", \"INT1007\", \"INT3220\", \"INT3221\", \"INT3222\", \"INT3223\", \"INT3224\", \"INT3131\", \"INT4050\"], \"expected_open_group_missing_credits\": {\"specialized_electives\": 20}}}",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 47,
+        "id": "transcript_ai_missing_total",
+        "line_no": 47,
+        "query": "Hồ sơ giả lập Công nghệ phần mềm còn thiếu bao nhiêu tín chỉ?",
+        "details": {
+          "program_id": "se_2022",
+          "mock_profile_id": "mock_se2022_mid_program",
+          "execution": "mock_static",
+          "expected_keywords": [
+            "se_2022"
+          ],
+          "expected_codes": [
+            "INT3124",
+            "INT3125",
+            "INT3131",
+            "INT3132",
+            "INT4050"
+          ],
+          "expected_numbers": [
+            "85"
+          ],
+          "review_rubric": "Phải trả đúng tổng số tín chỉ còn thiếu của hồ sơ SE mock."
+        },
+        "results": [
+          {
+            "target": "mock_static",
+            "status": "pass",
+            "source": "mock_static",
+            "status_code": 200,
+            "latency_ms": 0.0,
+            "answer": "{\"student\": {\"student_id\": \"MOCK220005\", \"name\": \"Bùi Phương Mock\", \"program_id\": \"se_2022\", \"program_name\": \"Công nghệ phần mềm QH-2022\"}, \"summary\": {\"completed_credits\": 51, \"recognized_credits\": 51, \"expected_missing_credits\": 85, \"expected_required_missing_codes\": [\"INT3124\", \"INT3125\", \"INT3131\", \"INT3132\", \"INT4050\"], \"expected_open_group_missing_credits\": {\"specialized_electives\": 18}}}",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 48,
+        "id": "transcript_no_file",
+        "line_no": 48,
+        "query": "Hồ sơ giả lập Khoa học dữ liệu còn thiếu bao nhiêu tín chỉ?",
+        "details": {
+          "program_id": "ds_2025",
+          "mock_profile_id": "mock_ds2025_mid_program",
+          "execution": "mock_static",
+          "expected_keywords": [
+            "ds_2025"
+          ],
+          "expected_codes": [
+            "DSA3002",
+            "DSA3003",
+            "DSA3004",
+            "INT4050"
+          ],
+          "expected_numbers": [
+            "86"
+          ],
+          "review_rubric": "Phải trả đúng tổng số tín chỉ còn thiếu của hồ sơ DS mock."
+        },
+        "results": [
+          {
+            "target": "mock_static",
+            "status": "pass",
+            "source": "mock_static",
+            "status_code": 200,
+            "latency_ms": 0.0,
+            "answer": "{\"student\": {\"student_id\": \"MOCK250002\", \"name\": \"Vũ Dữ Mock\", \"program_id\": \"ds_2025\", \"program_name\": \"Khoa học dữ liệu QH-2025\"}, \"summary\": {\"completed_credits\": 50, \"recognized_credits\": 50, \"expected_missing_credits\": 86, \"expected_required_missing_codes\": [\"DSA3002\", \"DSA3003\", \"DSA3004\", \"INT4050\"], \"expected_open_group_missing_credits\": {\"data_electives\": 12}}}",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 49,
+        "id": "transcript_mock_file_validation",
+        "line_no": 49,
+        "query": "Hồ sơ giả lập An toàn thông tin còn thiếu bao nhiêu tín chỉ?",
+        "details": {
+          "program_id": "cyber_2024",
+          "mock_profile_id": "mock_cyber2024_mid_program",
+          "execution": "mock_static",
+          "expected_keywords": [
+            "cyber_2024"
+          ],
+          "expected_codes": [
+            "INT3505",
+            "INT3131",
+            "INT4050"
+          ],
+          "expected_numbers": [
+            "76"
+          ],
+          "review_rubric": "Phải trả đúng tổng số tín chỉ còn thiếu của hồ sơ Cyber mock."
+        },
+        "results": [
+          {
+            "target": "mock_static",
+            "status": "pass",
+            "source": "mock_static",
+            "status_code": 200,
+            "latency_ms": 0.0,
+            "answer": "{\"student\": {\"student_id\": \"MOCK240001\", \"name\": \"Ngô An Mock\", \"program_id\": \"cyber_2024\", \"program_name\": \"An toàn thông tin QH-2024\"}, \"summary\": {\"completed_credits\": 60, \"recognized_credits\": 60, \"expected_missing_credits\": 76, \"expected_required_missing_codes\": [\"INT3505\", \"INT3131\", \"INT4050\"], \"expected_open_group_missing_credits\": {\"security_electives\": 10}}}",
+            "failed_checks": []
+          }
+        ]
+      }
+    ],
+    "session_state": [
+      {
+        "index": 50,
+        "id": "session_first_subject",
+        "line_no": 50,
+        "query": "INT3412E kỳ này có mở lớp không?",
+        "details": {
+          "program_id": "cs_2022",
+          "turn_group": "vision_followup",
+          "expected_source_any": [
+            "course_offering_status",
+            "structured_schedule",
+            "course_overview"
+          ],
+          "expected_codes": [
+            "INT3412E"
+          ],
+          "review_rubric": "Lượt đầu tạo tham chiếu môn học cho câu hỏi nối tiếp."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "course_offering_status",
+            "status_code": 200,
+            "latency_ms": 24114.33,
+            "answer": "INT3412E\n- Tình trạng mở lớp kỳ này: Có mở lớp.\n- Trong khung CTĐT: Có (nhóm V.2.4 - Nhóm các học phần về Tương tác người-máy).\n\nLịch học tìm thấy:\n- INT3412E 1: Thứ 3, Ca 2, phòng 209-T",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 51,
+        "id": "session_followup_subject",
+        "line_no": 51,
+        "query": "Môn đó do ai dạy và học vào ca nào?",
+        "details": {
+          "program_id": "cs_2022",
+          "turn_group": "vision_followup",
+          "expected_source_any": [
+            "structured_schedule",
+            "course_overview"
+          ],
+          "expected_keywords": [
+            "Lê Thanh Hà"
+          ],
+          "expected_codes": [
+            "INT3412E"
+          ],
+          "review_rubric": "Lượt sau phải giữ được tham chiếu đến INT3412E."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "structured_schedule",
+            "status_code": 200,
+            "latency_ms": 7847.25,
+            "answer": "Lịch học theo từng môn:\n\nINT3412E\n- INT3412E 1: Thứ 3, Ca 2, phòng 209-T, GV Lê Thanh Hà",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 52,
+        "id": "session_teacher_first",
+        "line_no": 52,
+        "query": "Nguyễn Thị Nhật Thanh dạy những lớp nào?",
+        "details": {
+          "program_id": "cs_2022",
+          "turn_group": "teacher_followup",
+          "expected_source_any": [
+            "structured_schedule",
+            "course_overview"
+          ],
+          "expected_keywords": [
+            "Nguyễn Thị Nhật Thanh"
+          ],
+          "review_rubric": "Lượt đầu tạo tham chiếu giảng viên cho câu hỏi nối tiếp."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "fail",
+            "source": null,
+            "status_code": null,
+            "latency_ms": 30743.27,
+            "answer": "('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))",
+            "failed_checks": [
+              {
+                "name": "source",
+                "details": {
+                  "actual": "",
+                  "expected_any": [
+                    "structured_schedule",
+                    "course_overview"
+                  ]
+                }
+              },
+              {
+                "name": "keyword_present:Nguyễn Thị Nhật Thanh",
+                "details": {
+                  "needle": "Nguyễn Thị Nhật Thanh"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "index": 53,
+        "id": "session_teacher_followup",
+        "line_no": 53,
+        "query": "Các lớp đó học vào ca nào?",
+        "details": {
+          "program_id": "cs_2022",
+          "turn_group": "teacher_followup",
+          "expected_source_any": [
+            "structured_schedule",
+            "course_overview"
+          ],
+          "expected_keywords": [
+            "ca"
+          ],
+          "review_rubric": "Lượt sau phải giữ được ngữ cảnh về giảng viên và danh sách lớp."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "structured_schedule",
+            "status_code": 200,
+            "latency_ms": 68179.9,
+            "answer": "Lịch học theo từng môn:\n\nINT3011E\n- INT3011E 4: Thứ 6, Ca 3, phòng 211-T, GV Nguyễn Thị Nhật Thanh\n\nINT3401E\n- INT3401E 1: Thứ 4, Ca 1, phòng 503-B, GV Nguyễn Thị Nhật Thanh\n- INT3401E 2: Thứ 6, Ca 2, phòng 510-B, GV Nguyễn Thị Nhật Thanh",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 54,
+        "id": "session_transcript_first",
+        "line_no": 54,
+        "query": "Tôi còn thiếu những môn bắt buộc nào?",
+        "details": {
+          "program_id": "cs_2022",
+          "mock_profile_id": "mock_cs2022_near_graduation",
+          "turn_group": "cs_advisor_followup",
+          "expected_source_any": [
+            "academic_advisor"
+          ],
+          "expected_codes": [
+            "INT3131",
+            "INT3132",
+            "INT4050"
+          ],
+          "review_rubric": "Lượt đầu tạo trạng thái tư vấn học vụ từ bảng điểm mock."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "fail",
+            "source": "academic_advisor",
+            "status_code": 200,
+            "latency_ms": 41312.95,
+            "answer": "Mình chưa đọc được dữ liệu bảng điểm từ file bạn chọn nên không thể xác định chính xác môn còn thiếu/GPA/lịch học. Chi tiết lỗi: No semesters. []",
+            "failed_checks": [
+              {
+                "name": "code_present:INT3131",
+                "details": {
+                  "needle": "INT3131"
+                }
+              },
+              {
+                "name": "code_present:INT3132",
+                "details": {
+                  "needle": "INT3132"
+                }
+              },
+              {
+                "name": "code_present:INT4050",
+                "details": {
+                  "needle": "INT4050"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "index": 55,
+        "id": "session_transcript_followup",
+        "line_no": 55,
+        "query": "Trong các môn đó, môn nào kỳ này có lịch học?",
+        "details": {
+          "program_id": "cs_2022",
+          "mock_profile_id": "mock_cs2022_near_graduation",
+          "turn_group": "cs_advisor_followup",
+          "expected_source_any": [
+            "academic_advisor",
+            "structured_schedule",
+            "electives_schedule"
+          ],
+          "expected_keywords": [
+            "lịch"
+          ],
+          "review_rubric": "Lượt sau phải giữ được danh sách môn còn thiếu từ lượt trước."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "electives_schedule",
+            "status_code": 200,
+            "latency_ms": 82965.8,
+            "answer": "Kỳ này có 18 học phần tự chọn mở lớp theo chương trình đào tạo:\n\nV.2.1 - Nhóm các học phần về Phát triển phần mềm và ứng dụng:\n- INT3117: Kiểm thử và đảm bảo chất lượng phần mềm (Software Testing and Quality Assurance) - 3 tín chỉ\n- INT3120: Phát triển ứng dụng di động (Mobile Application Development) - 3 tín chỉ\n- INT3306: Phát triển ứng dụng Web (Web Application Development) - 3 tín chỉ\n- INT3323: Phát triển ứng dụng (Internet of Things IoTapplication development) - 3 tín chỉ\n\nV.2.2 - Nhóm các học phần về Các hệ thống Ứng dụng Trí tuệ nhân tạo:\n- INT3121: Các chuyên đề trong KHMT (Special Problems in Computer Science) - 3 tín chỉ\n- INT3229E: Kỹ thuật và công nghệ dữ liệu lớn (BigData Techniques and Technologies) - 4 tín chỉ\n- INT3230E: Mật mã và An toàn thông tin (Cryptography and Information security) - 4 tín chỉ\n\nV.2.3 - Nhóm các học phần về Xử lý dữ liệu thông minh:\n- INT3123: Các thuật toán đồ thị và ứng dụng Graph algorithms (and applications) - 3 tín chỉ\n- INT3406: Xử lý ngôn ngữ tự nhiên (Natural Language Processing) - 3 tín chỉ\n- INT3419: Phân tích Dữ liệu không gian và Ứng dụng Geospatial (Data Analysis and Applications) - 3 tín chỉ\n- INT3420E: Học sâu và Ứng dụng (Deep learning and Applications) - 3 tín chỉ\n\nV.2.4 - Nhóm các học phần về Tương tác người-máy:\n- INT2041: Tương tác người máy (Human-Machine Interaction) - 3 tín chỉ\n- INT3403: Đồ họa máy tính (Computer Graphics) - 3 tín chỉ\n- INT3412E: Thị giác máy (Computer Vision) - 3 tín chỉ\n\nV.3 - Các học phần bổ trợ:\n- INT3102: Phương pháp tính (Numerical Methods) - 3 tín chỉ\n- INT3103: Tối ưu hóa (Optimization) - 3 tín chỉ\n- INT3418: Thuật toán nâng cao và ứng dụng Advanced Algorithms (and Applications) - 3 tín chỉ\n- UET1002: Kỹ năng khởi nghiệp (Entrepreneurship) - 2 tín chỉ",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 56,
+        "id": "session_program_memory",
+        "line_no": 56,
+        "query": "Tôi học chương trình Công nghệ thông tin QH-2022.",
+        "details": {
+          "program_id": "it_2022",
+          "turn_group": "program_memory",
+          "expected_source_any": [
+            "program_selection",
+            "vector_store",
+            "course_overview",
+            "error"
+          ],
+          "expected_keywords": [
+            "Công nghệ thông tin"
+          ],
+          "review_rubric": "Kiểm tra hệ thống ghi nhớ ngữ cảnh chương trình đào tạo đã chọn."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "fail",
+            "source": "academic_advisor",
+            "status_code": 200,
+            "latency_ms": 31808.46,
+            "answer": "Chào bạn, hệ thống đã ghi nhận chương trình học của bạn là Công nghệ thông tin QH-2022. Bạn cần hỗ trợ về vấn đề gì ạ?",
+            "failed_checks": [
+              {
+                "name": "source",
+                "details": {
+                  "actual": "academic_advisor",
+                  "expected_any": [
+                    "program_selection",
+                    "vector_store",
+                    "course_overview",
+                    "error"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "index": 57,
+        "id": "session_program_followup",
+        "line_no": 57,
+        "query": "Vậy INT2215 có nằm trong chương trình đó không?",
+        "details": {
+          "program_id": "it_2022",
+          "turn_group": "program_memory",
+          "expected_source_any": [
+            "course_overview",
+            "vector_store",
+            "curriculum_lookup"
+          ],
+          "expected_codes": [
+            "INT2215"
+          ],
+          "review_rubric": "Lượt sau phải tận dụng CTĐT đã được nêu ở lượt trước."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "curriculum_lookup",
+            "status_code": 200,
+            "latency_ms": 41147.0,
+            "answer": "Có, INT2215 (Lập trình nâng cao Advanced Programming) nằm trong chương trình đó, thuộc Khối kiến thức theo nhóm ngành.",
+            "failed_checks": []
+          }
+        ]
+      }
+    ],
+    "missing_data": [
+      {
+        "index": 58,
+        "id": "missing_ambiguous_transcript",
+        "line_no": 58,
+        "query": "Tôi muốn biết mình có tốt nghiệp được không?",
+        "details": {
+          "program_id": "cs_2022",
+          "expected_source_any": [
+            "error",
+            "academic_advisor",
+            "vector_store"
+          ],
+          "expected_keywords": [
+            "bảng điểm"
+          ],
+          "review_rubric": "Phải nêu cần bảng điểm hoặc CTĐT nếu thiếu dữ liệu."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "pass",
+            "source": "academic_advisor",
+            "status_code": 200,
+            "latency_ms": 7633.3,
+            "answer": "Mình chưa đọc được dữ liệu bảng điểm từ file bạn chọn nên không thể xác định chính xác môn còn thiếu/GPA/lịch học. Chi tiết lỗi: Error: 400: Khong tim thay bat ky file bang diem nao hop le.",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 59,
+        "id": "missing_unknown_course",
+        "line_no": 59,
+        "query": "Môn ABC9999 kỳ này có mở không?",
+        "details": {
+          "program_id": "cs_2022",
+          "expected_source_any": [
+            "course_offering_status",
+            "structured_schedule",
+            "vector_store",
+            "error"
+          ],
+          "forbidden_keywords": [
+            "chắc chắn có"
+          ],
+          "expected_codes": [
+            "ABC9999"
+          ],
+          "review_rubric": "Không được bịa môn học không tồn tại."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "fail",
+            "source": null,
+            "status_code": 200,
+            "latency_ms": 51952.92,
+            "answer": "404 Client Error: Not Found for url: http://mcp.railway.internal:8080/mcp/invoke",
+            "failed_checks": [
+              {
+                "name": "source",
+                "details": {
+                  "actual": "",
+                  "expected_any": [
+                    "course_offering_status",
+                    "structured_schedule",
+                    "vector_store",
+                    "error"
+                  ]
+                }
+              },
+              {
+                "name": "code_present:ABC9999",
+                "details": {
+                  "needle": "ABC9999"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "index": 60,
+        "id": "missing_future_rule",
+        "line_no": 60,
+        "query": "Quy chế năm 2030 có bắt buộc IELTS 8.0 không?",
+        "details": {
+          "program_id": "cs_2022",
+          "expected_source_any": [
+            "vector_store",
+            "error",
+            "language_requirement"
+          ],
+          "forbidden_keywords": [
+            "bắt buộc IELTS 8.0"
+          ],
+          "review_rubric": "Phải nói chưa có nguồn nếu tài liệu không đề cập năm 2030."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "fail",
+            "source": null,
+            "status_code": 200,
+            "latency_ms": 47339.57,
+            "answer": "Không tìm thấy thông tin về 'Quy chế năm 2030' trong các tài liệu hiện có. File bạn cung cấp có thể không truy cập được.",
+            "failed_checks": [
+              {
+                "name": "source",
+                "details": {
+                  "actual": "",
+                  "expected_any": [
+                    "vector_store",
+                    "error",
+                    "language_requirement"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "index": 61,
+        "id": "missing_no_program",
+        "line_no": 61,
+        "query": "Tôi còn thiếu bao nhiêu tín chỉ?",
+        "details": {
+          "mock_profile_id": "mock_cs2022_near_graduation",
+          "expected_source_any": [
+            "program_selection",
+            "error",
+            "academic_advisor"
+          ],
+          "expected_keywords": [
+            "chương trình"
+          ],
+          "review_rubric": "Nếu không có program_id thì phải yêu cầu chọn CTĐT, không được tự đoán."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "fail",
+            "source": "academic_advisor",
+            "status_code": 200,
+            "latency_ms": 41050.45,
+            "answer": "Mình chưa đọc được dữ liệu bảng điểm từ file bạn chọn nên không thể xác định chính xác môn còn thiếu/GPA/lịch học. Chi tiết lỗi: No semesters. []",
+            "failed_checks": [
+              {
+                "name": "keyword_present:chương trình",
+                "details": {
+                  "needle": "chương trình"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "index": 62,
+        "id": "missing_no_schedule_source",
+        "line_no": 62,
+        "query": "Lớp ABC9999 học phòng nào và vào thứ mấy?",
+        "details": {
+          "program_id": "cs_2022",
+          "expected_source_any": [
+            "structured_schedule",
+            "course_offering_status",
+            "vector_store",
+            "error"
+          ],
+          "forbidden_keywords": [
+            "phòng 101"
+          ],
+          "review_rubric": "Không được gán lịch hoặc phòng học khi không có trong thời khóa biểu."
+        },
+        "results": [
+          {
+            "target": "deploy",
+            "status": "fail",
+            "source": null,
+            "status_code": 200,
+            "latency_ms": 52854.02,
+            "answer": "404 Client Error: Not Found for url: http://mcp.railway.internal:8080/mcp/invoke",
+            "failed_checks": [
+              {
+                "name": "source",
+                "details": {
+                  "actual": "",
+                  "expected_any": [
+                    "structured_schedule",
+                    "course_offering_status",
+                    "vector_store",
+                    "error"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "deploy_smoke": [
+      {
+        "index": 63,
+        "id": "deploy_frontend",
+        "line_no": 63,
+        "query": "Kiểm tra frontend trên Vercel có phản hồi được không.",
+        "details": {
+          "execution": "deploy_smoke",
+          "review_rubric": "Frontend production phải truy cập được."
+        },
+        "results": [
+          {
+            "target": "deploy_smoke",
+            "status": "pass",
+            "source": "deploy_smoke",
+            "status_code": 200,
+            "latency_ms": 360.16,
+            "answer": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"UTF-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n    <title>RAG + MCP Demo</title>\n    <script type=\"module\" crossorigin src=\"/assets/index-Bq8mcUYu.js\"></script>\n    <link rel=\"stylesheet\" crossorigin href=\"/assets/index-DaTQAnrd.css\">\n  </head>\n  <body>\n    <div id=\"root\"></div>\n  </body>\n</html>\n",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 64,
+        "id": "deploy_backend_health",
+        "line_no": 64,
+        "query": "Kiểm tra endpoint /healthz của backend.",
+        "details": {
+          "execution": "deploy_smoke",
+          "review_rubric": "Backend healthz phải trả 2xx hoặc 3xx."
+        },
+        "results": [
+          {
+            "target": "deploy_smoke",
+            "status": "pass",
+            "source": "deploy_smoke",
+            "status_code": 200,
+            "latency_ms": 991.73,
+            "answer": "{\"status\":\"ok\"}",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 65,
+        "id": "deploy_backend_ready",
+        "line_no": 65,
+        "query": "Kiểm tra endpoint /readyz của backend.",
+        "details": {
+          "execution": "deploy_smoke",
+          "expected_keywords": [
+            "ready"
+          ],
+          "review_rubric": "Backend readyz phải xác nhận các phụ thuộc tối thiểu."
+        },
+        "results": [
+          {
+            "target": "deploy_smoke",
+            "status": "pass",
+            "source": "deploy_smoke",
+            "status_code": 200,
+            "latency_ms": 3272.42,
+            "answer": "{\"status\":\"ready\",\"checks\":{\"memory_db\":\"ok\",\"data_dir\":\"ok\",\"pdf_dir\":\"ok\",\"resource_pdf_dir\":\"ok\",\"resource_html_dir\":\"ok\",\"session_cache_dir\":\"ok\",\"blob_store\":\"ok\",\"mcp\":\"ok\"}}",
+            "failed_checks": []
+          }
+        ]
+      },
+      {
+        "index": 66,
+        "id": "deploy_mcp_public_discover",
+        "line_no": 66,
+        "query": "Kiểm tra endpoint discover của MCP public.",
+        "details": {
+          "execution": "deploy_smoke",
+          "review_rubric": "MCP public có thể 502; readiness nội bộ của backend mới là mốc chính."
+        },
+        "results": [
+          {
+            "target": "deploy_smoke",
+            "status": "warn",
+            "source": "deploy_smoke",
+            "status_code": 502,
+            "latency_ms": 903.45,
+            "answer": "{\"status\":\"error\",\"code\":502,\"message\":\"Application failed to respond\",\"request_id\":\"k-AXhtdMR82fhW4nAXC71g\"}",
+            "failed_checks": [
+              {
+                "name": "status_code",
+                "details": {
+                  "actual": 502,
+                  "expected_lt": 500
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "index": 67,
+        "id": "deploy_backend_programs",
+        "line_no": 67,
+        "query": "Kiểm tra endpoint danh sách chương trình từ backend.",
+        "details": {
+          "execution": "deploy_smoke",
+          "expected_keywords": [
+            "program"
+          ],
+          "review_rubric": "Backend phải liệt kê được CTĐT hoặc trả JSON hợp lệ."
+        },
+        "results": [
+          {
+            "target": "deploy_smoke",
+            "status": "pass",
+            "source": "deploy_smoke",
+            "status_code": 200,
+            "latency_ms": 1233.57,
+            "answer": "{\"programs\":[{\"id\":\"ckt_2025\",\"name\":\"Cơ kỹ thuật\",\"year\":\"2025\",\"year_end\":null,\"qh_label\":\"QH-2025\",\"group_name\":\"Cơ kỹ thuật\",\"display_name\":\"Cơ kỹ thuật (QH-2025)\"},{\"id\":\"ckt_2022\",\"name\":\"Cơ kỹ thuật\",\"year\":\"2022\",\"year_end\":\"2024\",\"qh_label\":\"QH-2022-2024\",\"group_name\":\"Cơ kỹ thuật\",\"display_name\":\"Cơ kỹ thuật (QH-2022-2024)\"},{\"id\":\"ckt_2019\",\"name\":\"Cơ kỹ thuật\",\"year\":\"2019\",\"year_end\":\"2021\",\"qh_label\":\"QH-2019-2021\",\"group_name\":\"Cơ kỹ thuật\",\"display_name\":\"Cơ kỹ thuật (QH-2019-2021)\"},{\"id\":\"ckt_2015\",\"name\":\"Cơ kỹ thuật\",\"year\":\"2015\",\"year_end\":\"2018\",\"qh_label\":\"QH-2015-2018\",\"group_name\":\"Cơ kỹ thuật\",\"display_name\":\"Cơ kỹ thuật (QH-2015-2018)\"},{\"id\":\"cnhkvt_2025\",\"name\":\"Công nghệ hàng không vũ trụ\",\"year\":\"2025\",\"year_end\":null,\"qh_label\":\"QH-2025\",\"group_name\":\"Công nghệ hàng không vũ trụ\",\"display_name\":\"Công nghệ hàng không vũ trụ (QH-2025)\"},{\"id\":\"cnhkvt_2022\",\"name\":\"Công nghệ hàng không vũ trụ\",\"year\":\"2022\",\"year_end\":\"2024\",\"qh_label\":\"QH-2022-2024\",\"group_name\":\"Công nghệ hàng không vũ trụ\",\"display_name\":\"Công nghệ hàng không vũ trụ (QH-2022-2024)\"},{\"id\":\"cnhkvt_2019\",\"name\":\"Công nghệ hàng không vũ trụ\",\"year\":\"2019\",\"year_end\":\"2021\",\"qh_label\":\"QH-2019-2021\",\"group_name\":\"Công nghệ hàng không vũ trụ\",\"display_name\":\"Công nghệ hàng không vũ trụ (QH-2019-2021)\"},{\"id\":\"cnktcd_2025\",\"name\":\"Công nghệ kỹ thuật cơ điện tử\",\"year\":\"2025\",\"year_end\":null,\"qh_label\":\"QH-2025\",\"group_name\":\"Công nghệ kỹ thuật cơ điện tử\",\"display_name\":\"Công nghệ kỹ thuật cơ điện tử (QH-2025)\"},{\"id\":\"cnktcd_2022\",\"name\":\"Công nghệ kỹ thuật cơ điện tử\",\"year\":\"2022\",\"year_end\":\"2024\",\"qh_label\":\"QH-2022-2024\",\"group_name\":\"Công nghệ kỹ thuật cơ điện tử\",\"display_name\":\"Công nghệ kỹ thuật cơ điện tử (QH-2022-2024)\"},{\"id\":\"cnktcd_2015\",\"name\":\"Công nghệ kỹ thuật cơ điện tử\",\"year\":\"2015\",\"year_end\":\"2018\",\"qh_label\":\"QH-2015-2018\",\"group_name\":\"Công nghệ kỹ thuật cơ điện tử\",\"display_name\":\"Công nghệ kỹ thuật cơ điện tử (QH-2015-2018)\"},{\"id\":\"cnktcd_2019\",\"name\":\"Công nghệ kỹ thuật cơ điện tử (CLC TT23)\",\"year\":\"2019\",\"year_end\":\"2021\",\"qh_label\":\"QH-2019-2021\",\"group_name\":\"Công nghệ kỹ thuật cơ điện tử (CLC TT23)\",\"display_name\":\"Công nghệ kỹ thuật cơ điện tử (CLC TT23) (QH-2019-2021)\"},{\"id\":\"cnktdt_2025\",\"name\":\"Công nghệ kỹ thuật điện tử – viễn thông định hướng Thiết kế vi mạch\",\"year\":\"2025\",\"year_end\":null,\"qh_label\":\"QH-2025\",\"group_name\":\"Công nghệ kỹ thuật điện tử – viễn thông định hướng Thiết kế vi mạch\",\"display_name\":\"Công nghệ kỹ thuật điện tử – viễn thông định hướng Thiết kế vi mạch (QH-2025)\"},{\"id\":\"cnktsh_2025\",\"name\":\"Công nghệ kỹ thuật sinh học – Ngành Công nghệ sinh học\",\"year\":\"2025\",\"year_end\":null,\"qh_label\":\"QH-2025\",\"group_name\":\"Công nghệ kỹ thuật sinh học – Ngành Công nghệ sinh học\",\"display_name\":\"Công nghệ kỹ thuật sinh học – Ngành Công nghệ sinh học (QH-2025)\"},{\"id\":\"cnktxd_2025\",\"name\":\"Công nghệ kỹ thuật xây dựng\",\"year\":\"2025\",\"year_end\":null,\"qh_label\":\"QH-2025\",\"group_name\":\"Công nghệ kỹ thuật xây dựng\",\"display_name\":\"Công nghệ kỹ thuật xây dựng (QH-2025)\"},{\"id\":\"cnktxd_2022\",\"name\":\"Công nghệ kỹ thuật xây dựng\",\"year\":\"2022\",\"year_end\":\"2024\",\"qh_label\":\"QH-2022-2024\",\"group_name\":\"Công nghệ kỹ thuật xây dựng\",\"display_name\":\"Công nghệ kỹ thuật xây dựng (QH-2022-2024)\"},{\"id\":\"cnktxd_2019\",\"name\":\"Công nghệ kỹ thuật xây dựng\",\"year\":\"2019\",\"year_end\":\"2022\",\"qh_label\":\"QH-2019-2022\",\"group_name\":\"Công nghệ kỹ thuật xây dựng\",\"display_name\":\"Công nghệ kỹ thuật xây dựng (QH-2019-2022)\"},{\"id\":\"cnnn_2025\",\"name\":\"Công nghệ nông nghiệp\",\"year\":\"2025\",\"year_end\":null,\"qh_label\":\"QH-2025\",\"group_name\":\"Công nghệ nông nghiệp\",\"display_name\":\"Công nghệ nông nghiệp (QH-2025)\"},{\"id\":\"cnnn_2022\",\"name\":\"Công nghệ nông nghiệp\",\"year\":\"2022\",\"year_end\":\"2024\",\"qh_label\":\"QH-2022-2024\",\"group_name\":\"Công nghệ nông nghiệp\",\"display_name\":\"Công nghệ nông nghiệp (QH-2022-2024)\"},{\"id\":\"cnnn_2019\",\"name\":\"Công nghệ nông nghiệp\",\"year\":\"2019\",\"year_end\":\"2021\",\"qh_label\":\"QH-2019-2021\",\"group_n",
+            "failed_checks": []
+          }
+        ]
+      }
+    ]
+  }
+}

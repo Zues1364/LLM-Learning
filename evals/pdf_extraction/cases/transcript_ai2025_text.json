@@ -1,0 +1,45 @@
+{
+  "doc_id": "transcript_ai2025_text",
+  "title": "Bảng điểm mock AI2025 - text PDF",
+  "doc_type": "transcript",
+  "subtype": "mock_transcript",
+  "source": {
+    "kind": "mock_transcript_json",
+    "relative_path": "evals/mock_data/transcripts/mock_ai2025_cross_program.json",
+    "render_mode": "text_table_pdf"
+  },
+  "expected_fields": [
+    "semester",
+    "course_code",
+    "course_name",
+    "credits",
+    "grade_4"
+  ],
+  "key_fields": [
+    "semester",
+    "course_code"
+  ],
+  "expected_rows": [
+    {
+      "semester": "2025-2026-1",
+      "course_code": "MAT1093",
+      "course_name": "Đại số",
+      "credits": 4,
+      "grade_4": 3.2
+    },
+    {
+      "semester": "2025-2026-2",
+      "course_code": "AIT1001",
+      "course_name": "Nhập môn trí tuệ nhân tạo",
+      "credits": 3,
+      "grade_4": 3.7
+    },
+    {
+      "semester": "2025-2026-2",
+      "course_code": "MAT1101",
+      "course_name": "Xác suất thống kê",
+      "credits": 3,
+      "grade_4": 3.0
+    }
+  ]
+}

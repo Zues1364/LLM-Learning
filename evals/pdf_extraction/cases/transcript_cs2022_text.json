@@ -1,0 +1,45 @@
+{
+  "doc_id": "transcript_cs2022_text",
+  "title": "Bảng điểm mock CS2022 - text PDF",
+  "doc_type": "transcript",
+  "subtype": "mock_transcript",
+  "source": {
+    "kind": "mock_transcript_json",
+    "relative_path": "evals/mock_data/transcripts/mock_cs2022_near_graduation.json",
+    "render_mode": "text_table_pdf"
+  },
+  "expected_fields": [
+    "semester",
+    "course_code",
+    "course_name",
+    "credits",
+    "grade_4"
+  ],
+  "key_fields": [
+    "semester",
+    "course_code"
+  ],
+  "expected_rows": [
+    {
+      "semester": "2022-2023-1",
+      "course_code": "PHI1006",
+      "course_name": "Triết học Mác - Lênin",
+      "credits": 3,
+      "grade_4": 3.2
+    },
+    {
+      "semester": "2023-2024-2",
+      "course_code": "INT3405E",
+      "course_name": "Học máy",
+      "credits": 3,
+      "grade_4": 3.7
+    },
+    {
+      "semester": "2024-2025-1",
+      "course_code": "INT3120",
+      "course_name": "Phát triển ứng dụng di động",
+      "credits": 3,
+      "grade_4": 3.1
+    }
+  ]
+}

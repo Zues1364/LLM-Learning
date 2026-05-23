@@ -1,0 +1,943 @@
+{
+  "input_json": "D:\\LLM\\LLM Learning\\reports\\embedding_benchmark_compare_20260515.json",
+  "constraints": {
+    "step": 0.05,
+    "min_weight": 0.2,
+    "coverage_not_less_than_mrr": true,
+    "stable_gap_ratio": 0.85,
+    "top_n": 25
+  },
+  "recommended": {
+    "coverage_weight": 0.35,
+    "source_weight": 0.3,
+    "evidence_weight": 0.35,
+    "winner": "multilingual-e5-small",
+    "runner_up": "aiteamvn",
+    "winner_score": 0.801735,
+    "runner_up_score": 0.74047,
+    "gap_to_second": 0.061265,
+    "distance_to_balanced": 0.001667,
+    "ranking": [
+      {
+        "model_key": "multilingual-e5-small",
+        "score": 0.801735
+      },
+      {
+        "model_key": "aiteamvn",
+        "score": 0.74047
+      },
+      {
+        "model_key": "bkai-vietnamese-bi-encoder",
+        "score": 0.716645
+      }
+    ]
+  },
+  "current_default": {
+    "coverage_weight": 0.4,
+    "source_weight": 0.3,
+    "evidence_weight": 0.3,
+    "winner": "multilingual-e5-small",
+    "runner_up": "aiteamvn",
+    "winner_score": 0.80014,
+    "runner_up_score": 0.73759,
+    "gap_to_second": 0.06255,
+    "distance_to_balanced": 0.006667,
+    "ranking": [
+      {
+        "model_key": "multilingual-e5-small",
+        "score": 0.80014
+      },
+      {
+        "model_key": "aiteamvn",
+        "score": 0.73759
+      },
+      {
+        "model_key": "bkai-vietnamese-bi-encoder",
+        "score": 0.71816
+      }
+    ]
+  },
+  "metadata": {
+    "best_gap": 0.07182,
+    "stable_gap_threshold": 0.061047,
+    "stable_region_count": 14,
+    "winner_frequency": {
+      "multilingual-e5-small": 17
+    }
+  },
+  "recommended_gap_rank": 13,
+  "model_metrics": [
+    {
+      "model_key": "multilingual-e5-small",
+      "coverage_top_k": 0.7333,
+      "source_mrr": 0.9242,
+      "evidence_mrr": 0.7652
+    },
+    {
+      "model_key": "aiteamvn",
+      "coverage_top_k": 0.6394,
+      "source_mrr": 0.9091,
+      "evidence_mrr": 0.697
+    },
+    {
+      "model_key": "bkai-vietnamese-bi-encoder",
+      "coverage_top_k": 0.6818,
+      "source_mrr": 0.8333,
+      "evidence_mrr": 0.6515
+    }
+  ],
+  "top_candidates": [
+    {
+      "coverage_weight": 0.6,
+      "source_weight": 0.2,
+      "evidence_weight": 0.2,
+      "winner": "multilingual-e5-small",
+      "runner_up": "bkai-vietnamese-bi-encoder",
+      "winner_score": 0.77786,
+      "runner_up_score": 0.70604,
+      "gap_to_second": 0.07182,
+      "distance_to_balanced": 0.106667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.77786
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.70604
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.70486
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.55,
+      "source_weight": 0.2,
+      "evidence_weight": 0.25,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.779455,
+      "runner_up_score": 0.70774,
+      "gap_to_second": 0.071715,
+      "distance_to_balanced": 0.071667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.779455
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.70774
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.704525
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.5,
+      "source_weight": 0.2,
+      "evidence_weight": 0.3,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.78105,
+      "runner_up_score": 0.71062,
+      "gap_to_second": 0.07043,
+      "distance_to_balanced": 0.046667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.78105
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.71062
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.70301
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.45,
+      "source_weight": 0.2,
+      "evidence_weight": 0.35,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.782645,
+      "runner_up_score": 0.7135,
+      "gap_to_second": 0.069145,
+      "distance_to_balanced": 0.031667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.782645
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.7135
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.701495
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.55,
+      "source_weight": 0.25,
+      "evidence_weight": 0.2,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.787405,
+      "runner_up_score": 0.718345,
+      "gap_to_second": 0.06906,
+      "distance_to_balanced": 0.071667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.787405
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.718345
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.713615
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.4,
+      "source_weight": 0.2,
+      "evidence_weight": 0.4,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.78424,
+      "runner_up_score": 0.71638,
+      "gap_to_second": 0.06786,
+      "distance_to_balanced": 0.026667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.78424
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.71638
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.69998
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.5,
+      "source_weight": 0.25,
+      "evidence_weight": 0.25,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.789,
+      "runner_up_score": 0.721225,
+      "gap_to_second": 0.067775,
+      "distance_to_balanced": 0.041667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.789
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.721225
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.7121
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.45,
+      "source_weight": 0.25,
+      "evidence_weight": 0.3,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.790595,
+      "runner_up_score": 0.724105,
+      "gap_to_second": 0.06649,
+      "distance_to_balanced": 0.021667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.790595
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.724105
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.710585
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.4,
+      "source_weight": 0.25,
+      "evidence_weight": 0.35,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.79219,
+      "runner_up_score": 0.726985,
+      "gap_to_second": 0.065205,
+      "distance_to_balanced": 0.011667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.79219
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.726985
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.70907
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.5,
+      "source_weight": 0.3,
+      "evidence_weight": 0.2,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.79695,
+      "runner_up_score": 0.73183,
+      "gap_to_second": 0.06512,
+      "distance_to_balanced": 0.046667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.79695
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.73183
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.72119
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.45,
+      "source_weight": 0.3,
+      "evidence_weight": 0.25,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.798545,
+      "runner_up_score": 0.73471,
+      "gap_to_second": 0.063835,
+      "distance_to_balanced": 0.021667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.798545
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.73471
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.719675
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.4,
+      "source_weight": 0.3,
+      "evidence_weight": 0.3,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.80014,
+      "runner_up_score": 0.73759,
+      "gap_to_second": 0.06255,
+      "distance_to_balanced": 0.006667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.80014
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.73759
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.71816
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.35,
+      "source_weight": 0.3,
+      "evidence_weight": 0.35,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.801735,
+      "runner_up_score": 0.74047,
+      "gap_to_second": 0.061265,
+      "distance_to_balanced": 0.001667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.801735
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.74047
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.716645
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.45,
+      "source_weight": 0.35,
+      "evidence_weight": 0.2,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.806495,
+      "runner_up_score": 0.745315,
+      "gap_to_second": 0.06118,
+      "distance_to_balanced": 0.031667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.806495
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.745315
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.728765
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.4,
+      "source_weight": 0.35,
+      "evidence_weight": 0.25,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.80809,
+      "runner_up_score": 0.748195,
+      "gap_to_second": 0.059895,
+      "distance_to_balanced": 0.011667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.80809
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.748195
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.72725
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.35,
+      "source_weight": 0.35,
+      "evidence_weight": 0.3,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.809685,
+      "runner_up_score": 0.751075,
+      "gap_to_second": 0.05861,
+      "distance_to_balanced": 0.001667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.809685
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.751075
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.725735
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.4,
+      "source_weight": 0.4,
+      "evidence_weight": 0.2,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.81604,
+      "runner_up_score": 0.7588,
+      "gap_to_second": 0.05724,
+      "distance_to_balanced": 0.026667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.81604
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.7588
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.73634
+        }
+      ]
+    }
+  ],
+  "all_candidates": [
+    {
+      "coverage_weight": 0.35,
+      "source_weight": 0.3,
+      "evidence_weight": 0.35,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.801735,
+      "runner_up_score": 0.74047,
+      "gap_to_second": 0.061265,
+      "distance_to_balanced": 0.001667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.801735
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.74047
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.716645
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.35,
+      "source_weight": 0.35,
+      "evidence_weight": 0.3,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.809685,
+      "runner_up_score": 0.751075,
+      "gap_to_second": 0.05861,
+      "distance_to_balanced": 0.001667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.809685
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.751075
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.725735
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.4,
+      "source_weight": 0.2,
+      "evidence_weight": 0.4,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.78424,
+      "runner_up_score": 0.71638,
+      "gap_to_second": 0.06786,
+      "distance_to_balanced": 0.026667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.78424
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.71638
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.69998
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.4,
+      "source_weight": 0.25,
+      "evidence_weight": 0.35,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.79219,
+      "runner_up_score": 0.726985,
+      "gap_to_second": 0.065205,
+      "distance_to_balanced": 0.011667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.79219
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.726985
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.70907
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.4,
+      "source_weight": 0.3,
+      "evidence_weight": 0.3,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.80014,
+      "runner_up_score": 0.73759,
+      "gap_to_second": 0.06255,
+      "distance_to_balanced": 0.006667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.80014
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.73759
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.71816
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.4,
+      "source_weight": 0.35,
+      "evidence_weight": 0.25,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.80809,
+      "runner_up_score": 0.748195,
+      "gap_to_second": 0.059895,
+      "distance_to_balanced": 0.011667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.80809
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.748195
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.72725
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.4,
+      "source_weight": 0.4,
+      "evidence_weight": 0.2,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.81604,
+      "runner_up_score": 0.7588,
+      "gap_to_second": 0.05724,
+      "distance_to_balanced": 0.026667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.81604
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.7588
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.73634
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.45,
+      "source_weight": 0.2,
+      "evidence_weight": 0.35,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.782645,
+      "runner_up_score": 0.7135,
+      "gap_to_second": 0.069145,
+      "distance_to_balanced": 0.031667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.782645
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.7135
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.701495
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.45,
+      "source_weight": 0.25,
+      "evidence_weight": 0.3,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.790595,
+      "runner_up_score": 0.724105,
+      "gap_to_second": 0.06649,
+      "distance_to_balanced": 0.021667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.790595
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.724105
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.710585
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.45,
+      "source_weight": 0.3,
+      "evidence_weight": 0.25,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.798545,
+      "runner_up_score": 0.73471,
+      "gap_to_second": 0.063835,
+      "distance_to_balanced": 0.021667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.798545
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.73471
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.719675
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.45,
+      "source_weight": 0.35,
+      "evidence_weight": 0.2,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.806495,
+      "runner_up_score": 0.745315,
+      "gap_to_second": 0.06118,
+      "distance_to_balanced": 0.031667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.806495
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.745315
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.728765
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.5,
+      "source_weight": 0.2,
+      "evidence_weight": 0.3,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.78105,
+      "runner_up_score": 0.71062,
+      "gap_to_second": 0.07043,
+      "distance_to_balanced": 0.046667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.78105
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.71062
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.70301
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.5,
+      "source_weight": 0.25,
+      "evidence_weight": 0.25,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.789,
+      "runner_up_score": 0.721225,
+      "gap_to_second": 0.067775,
+      "distance_to_balanced": 0.041667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.789
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.721225
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.7121
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.5,
+      "source_weight": 0.3,
+      "evidence_weight": 0.2,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.79695,
+      "runner_up_score": 0.73183,
+      "gap_to_second": 0.06512,
+      "distance_to_balanced": 0.046667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.79695
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.73183
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.72119
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.55,
+      "source_weight": 0.2,
+      "evidence_weight": 0.25,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.779455,
+      "runner_up_score": 0.70774,
+      "gap_to_second": 0.071715,
+      "distance_to_balanced": 0.071667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.779455
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.70774
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.704525
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.55,
+      "source_weight": 0.25,
+      "evidence_weight": 0.2,
+      "winner": "multilingual-e5-small",
+      "runner_up": "aiteamvn",
+      "winner_score": 0.787405,
+      "runner_up_score": 0.718345,
+      "gap_to_second": 0.06906,
+      "distance_to_balanced": 0.071667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.787405
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.718345
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.713615
+        }
+      ]
+    },
+    {
+      "coverage_weight": 0.6,
+      "source_weight": 0.2,
+      "evidence_weight": 0.2,
+      "winner": "multilingual-e5-small",
+      "runner_up": "bkai-vietnamese-bi-encoder",
+      "winner_score": 0.77786,
+      "runner_up_score": 0.70604,
+      "gap_to_second": 0.07182,
+      "distance_to_balanced": 0.106667,
+      "ranking": [
+        {
+          "model_key": "multilingual-e5-small",
+          "score": 0.77786
+        },
+        {
+          "model_key": "bkai-vietnamese-bi-encoder",
+          "score": 0.70604
+        },
+        {
+          "model_key": "aiteamvn",
+          "score": 0.70486
+        }
+      ]
+    }
+  ]
+}

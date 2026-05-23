@@ -1,0 +1,45 @@
+{
+  "doc_id": "schedule_appendix_p21_math_logic",
+  "title": "Phụ lục TKB trang 21 - lớp MAT1051 và COM1050",
+  "doc_type": "schedule",
+  "subtype": "course_schedule",
+  "source": {
+    "kind": "pdf_page",
+    "relative_path": "data/resources/pdfs/PHU_LUC_THOI_KHOA_BIEU_HKII_2025-2026_DU_LIEU_CAP_NHAT_DEN_22012026_.xlsx_-_Sheet1.pdf",
+    "page": 21
+  },
+  "expected_fields": [
+    "subject_code",
+    "course_name",
+    "class_code",
+    "teacher_name",
+    "day",
+    "slot",
+    "room"
+  ],
+  "key_fields": [
+    "subject_code",
+    "class_code",
+    "slot"
+  ],
+  "expected_rows": [
+    {
+      "subject_code": "MAT1051",
+      "course_name": "Giải tích 2",
+      "class_code": "MAT1051 42",
+      "teacher_name": "Nguyễn Đình Kiên",
+      "day": "Thứ 6",
+      "slot": "4",
+      "room": "206-T"
+    },
+    {
+      "subject_code": "COM1050",
+      "course_name": "Tư duy tính toán",
+      "class_code": "COM1050 35",
+      "teacher_name": "Ninh Thị Hương",
+      "day": "Thứ 6",
+      "slot": "3",
+      "room": "204-A"
+    }
+  ]
+}

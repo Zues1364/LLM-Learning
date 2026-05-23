@@ -1,0 +1,37 @@
+{
+  "program_id": "se_2022",
+  "program_name": "Công nghệ phần mềm QH-2022 mock",
+  "required_credits": 136,
+  "groups": [
+    {
+      "id": "I",
+      "name": "Khối kiến thức chung",
+      "required_credits": 21,
+      "required_subjects": ["PHI1006", "MAT1093", "MAT1094"]
+    },
+    {
+      "id": "III",
+      "name": "Cơ sở ngành",
+      "required_credits": 40,
+      "required_subjects": ["INT1003", "INT1007", "INT2210", "INT2215", "INT2208", "INT2204"]
+    },
+    {
+      "id": "IV",
+      "name": "Phát triển phần mềm",
+      "required_credits": 32,
+      "required_subjects": ["INT3121", "INT3122", "INT3123", "INT3124", "INT3125"]
+    },
+    {
+      "id": "V",
+      "name": "Tự chọn công nghệ phần mềm",
+      "required_credits": 18,
+      "elective_subjects": ["INT3126", "INT3127", "INT3128", "INT3129", "INT3130"]
+    },
+    {
+      "id": "VI",
+      "name": "Đồ án và khóa luận",
+      "required_credits": 11,
+      "required_subjects": ["INT3131", "INT3132", "INT4050"]
+    }
+  ]
+}

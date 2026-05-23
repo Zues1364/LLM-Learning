@@ -1,0 +1,45 @@
+{
+  "doc_id": "schedule_appendix_p5_graduation",
+  "title": "Phụ lục TKB trang 5 - đồ án và khóa luận",
+  "doc_type": "schedule",
+  "subtype": "course_schedule",
+  "source": {
+    "kind": "pdf_page",
+    "relative_path": "data/resources/pdfs/PHU_LUC_THOI_KHOA_BIEU_HKII_2025-2026_DU_LIEU_CAP_NHAT_DEN_22012026_.xlsx_-_Sheet1.pdf",
+    "page": 5
+  },
+  "expected_fields": [
+    "subject_code",
+    "course_name",
+    "class_code",
+    "teacher_name",
+    "day",
+    "slot",
+    "room"
+  ],
+  "key_fields": [
+    "subject_code",
+    "class_code",
+    "slot"
+  ],
+  "expected_rows": [
+    {
+      "subject_code": "INT4054",
+      "course_name": "Khóa luận tốt nghiệp (**)",
+      "class_code": "INT4054 2",
+      "teacher_name": "Phạm Ngọc Hùng",
+      "day": "Thứ 4",
+      "slot": "2",
+      "room": "KHOACNTT"
+    },
+    {
+      "subject_code": "INT3509",
+      "course_name": "Dự án (bắt buộc)",
+      "class_code": "INT3509 3",
+      "teacher_name": "Phạm Mạnh Linh",
+      "day": "Thứ 3",
+      "slot": "4",
+      "room": "KHOACNTT"
+    }
+  ]
+}

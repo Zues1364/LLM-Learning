@@ -40,13 +40,6 @@ def normalize_railway_uvicorn_args(
             elif arg == "--port=$PORT":
                 normalized[index] = f"--port={port}"
 
-    if _target_app(normalized) == "src.mcp_server.server:app":
-        for index, arg in enumerate(normalized[:-1]):
-            if arg == "--host" and normalized[index + 1] == "0.0.0.0":
-                normalized[index + 1] = "::"
-            elif arg == "--host=0.0.0.0":
-                normalized[index] = "--host=::"
-
     return normalized
 
 

@@ -1,0 +1,48 @@
+{
+  "doc_id": "english_mapping_handbook_page26",
+  "title": "Sổ tay học vụ trang 26 - bảng quy đổi tiếng Anh",
+  "doc_type": "english_mapping",
+  "subtype": "language_mapping",
+  "source": {
+    "kind": "pdf_page",
+    "relative_path": "data/resources/pdfs/SO_TAY_HOC_VU_KY_I_NAM_2023-2024.pdf",
+    "page": 26
+  },
+  "expected_fields": [
+    "level",
+    "ielts",
+    "toefl_ibt",
+    "aptis",
+    "cambridge",
+    "vstep"
+  ],
+  "key_fields": [
+    "level"
+  ],
+  "expected_rows": [
+    {
+      "level": "Bậc 3",
+      "ielts": "4.5",
+      "toefl_ibt": "42 iBT",
+      "aptis": "B1",
+      "cambridge": "B1 Preliminary (140)",
+      "vstep": "VSTEP.3-5 (4.0)"
+    },
+    {
+      "level": "Bậc 4",
+      "ielts": "5.5",
+      "toefl_ibt": "72 iBT",
+      "aptis": "B2",
+      "cambridge": "B2 First (160)",
+      "vstep": "VSTEP.3-5 (6.0)"
+    },
+    {
+      "level": "Bậc 5",
+      "ielts": "7.0",
+      "toefl_ibt": "95 iBT",
+      "aptis": "C1",
+      "cambridge": "C1 Advanced (180)",
+      "vstep": "VSTEP.3-5 (8.5)"
+    }
+  ]
+}

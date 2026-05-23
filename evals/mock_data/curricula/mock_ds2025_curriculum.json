@@ -1,6 +1,6 @@
 {
-  "program_id": "ai_2025",
-  "program_name": "Trí tuệ nhân tạo QH-2025 mock",
+  "program_id": "ds_2025",
+  "program_name": "Khoa học dữ liệu QH-2025 mock",
   "required_credits": 136,
   "groups": [
     {
@@ -10,16 +10,16 @@
       "required_subjects": ["MAT1093", "MAT1094", "MAT1101", "INT1003", "INT1007"]
     },
     {
-      "id": "AI",
-      "name": "Lõi trí tuệ nhân tạo",
-      "required_credits": 36,
-      "required_subjects": ["AIT1001", "AIT2001", "AIT3001", "AIT3002", "AIT3003"]
+      "id": "DS",
+      "name": "Lõi khoa học dữ liệu",
+      "required_credits": 38,
+      "required_subjects": ["DSA1001", "DSA2001", "DSA3001", "DSA3002", "DSA3003", "DSA3004"]
     },
     {
-      "id": "AI.E",
-      "name": "Tự chọn AI",
+      "id": "DS.E",
+      "name": "Tự chọn dữ liệu",
       "required_credits": 18,
-      "elective_subjects": ["AIT3101", "AIT3102", "AIT3103", "INT3405E", "INT3412E"]
+      "elective_subjects": ["DSA3101", "DSA3102", "DSA3103", "INT3405E", "INT3412E"]
     },
     {
       "id": "VI",

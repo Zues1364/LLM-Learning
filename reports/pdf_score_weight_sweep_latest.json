@@ -1,0 +1,2724 @@
+{
+  "input_json": "D:\\LLM\\LLM Learning\\reports\\pdf_extraction_benchmark_latest.json",
+  "constraints": {
+    "step": 0.05,
+    "min_weight": 0.2,
+    "stable_gap_ratio": 0.85,
+    "top_n": 25
+  },
+  "recommended": {
+    "key_weight": 0.35,
+    "row_weight": 0.35,
+    "cell_f1_weight": 0.3,
+    "winner": "hybrid_current",
+    "runner_up": "img2table_tesseract",
+    "winner_score": 0.57586,
+    "runner_up_score": 0.392325,
+    "gap_to_second": 0.183535,
+    "distance_to_balanced": 0.001667,
+    "ranking": [
+      {
+        "method": "hybrid_current",
+        "score": 0.57586
+      },
+      {
+        "method": "img2table_tesseract",
+        "score": 0.392325
+      },
+      {
+        "method": "table_first_strict",
+        "score": 0.392325
+      },
+      {
+        "method": "pdfplumber_text_plus_tables",
+        "score": 0.390375
+      },
+      {
+        "method": "pdfplumber_raw_text_only",
+        "score": 0.30325
+      },
+      {
+        "method": "page_ocr_tesseract_only",
+        "score": 0.07423
+      }
+    ]
+  },
+  "current_default": {
+    "key_weight": 0.4,
+    "row_weight": 0.35,
+    "cell_f1_weight": 0.25,
+    "winner": "hybrid_current",
+    "runner_up": "img2table_tesseract",
+    "winner_score": 0.610515,
+    "runner_up_score": 0.42558,
+    "gap_to_second": 0.184935,
+    "distance_to_balanced": 0.011667,
+    "ranking": [
+      {
+        "method": "hybrid_current",
+        "score": 0.610515
+      },
+      {
+        "method": "img2table_tesseract",
+        "score": 0.42558
+      },
+      {
+        "method": "table_first_strict",
+        "score": 0.42558
+      },
+      {
+        "method": "pdfplumber_text_plus_tables",
+        "score": 0.414495
+      },
+      {
+        "method": "pdfplumber_raw_text_only",
+        "score": 0.32118
+      },
+      {
+        "method": "page_ocr_tesseract_only",
+        "score": 0.082355
+      }
+    ]
+  },
+  "metadata": {
+    "best_gap": 0.19444,
+    "stable_gap_threshold": 0.165274,
+    "stable_region_count": 19,
+    "winner_frequency": {
+      "hybrid_current": 45
+    }
+  },
+  "recommended_gap_rank": 6,
+  "method_metrics": [
+    {
+      "method": "pdfplumber_raw_text_only",
+      "key_field_accuracy": 0.4865,
+      "row_exact_accuracy": 0.2703,
+      "cell_f1": 0.1279
+    },
+    {
+      "method": "pdfplumber_text_plus_tables",
+      "key_field_accuracy": 0.6486,
+      "row_exact_accuracy": 0.3243,
+      "cell_f1": 0.1662
+    },
+    {
+      "method": "page_ocr_tesseract_only",
+      "key_field_accuracy": 0.1892,
+      "row_exact_accuracy": 0.0,
+      "cell_f1": 0.0267
+    },
+    {
+      "method": "img2table_tesseract",
+      "key_field_accuracy": 0.8378,
+      "row_exact_accuracy": 0.1351,
+      "cell_f1": 0.1727
+    },
+    {
+      "method": "table_first_strict",
+      "key_field_accuracy": 0.8378,
+      "row_exact_accuracy": 0.1351,
+      "cell_f1": 0.1727
+    },
+    {
+      "method": "hybrid_current",
+      "key_field_accuracy": 0.973,
+      "row_exact_accuracy": 0.4324,
+      "cell_f1": 0.2799
+    }
+  ],
+  "top_candidates": [
+    {
+      "key_weight": 0.4,
+      "row_weight": 0.4,
+      "cell_f1_weight": 0.2,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.61814,
+      "runner_up_score": 0.4237,
+      "gap_to_second": 0.19444,
+      "distance_to_balanced": 0.026667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.61814
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.4237
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.4237
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.4224
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.3283
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.08102
+        }
+      ]
+    },
+    {
+      "key_weight": 0.45,
+      "row_weight": 0.35,
+      "cell_f1_weight": 0.2,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.64517,
+      "runner_up_score": 0.458835,
+      "gap_to_second": 0.186335,
+      "distance_to_balanced": 0.031667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.64517
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.458835
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.458835
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.438615
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.33911
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.09048
+        }
+      ]
+    },
+    {
+      "key_weight": 0.35,
+      "row_weight": 0.4,
+      "cell_f1_weight": 0.25,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.583485,
+      "runner_up_score": 0.39828,
+      "gap_to_second": 0.185205,
+      "distance_to_balanced": 0.011667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.583485
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.39828
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.390445
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.390445
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.31037
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.072895
+        }
+      ]
+    },
+    {
+      "key_weight": 0.4,
+      "row_weight": 0.35,
+      "cell_f1_weight": 0.25,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.610515,
+      "runner_up_score": 0.42558,
+      "gap_to_second": 0.184935,
+      "distance_to_balanced": 0.011667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.610515
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.42558
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.42558
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.414495
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.32118
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.082355
+        }
+      ]
+    },
+    {
+      "key_weight": 0.35,
+      "row_weight": 0.45,
+      "cell_f1_weight": 0.2,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.59111,
+      "runner_up_score": 0.406185,
+      "gap_to_second": 0.184925,
+      "distance_to_balanced": 0.031667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.59111
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.406185
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.388565
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.388565
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.31749
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.07156
+        }
+      ]
+    },
+    {
+      "key_weight": 0.35,
+      "row_weight": 0.35,
+      "cell_f1_weight": 0.3,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.57586,
+      "runner_up_score": 0.392325,
+      "gap_to_second": 0.183535,
+      "distance_to_balanced": 0.001667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.57586
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.392325
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.392325
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.390375
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.30325
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.07423
+        }
+      ]
+    },
+    {
+      "key_weight": 0.5,
+      "row_weight": 0.3,
+      "cell_f1_weight": 0.2,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.6722,
+      "runner_up_score": 0.49397,
+      "gap_to_second": 0.17823,
+      "distance_to_balanced": 0.046667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.6722
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.49397
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.49397
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.45483
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.34992
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.09994
+        }
+      ]
+    },
+    {
+      "key_weight": 0.45,
+      "row_weight": 0.3,
+      "cell_f1_weight": 0.25,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.637545,
+      "runner_up_score": 0.460715,
+      "gap_to_second": 0.17683,
+      "distance_to_balanced": 0.021667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.637545
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.460715
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.460715
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.43071
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.33199
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.091815
+        }
+      ]
+    },
+    {
+      "key_weight": 0.4,
+      "row_weight": 0.3,
+      "cell_f1_weight": 0.3,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.60289,
+      "runner_up_score": 0.42746,
+      "gap_to_second": 0.17543,
+      "distance_to_balanced": 0.006667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.60289
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.42746
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.42746
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.40659
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.31406
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.08369
+        }
+      ]
+    },
+    {
+      "key_weight": 0.3,
+      "row_weight": 0.35,
+      "cell_f1_weight": 0.35,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.541205,
+      "runner_up_score": 0.366255,
+      "gap_to_second": 0.17495,
+      "distance_to_balanced": 0.001667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.541205
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.366255
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.35907
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.35907
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.28532
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.066105
+        }
+      ]
+    },
+    {
+      "key_weight": 0.3,
+      "row_weight": 0.4,
+      "cell_f1_weight": 0.3,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.54883,
+      "runner_up_score": 0.37416,
+      "gap_to_second": 0.17467,
+      "distance_to_balanced": 0.006667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.54883
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.37416
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.35719
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.35719
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.29244
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.06477
+        }
+      ]
+    },
+    {
+      "key_weight": 0.3,
+      "row_weight": 0.45,
+      "cell_f1_weight": 0.25,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.556455,
+      "runner_up_score": 0.382065,
+      "gap_to_second": 0.17439,
+      "distance_to_balanced": 0.021667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.556455
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.382065
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.35531
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.35531
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.29956
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.063435
+        }
+      ]
+    },
+    {
+      "key_weight": 0.3,
+      "row_weight": 0.5,
+      "cell_f1_weight": 0.2,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.56408,
+      "runner_up_score": 0.38997,
+      "gap_to_second": 0.17411,
+      "distance_to_balanced": 0.046667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.56408
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.38997
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.35343
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.35343
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.30668
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.0621
+        }
+      ]
+    },
+    {
+      "key_weight": 0.35,
+      "row_weight": 0.3,
+      "cell_f1_weight": 0.35,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.568235,
+      "runner_up_score": 0.394205,
+      "gap_to_second": 0.17403,
+      "distance_to_balanced": 0.001667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.568235
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.394205
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.394205
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.38247
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.29613
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.075565
+        }
+      ]
+    },
+    {
+      "key_weight": 0.3,
+      "row_weight": 0.3,
+      "cell_f1_weight": 0.4,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.53358,
+      "runner_up_score": 0.36095,
+      "gap_to_second": 0.17263,
+      "distance_to_balanced": 0.006667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.53358
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.36095
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.36095
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.35835
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.2782
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.06744
+        }
+      ]
+    },
+    {
+      "key_weight": 0.55,
+      "row_weight": 0.25,
+      "cell_f1_weight": 0.2,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.69923,
+      "runner_up_score": 0.529105,
+      "gap_to_second": 0.170125,
+      "distance_to_balanced": 0.071667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.69923
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.529105
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.529105
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.471045
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.36073
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.1094
+        }
+      ]
+    },
+    {
+      "key_weight": 0.5,
+      "row_weight": 0.25,
+      "cell_f1_weight": 0.25,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.664575,
+      "runner_up_score": 0.49585,
+      "gap_to_second": 0.168725,
+      "distance_to_balanced": 0.041667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.664575
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.49585
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.49585
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.446925
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.3428
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.101275
+        }
+      ]
+    },
+    {
+      "key_weight": 0.45,
+      "row_weight": 0.25,
+      "cell_f1_weight": 0.3,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.62992,
+      "runner_up_score": 0.462595,
+      "gap_to_second": 0.167325,
+      "distance_to_balanced": 0.021667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.62992
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.462595
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.462595
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.422805
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.32487
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.09315
+        }
+      ]
+    },
+    {
+      "key_weight": 0.4,
+      "row_weight": 0.25,
+      "cell_f1_weight": 0.35,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.595265,
+      "runner_up_score": 0.42934,
+      "gap_to_second": 0.165925,
+      "distance_to_balanced": 0.011667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.595265
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.42934
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.42934
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.398685
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.30694
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.085025
+        }
+      ]
+    },
+    {
+      "key_weight": 0.25,
+      "row_weight": 0.3,
+      "cell_f1_weight": 0.45,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.498925,
+      "runner_up_score": 0.33423,
+      "gap_to_second": 0.164695,
+      "distance_to_balanced": 0.021667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.498925
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.33423
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.327695
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.327695
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.26027
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.059315
+        }
+      ]
+    },
+    {
+      "key_weight": 0.35,
+      "row_weight": 0.25,
+      "cell_f1_weight": 0.4,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.56061,
+      "runner_up_score": 0.396085,
+      "gap_to_second": 0.164525,
+      "distance_to_balanced": 0.011667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.56061
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.396085
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.396085
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.374565
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.28901
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.0769
+        }
+      ]
+    },
+    {
+      "key_weight": 0.25,
+      "row_weight": 0.35,
+      "cell_f1_weight": 0.4,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.50655,
+      "runner_up_score": 0.342135,
+      "gap_to_second": 0.164415,
+      "distance_to_balanced": 0.011667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.50655
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.342135
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.325815
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.325815
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.26739
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.05798
+        }
+      ]
+    },
+    {
+      "key_weight": 0.25,
+      "row_weight": 0.4,
+      "cell_f1_weight": 0.35,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.514175,
+      "runner_up_score": 0.35004,
+      "gap_to_second": 0.164135,
+      "distance_to_balanced": 0.011667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.514175
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.35004
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.323935
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.323935
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.27451
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.056645
+        }
+      ]
+    },
+    {
+      "key_weight": 0.25,
+      "row_weight": 0.45,
+      "cell_f1_weight": 0.3,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.5218,
+      "runner_up_score": 0.357945,
+      "gap_to_second": 0.163855,
+      "distance_to_balanced": 0.021667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.5218
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.357945
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.322055
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.322055
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.28163
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.05531
+        }
+      ]
+    },
+    {
+      "key_weight": 0.25,
+      "row_weight": 0.5,
+      "cell_f1_weight": 0.25,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.529425,
+      "runner_up_score": 0.36585,
+      "gap_to_second": 0.163575,
+      "distance_to_balanced": 0.041667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.529425
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.36585
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.320175
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.320175
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.28875
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.053975
+        }
+      ]
+    }
+  ],
+  "all_candidates": [
+    {
+      "key_weight": 0.2,
+      "row_weight": 0.2,
+      "cell_f1_weight": 0.6,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.44902,
+      "runner_up_score": 0.2982,
+      "gap_to_second": 0.15082,
+      "distance_to_balanced": 0.106667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.44902
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.2982
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.2982
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.2943
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.2281
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.05386
+        }
+      ]
+    },
+    {
+      "key_weight": 0.2,
+      "row_weight": 0.25,
+      "cell_f1_weight": 0.55,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.456645,
+      "runner_up_score": 0.302205,
+      "gap_to_second": 0.15444,
+      "distance_to_balanced": 0.071667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.456645
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.302205
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.29632
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.29632
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.23522
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.052525
+        }
+      ]
+    },
+    {
+      "key_weight": 0.2,
+      "row_weight": 0.3,
+      "cell_f1_weight": 0.5,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.46427,
+      "runner_up_score": 0.31011,
+      "gap_to_second": 0.15416,
+      "distance_to_balanced": 0.046667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.46427
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.31011
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.29444
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.29444
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.24234
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.05119
+        }
+      ]
+    },
+    {
+      "key_weight": 0.2,
+      "row_weight": 0.35,
+      "cell_f1_weight": 0.45,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.471895,
+      "runner_up_score": 0.318015,
+      "gap_to_second": 0.15388,
+      "distance_to_balanced": 0.031667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.471895
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.318015
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.29256
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.29256
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.24946
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.049855
+        }
+      ]
+    },
+    {
+      "key_weight": 0.2,
+      "row_weight": 0.4,
+      "cell_f1_weight": 0.4,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.47952,
+      "runner_up_score": 0.32592,
+      "gap_to_second": 0.1536,
+      "distance_to_balanced": 0.026667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.47952
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.32592
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.29068
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.29068
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.25658
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.04852
+        }
+      ]
+    },
+    {
+      "key_weight": 0.2,
+      "row_weight": 0.45,
+      "cell_f1_weight": 0.35,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.487145,
+      "runner_up_score": 0.333825,
+      "gap_to_second": 0.15332,
+      "distance_to_balanced": 0.031667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.487145
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.333825
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.2888
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.2888
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.2637
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.047185
+        }
+      ]
+    },
+    {
+      "key_weight": 0.2,
+      "row_weight": 0.5,
+      "cell_f1_weight": 0.3,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.49477,
+      "runner_up_score": 0.34173,
+      "gap_to_second": 0.15304,
+      "distance_to_balanced": 0.046667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.49477
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.34173
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.28692
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.28692
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.27082
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.04585
+        }
+      ]
+    },
+    {
+      "key_weight": 0.2,
+      "row_weight": 0.55,
+      "cell_f1_weight": 0.25,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.502395,
+      "runner_up_score": 0.349635,
+      "gap_to_second": 0.15276,
+      "distance_to_balanced": 0.071667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.502395
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.349635
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.28504
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.28504
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.27794
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.044515
+        }
+      ]
+    },
+    {
+      "key_weight": 0.2,
+      "row_weight": 0.6,
+      "cell_f1_weight": 0.2,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.51002,
+      "runner_up_score": 0.35754,
+      "gap_to_second": 0.15248,
+      "distance_to_balanced": 0.106667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.51002
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.35754
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.28506
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.28316
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.28316
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.04318
+        }
+      ]
+    },
+    {
+      "key_weight": 0.25,
+      "row_weight": 0.2,
+      "cell_f1_weight": 0.55,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.483675,
+      "runner_up_score": 0.331455,
+      "gap_to_second": 0.15222,
+      "distance_to_balanced": 0.071667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.483675
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.331455
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.331455
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.31842
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.24603
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.061985
+        }
+      ]
+    },
+    {
+      "key_weight": 0.25,
+      "row_weight": 0.25,
+      "cell_f1_weight": 0.5,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.4913,
+      "runner_up_score": 0.329575,
+      "gap_to_second": 0.161725,
+      "distance_to_balanced": 0.041667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.4913
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.329575
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.329575
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.326325
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.25315
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.06065
+        }
+      ]
+    },
+    {
+      "key_weight": 0.25,
+      "row_weight": 0.3,
+      "cell_f1_weight": 0.45,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.498925,
+      "runner_up_score": 0.33423,
+      "gap_to_second": 0.164695,
+      "distance_to_balanced": 0.021667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.498925
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.33423
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.327695
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.327695
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.26027
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.059315
+        }
+      ]
+    },
+    {
+      "key_weight": 0.25,
+      "row_weight": 0.35,
+      "cell_f1_weight": 0.4,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.50655,
+      "runner_up_score": 0.342135,
+      "gap_to_second": 0.164415,
+      "distance_to_balanced": 0.011667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.50655
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.342135
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.325815
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.325815
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.26739
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.05798
+        }
+      ]
+    },
+    {
+      "key_weight": 0.25,
+      "row_weight": 0.4,
+      "cell_f1_weight": 0.35,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.514175,
+      "runner_up_score": 0.35004,
+      "gap_to_second": 0.164135,
+      "distance_to_balanced": 0.011667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.514175
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.35004
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.323935
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.323935
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.27451
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.056645
+        }
+      ]
+    },
+    {
+      "key_weight": 0.25,
+      "row_weight": 0.45,
+      "cell_f1_weight": 0.3,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.5218,
+      "runner_up_score": 0.357945,
+      "gap_to_second": 0.163855,
+      "distance_to_balanced": 0.021667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.5218
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.357945
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.322055
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.322055
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.28163
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.05531
+        }
+      ]
+    },
+    {
+      "key_weight": 0.25,
+      "row_weight": 0.5,
+      "cell_f1_weight": 0.25,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.529425,
+      "runner_up_score": 0.36585,
+      "gap_to_second": 0.163575,
+      "distance_to_balanced": 0.041667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.529425
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.36585
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.320175
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.320175
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.28875
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.053975
+        }
+      ]
+    },
+    {
+      "key_weight": 0.25,
+      "row_weight": 0.55,
+      "cell_f1_weight": 0.2,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.53705,
+      "runner_up_score": 0.373755,
+      "gap_to_second": 0.163295,
+      "distance_to_balanced": 0.071667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.53705
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.373755
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.318295
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.318295
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.29587
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.05264
+        }
+      ]
+    },
+    {
+      "key_weight": 0.3,
+      "row_weight": 0.2,
+      "cell_f1_weight": 0.5,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.51833,
+      "runner_up_score": 0.36471,
+      "gap_to_second": 0.15362,
+      "distance_to_balanced": 0.046667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.51833
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.36471
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.36471
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.34254
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.26396
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.07011
+        }
+      ]
+    },
+    {
+      "key_weight": 0.3,
+      "row_weight": 0.25,
+      "cell_f1_weight": 0.45,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.525955,
+      "runner_up_score": 0.36283,
+      "gap_to_second": 0.163125,
+      "distance_to_balanced": 0.021667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.525955
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.36283
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.36283
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.350445
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.27108
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.068775
+        }
+      ]
+    },
+    {
+      "key_weight": 0.3,
+      "row_weight": 0.3,
+      "cell_f1_weight": 0.4,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.53358,
+      "runner_up_score": 0.36095,
+      "gap_to_second": 0.17263,
+      "distance_to_balanced": 0.006667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.53358
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.36095
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.36095
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.35835
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.2782
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.06744
+        }
+      ]
+    },
+    {
+      "key_weight": 0.3,
+      "row_weight": 0.35,
+      "cell_f1_weight": 0.35,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.541205,
+      "runner_up_score": 0.366255,
+      "gap_to_second": 0.17495,
+      "distance_to_balanced": 0.001667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.541205
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.366255
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.35907
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.35907
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.28532
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.066105
+        }
+      ]
+    },
+    {
+      "key_weight": 0.3,
+      "row_weight": 0.4,
+      "cell_f1_weight": 0.3,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.54883,
+      "runner_up_score": 0.37416,
+      "gap_to_second": 0.17467,
+      "distance_to_balanced": 0.006667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.54883
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.37416
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.35719
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.35719
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.29244
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.06477
+        }
+      ]
+    },
+    {
+      "key_weight": 0.3,
+      "row_weight": 0.45,
+      "cell_f1_weight": 0.25,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.556455,
+      "runner_up_score": 0.382065,
+      "gap_to_second": 0.17439,
+      "distance_to_balanced": 0.021667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.556455
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.382065
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.35531
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.35531
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.29956
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.063435
+        }
+      ]
+    },
+    {
+      "key_weight": 0.3,
+      "row_weight": 0.5,
+      "cell_f1_weight": 0.2,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.56408,
+      "runner_up_score": 0.38997,
+      "gap_to_second": 0.17411,
+      "distance_to_balanced": 0.046667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.56408
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.38997
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.35343
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.35343
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.30668
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.0621
+        }
+      ]
+    },
+    {
+      "key_weight": 0.35,
+      "row_weight": 0.2,
+      "cell_f1_weight": 0.45,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.552985,
+      "runner_up_score": 0.397965,
+      "gap_to_second": 0.15502,
+      "distance_to_balanced": 0.031667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.552985
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.397965
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.397965
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.36666
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.28189
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.078235
+        }
+      ]
+    },
+    {
+      "key_weight": 0.35,
+      "row_weight": 0.25,
+      "cell_f1_weight": 0.4,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.56061,
+      "runner_up_score": 0.396085,
+      "gap_to_second": 0.164525,
+      "distance_to_balanced": 0.011667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.56061
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.396085
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.396085
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.374565
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.28901
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.0769
+        }
+      ]
+    },
+    {
+      "key_weight": 0.35,
+      "row_weight": 0.3,
+      "cell_f1_weight": 0.35,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.568235,
+      "runner_up_score": 0.394205,
+      "gap_to_second": 0.17403,
+      "distance_to_balanced": 0.001667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.568235
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.394205
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.394205
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.38247
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.29613
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.075565
+        }
+      ]
+    },
+    {
+      "key_weight": 0.35,
+      "row_weight": 0.35,
+      "cell_f1_weight": 0.3,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.57586,
+      "runner_up_score": 0.392325,
+      "gap_to_second": 0.183535,
+      "distance_to_balanced": 0.001667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.57586
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.392325
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.392325
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.390375
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.30325
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.07423
+        }
+      ]
+    },
+    {
+      "key_weight": 0.35,
+      "row_weight": 0.4,
+      "cell_f1_weight": 0.25,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.583485,
+      "runner_up_score": 0.39828,
+      "gap_to_second": 0.185205,
+      "distance_to_balanced": 0.011667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.583485
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.39828
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.390445
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.390445
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.31037
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.072895
+        }
+      ]
+    },
+    {
+      "key_weight": 0.35,
+      "row_weight": 0.45,
+      "cell_f1_weight": 0.2,
+      "winner": "hybrid_current",
+      "runner_up": "pdfplumber_text_plus_tables",
+      "winner_score": 0.59111,
+      "runner_up_score": 0.406185,
+      "gap_to_second": 0.184925,
+      "distance_to_balanced": 0.031667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.59111
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.406185
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.388565
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.388565
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.31749
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.07156
+        }
+      ]
+    },
+    {
+      "key_weight": 0.4,
+      "row_weight": 0.2,
+      "cell_f1_weight": 0.4,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.58764,
+      "runner_up_score": 0.43122,
+      "gap_to_second": 0.15642,
+      "distance_to_balanced": 0.026667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.58764
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.43122
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.43122
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.39078
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.29982
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.08636
+        }
+      ]
+    },
+    {
+      "key_weight": 0.4,
+      "row_weight": 0.25,
+      "cell_f1_weight": 0.35,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.595265,
+      "runner_up_score": 0.42934,
+      "gap_to_second": 0.165925,
+      "distance_to_balanced": 0.011667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.595265
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.42934
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.42934
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.398685
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.30694
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.085025
+        }
+      ]
+    },
+    {
+      "key_weight": 0.4,
+      "row_weight": 0.3,
+      "cell_f1_weight": 0.3,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.60289,
+      "runner_up_score": 0.42746,
+      "gap_to_second": 0.17543,
+      "distance_to_balanced": 0.006667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.60289
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.42746
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.42746
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.40659
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.31406
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.08369
+        }
+      ]
+    },
+    {
+      "key_weight": 0.4,
+      "row_weight": 0.35,
+      "cell_f1_weight": 0.25,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.610515,
+      "runner_up_score": 0.42558,
+      "gap_to_second": 0.184935,
+      "distance_to_balanced": 0.011667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.610515
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.42558
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.42558
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.414495
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.32118
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.082355
+        }
+      ]
+    },
+    {
+      "key_weight": 0.4,
+      "row_weight": 0.4,
+      "cell_f1_weight": 0.2,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.61814,
+      "runner_up_score": 0.4237,
+      "gap_to_second": 0.19444,
+      "distance_to_balanced": 0.026667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.61814
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.4237
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.4237
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.4224
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.3283
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.08102
+        }
+      ]
+    },
+    {
+      "key_weight": 0.45,
+      "row_weight": 0.2,
+      "cell_f1_weight": 0.35,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.622295,
+      "runner_up_score": 0.464475,
+      "gap_to_second": 0.15782,
+      "distance_to_balanced": 0.031667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.622295
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.464475
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.464475
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.4149
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.31775
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.094485
+        }
+      ]
+    },
+    {
+      "key_weight": 0.45,
+      "row_weight": 0.25,
+      "cell_f1_weight": 0.3,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.62992,
+      "runner_up_score": 0.462595,
+      "gap_to_second": 0.167325,
+      "distance_to_balanced": 0.021667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.62992
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.462595
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.462595
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.422805
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.32487
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.09315
+        }
+      ]
+    },
+    {
+      "key_weight": 0.45,
+      "row_weight": 0.3,
+      "cell_f1_weight": 0.25,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.637545,
+      "runner_up_score": 0.460715,
+      "gap_to_second": 0.17683,
+      "distance_to_balanced": 0.021667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.637545
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.460715
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.460715
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.43071
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.33199
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.091815
+        }
+      ]
+    },
+    {
+      "key_weight": 0.45,
+      "row_weight": 0.35,
+      "cell_f1_weight": 0.2,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.64517,
+      "runner_up_score": 0.458835,
+      "gap_to_second": 0.186335,
+      "distance_to_balanced": 0.031667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.64517
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.458835
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.458835
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.438615
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.33911
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.09048
+        }
+      ]
+    },
+    {
+      "key_weight": 0.5,
+      "row_weight": 0.2,
+      "cell_f1_weight": 0.3,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.65695,
+      "runner_up_score": 0.49773,
+      "gap_to_second": 0.15922,
+      "distance_to_balanced": 0.046667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.65695
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.49773
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.49773
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.43902
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.33568
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.10261
+        }
+      ]
+    },
+    {
+      "key_weight": 0.5,
+      "row_weight": 0.25,
+      "cell_f1_weight": 0.25,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.664575,
+      "runner_up_score": 0.49585,
+      "gap_to_second": 0.168725,
+      "distance_to_balanced": 0.041667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.664575
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.49585
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.49585
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.446925
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.3428
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.101275
+        }
+      ]
+    },
+    {
+      "key_weight": 0.5,
+      "row_weight": 0.3,
+      "cell_f1_weight": 0.2,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.6722,
+      "runner_up_score": 0.49397,
+      "gap_to_second": 0.17823,
+      "distance_to_balanced": 0.046667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.6722
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.49397
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.49397
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.45483
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.34992
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.09994
+        }
+      ]
+    },
+    {
+      "key_weight": 0.55,
+      "row_weight": 0.2,
+      "cell_f1_weight": 0.25,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.691605,
+      "runner_up_score": 0.530985,
+      "gap_to_second": 0.16062,
+      "distance_to_balanced": 0.071667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.691605
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.530985
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.530985
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.46314
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.35361
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.110735
+        }
+      ]
+    },
+    {
+      "key_weight": 0.55,
+      "row_weight": 0.25,
+      "cell_f1_weight": 0.2,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.69923,
+      "runner_up_score": 0.529105,
+      "gap_to_second": 0.170125,
+      "distance_to_balanced": 0.071667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.69923
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.529105
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.529105
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.471045
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.36073
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.1094
+        }
+      ]
+    },
+    {
+      "key_weight": 0.6,
+      "row_weight": 0.2,
+      "cell_f1_weight": 0.2,
+      "winner": "hybrid_current",
+      "runner_up": "img2table_tesseract",
+      "winner_score": 0.72626,
+      "runner_up_score": 0.56424,
+      "gap_to_second": 0.16202,
+      "distance_to_balanced": 0.106667,
+      "ranking": [
+        {
+          "method": "hybrid_current",
+          "score": 0.72626
+        },
+        {
+          "method": "img2table_tesseract",
+          "score": 0.56424
+        },
+        {
+          "method": "table_first_strict",
+          "score": 0.56424
+        },
+        {
+          "method": "pdfplumber_text_plus_tables",
+          "score": 0.48726
+        },
+        {
+          "method": "pdfplumber_raw_text_only",
+          "score": 0.37154
+        },
+        {
+          "method": "page_ocr_tesseract_only",
+          "score": 0.11886
+        }
+      ]
+    }
+  ]
+}

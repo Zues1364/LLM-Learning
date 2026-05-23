@@ -1,0 +1,37 @@
+{
+  "program_id": "cyber_2024",
+  "program_name": "An toàn thông tin QH-2024 mock",
+  "required_credits": 136,
+  "groups": [
+    {
+      "id": "I",
+      "name": "Khối kiến thức chung",
+      "required_credits": 23,
+      "required_subjects": ["PHI1006", "MAT1093", "MAT1094", "HIS1001", "PEC1008"]
+    },
+    {
+      "id": "III",
+      "name": "Cơ sở ngành",
+      "required_credits": 42,
+      "required_subjects": ["INT1003", "INT1007", "INT2210", "INT2215", "INT2208", "INT2204"]
+    },
+    {
+      "id": "ATTT",
+      "name": "Lõi an toàn thông tin",
+      "required_credits": 30,
+      "required_subjects": ["INT3501", "INT3502", "INT3503", "INT3504", "INT3505"]
+    },
+    {
+      "id": "ATTT.E",
+      "name": "Tự chọn an toàn thông tin",
+      "required_credits": 16,
+      "elective_subjects": ["INT3506", "INT3507", "INT3508", "INT3509", "INT3510"]
+    },
+    {
+      "id": "VI",
+      "name": "Đồ án và khóa luận",
+      "required_credits": 9,
+      "required_subjects": ["INT3131", "INT4050"]
+    }
+  ]
+}

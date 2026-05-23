@@ -1,0 +1,45 @@
+{
+  "doc_id": "schedule_appendix_p4_cs_topics",
+  "title": "Phụ lục TKB trang 4 - nhóm học phần CS",
+  "doc_type": "schedule",
+  "subtype": "course_schedule",
+  "source": {
+    "kind": "pdf_page",
+    "relative_path": "data/resources/pdfs/PHU_LUC_THOI_KHOA_BIEU_HKII_2025-2026_DU_LIEU_CAP_NHAT_DEN_22012026_.xlsx_-_Sheet1.pdf",
+    "page": 4
+  },
+  "expected_fields": [
+    "subject_code",
+    "course_name",
+    "class_code",
+    "teacher_name",
+    "day",
+    "slot",
+    "room"
+  ],
+  "key_fields": [
+    "subject_code",
+    "class_code",
+    "slot"
+  ],
+  "expected_rows": [
+    {
+      "subject_code": "INT3230E",
+      "course_name": "Mật mã và an toàn thông tin",
+      "class_code": "INT3230E 1",
+      "teacher_name": "Lê Phê Đô",
+      "day": "Thứ 4",
+      "slot": "4",
+      "room": "211-T"
+    },
+    {
+      "subject_code": "INT3420E",
+      "course_name": "Học sâu và Ứng dụng",
+      "class_code": "INT3420E 1",
+      "teacher_name": "Tạ Việt Cường",
+      "day": "Thứ 3",
+      "slot": "3",
+      "room": "211-T"
+    }
+  ]
+}

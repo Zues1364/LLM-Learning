@@ -1,0 +1,45 @@
+{
+  "doc_id": "transcript_it2022_text",
+  "title": "Bảng điểm mock IT2022 - text PDF",
+  "doc_type": "transcript",
+  "subtype": "mock_transcript",
+  "source": {
+    "kind": "mock_transcript_json",
+    "relative_path": "evals/mock_data/transcripts/mock_it2022_mid_program.json",
+    "render_mode": "text_table_pdf"
+  },
+  "expected_fields": [
+    "semester",
+    "course_code",
+    "course_name",
+    "credits",
+    "grade_4"
+  ],
+  "key_fields": [
+    "semester",
+    "course_code"
+  ],
+  "expected_rows": [
+    {
+      "semester": "2022-2023-1",
+      "course_code": "INT1003",
+      "course_name": "Tin học cơ sở 1",
+      "credits": 4,
+      "grade_4": 3.1
+    },
+    {
+      "semester": "2022-2023-2",
+      "course_code": "INT2210",
+      "course_name": "Cấu trúc dữ liệu và giải thuật",
+      "credits": 4,
+      "grade_4": 3.0
+    },
+    {
+      "semester": "2023-2024-1",
+      "course_code": "INT2208",
+      "course_name": "Mạng máy tính",
+      "credits": 3,
+      "grade_4": 2.7
+    }
+  ]
+}

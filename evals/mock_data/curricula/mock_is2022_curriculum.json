@@ -1,0 +1,37 @@
+{
+  "program_id": "is_2022",
+  "program_name": "Hệ thống thông tin QH-2022 mock",
+  "required_credits": 136,
+  "groups": [
+    {
+      "id": "I",
+      "name": "Khối kiến thức chung",
+      "required_credits": 22,
+      "required_subjects": ["PHI1006", "MAT1093", "MAT1094", "PEC1008"]
+    },
+    {
+      "id": "III",
+      "name": "Cơ sở ngành",
+      "required_credits": 42,
+      "required_subjects": ["INT1003", "INT1007", "INT2210", "INT2215", "INT2208", "INT2204"]
+    },
+    {
+      "id": "IV",
+      "name": "Phân tích và quản trị hệ thống",
+      "required_credits": 30,
+      "required_subjects": ["INT3220", "INT3221", "INT3222", "INT3223", "INT3224"]
+    },
+    {
+      "id": "V",
+      "name": "Tự chọn hệ thống thông tin",
+      "required_credits": 20,
+      "elective_subjects": ["INT3225", "INT3226", "INT3227", "INT3228", "INT3229"]
+    },
+    {
+      "id": "VI",
+      "name": "Đồ án và khóa luận",
+      "required_credits": 8,
+      "required_subjects": ["INT3131", "INT4050"]
+    }
+  ]
+}

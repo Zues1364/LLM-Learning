@@ -64,6 +64,12 @@ MODEL_SPECS: Dict[str, ModelSpec] = {
     ),
 }
 
+RETRIEVAL_SCORE_WEIGHTS = {
+    "coverage_top_k": 0.35,
+    "source_mrr": 0.30,
+    "evidence_mrr": 0.35,
+}
+
 
 class MemorySampler:
     def __init__(self, interval_sec: float = 0.2):
@@ -434,11 +440,12 @@ def benchmark_model(
             "evidence_hit_rate_at_1": round(evidence_hits[1] / total_cases, 4),
             "evidence_hit_rate_at_3": round(evidence_hits[3] / total_cases, 4),
             "evidence_hit_rate_at_5": round(evidence_hits[5] / total_cases, 4),
+            "composite_weights": RETRIEVAL_SCORE_WEIGHTS,
         }
         summary["composite_score"] = round(
-            (0.4 * summary["coverage_top_k"])
-            + (0.3 * summary["source_mrr"])
-            + (0.3 * summary["evidence_mrr"]),
+            (RETRIEVAL_SCORE_WEIGHTS["coverage_top_k"] * summary["coverage_top_k"])
+            + (RETRIEVAL_SCORE_WEIGHTS["source_mrr"] * summary["source_mrr"])
+            + (RETRIEVAL_SCORE_WEIGHTS["evidence_mrr"] * summary["evidence_mrr"]),
             4,
         )
         return {
@@ -464,6 +471,11 @@ def write_markdown_report(
     lines.append(f"- Generated at: `{generated_at}`")
     lines.append(f"- Corpus resources: {len(config['resources'])}")
     lines.append(f"- Query cases: {len(config['cases'])}\n")
+    lines.append(
+        f"- Composite weights: coverage={RETRIEVAL_SCORE_WEIGHTS['coverage_top_k']:.2f}, "
+        f"source_mrr={RETRIEVAL_SCORE_WEIGHTS['source_mrr']:.2f}, "
+        f"evidence_mrr={RETRIEVAL_SCORE_WEIGHTS['evidence_mrr']:.2f}\n"
+    )
 
     lines.append("## Summary\n")
     lines.append("| Model | Composite | Coverage@k | Source MRR | Evidence MRR | Hit@1 src | Hit@1 ev | Peak RSS (GB) | Artifact (GB) |")

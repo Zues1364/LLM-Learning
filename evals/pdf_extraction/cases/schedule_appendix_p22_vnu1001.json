@@ -1,0 +1,38 @@
+{
+  "doc_id": "schedule_appendix_p22_vnu1001",
+  "title": "Phụ lục TKB trang 22 - VNU1001 trực tuyến",
+  "doc_type": "schedule",
+  "subtype": "course_schedule",
+  "source": {
+    "kind": "pdf_page",
+    "relative_path": "data/resources/pdfs/PHU_LUC_THOI_KHOA_BIEU_HKII_2025-2026_DU_LIEU_CAP_NHAT_DEN_22012026_.xlsx_-_Sheet1.pdf",
+    "page": 22
+  },
+  "expected_fields": [
+    "subject_code",
+    "course_name",
+    "class_code",
+    "teacher_name",
+    "room"
+  ],
+  "key_fields": [
+    "subject_code",
+    "class_code"
+  ],
+  "expected_rows": [
+    {
+      "subject_code": "VNU1001",
+      "course_name": "Nhập môn công nghệ số và ứng dụng trí tuệ nhân tạo",
+      "class_code": "VNU1001 10",
+      "teacher_name": "Viện Khảo thí",
+      "room": "ONL"
+    },
+    {
+      "subject_code": "VNU1001",
+      "course_name": "Nhập môn công nghệ số và ứng dụng trí tuệ nhân tạo",
+      "class_code": "VNU1001 17",
+      "teacher_name": "Viện Khảo thí",
+      "room": "ONL"
+    }
+  ]
+}
